@@ -4,3 +4,4 @@ export * from "./tokenize.js";
 export * from "./bm25.js";
 export * from "./sync.js";
 export * from "./search.js";
+export * from "./rerank.js";

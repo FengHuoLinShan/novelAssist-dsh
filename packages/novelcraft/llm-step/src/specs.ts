@@ -197,6 +197,25 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
     degradationNote: "候选只进 chapters/pending/; 失败不改写正文(catalog §3.1)。",
     contractVersion: "v1",
   },
+  {
+    // M6 N21: 检索精排(rag_rerank) — BM25 召回后的候选片段按与查询的相关性重排
+    specRef: "rag_rerank",
+    description: "检索精排: 对召回候选片段按与查询的相关性重排, 返回按相关度降序的 chunk_id 列表。",
+    inputNotes: "查询文本 + 编号候选片段(各截断约 200 字)。",
+    outputSchema: {
+      type: "object",
+      required: ["ranked_ids"],
+      properties: {
+        ranked_ids: { type: "array", items: { type: "string" } },
+      },
+      additionalProperties: true,
+    },
+    budgetTokens: 2048,
+    temperature: 0.1,
+    timeoutMs: 120_000,
+    degradationNote: "失败/超时回退 BM25 原序, 检索不阻断写作。",
+    contractVersion: "v1",
+  },
 ];
 
 const registry = new Map(BUILTIN_SPECS.map((s) => [s.specRef, s]));

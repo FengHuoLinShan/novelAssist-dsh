@@ -53,9 +53,9 @@ describe("validator(自实现 JSON Schema 子集)", () => {
 });
 
 describe("specs(内置注册表, catalog 转写)", () => {
-  it("6 个内置 spec 且 outputSchema 可校验", () => {
+  it("7 个内置 spec 且 outputSchema 可校验", () => {
     expect(listSpecRefs().sort()).toEqual(
-      ["dedup_judge", "entity_extraction", "next_chapter_proposal", "semantic_review", "structure_analysis", "writing_generate"].sort(),
+      ["dedup_judge", "entity_extraction", "next_chapter_proposal", "rag_rerank", "semantic_review", "structure_analysis", "writing_generate"].sort(),
     );
     for (const ref of listSpecRefs()) {
       const spec = loadSpec(ref)!;
@@ -66,6 +66,17 @@ describe("specs(内置注册表, catalog 转写)", () => {
   it("重复注册拒绝", () => {
     const spec = loadSpec("dedup_judge")!;
     expect(() => registerSpec({ ...spec, specRef: "dedup_judge" })).toThrow(/已注册/);
+  });
+  it("listSpecRefs 含 rag_rerank(M6 N21)", () => {
+    expect(listSpecRefs()).toContain("rag_rerank");
+  });
+  it("loadSpec('rag_rerank') 非空且 outputSchema.required 含 ranked_ids(M6 N21)", () => {
+    const spec = loadSpec("rag_rerank");
+    expect(spec).toBeDefined();
+    expect(spec!.outputSchema.required).toContain("ranked_ids");
+    expect(spec!.budgetTokens).toBe(2048);
+    expect(spec!.timeoutMs).toBe(120_000);
+    expect(spec!.degradationNote).toContain("BM25");
   });
 });
 
