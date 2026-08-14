@@ -20,6 +20,7 @@ import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
 import { RadarScheduler } from './jobs/radar.js';
 import { DshProvider } from './llm/provider.js';
+import { ContentPresetRegistry, mergeStepOverrides, withResolvedDefaults } from './llm/preset.js';
 import { NovelcraftCache } from './storage/domain.js';
 import { registerNovelcraftTools } from './tools.js';
 import { SessionVaultBinder } from './vault/binding.js';
@@ -73,6 +74,8 @@ export class NovelCraftService extends Service {
   readonly cache: NovelcraftCache;
   /** 会话↔vault 绑定(D17) */
   readonly vaults: SessionVaultBinder;
+  /** 内容手预设卡注册表(N20: domain KV 存储层 ∪ 种子层) */
+  readonly presets: ContentPresetRegistry;
   /** 雷达巡检调度(ctx.jobs) */
   readonly radars: RadarScheduler;
   /** 核心包 facade(agent 组合/其他插件经此消费, 不互相绕过 seam) */
@@ -90,6 +93,7 @@ export class NovelCraftService extends Service {
     });
     this.approval = new ApprovalGate(ctx);
     this.cache = new NovelcraftCache(ctx);
+    this.presets = new ContentPresetRegistry(this.cache);
     this.vaults = new SessionVaultBinder(config, this.cache);
     this.radars = new RadarScheduler(ctx);
     this.toolDisposers = registerNovelcraftTools(ctx, this);
@@ -98,9 +102,18 @@ export class NovelCraftService extends Service {
     });
   }
 
-  /** 便捷: 内容手一步调用(默认模型 = Config.llm; 调用方 overrides 优先)。 */
-  runStep(req: llmStep.StepRequest): Promise<llmStep.StepResult> {
-    return llmStep.runStep(this.llmProvider, req);
+  /** 便捷: 内容手一步调用(默认 = Config.llm ← 该书预设(N20)/llm.yml 直键; 调用方 overrides 优先)。 */
+  async runStep(req: llmStep.StepRequest, root?: string): Promise<llmStep.StepResult> {
+    const defaults = await this.presets.resolveDefaults(root);
+    return llmStep.runStep(this.llmProvider, {
+      ...req,
+      overrides: mergeStepOverrides(defaults, req.overrides),
+    });
+  }
+
+  /** 内容手 Provider(注入该书预设默认面; 供 deepImport/propose/generate 等编排用)。 */
+  async contentProviderFor(root?: string): Promise<llmStep.Provider> {
+    return withResolvedDefaults(this.llmProvider, await this.presets.resolveDefaults(root));
   }
 
   /** 便捷: 审批门控的 adopt(采用类写操作必过 approval, §9)。 */
@@ -142,18 +155,18 @@ export class NovelCraftService extends Service {
     return deepImport(this, agent, root, opts);
   }
 
-  /** 便捷: 计划台续写提案(内容手直连 ctx.llm, 落 .assistant/proposals/)。 */
-  proposeNextChapter(root: string, chapterIndex: number): Promise<writing.ProposeResult> {
-    return writing.proposeNextChapter(this.llmProvider, root, chapterIndex);
+  /** 便捷: 计划台续写提案(内容手经该书预设面, 落 .assistant/proposals/)。 */
+  async proposeNextChapter(root: string, chapterIndex: number): Promise<writing.ProposeResult> {
+    return writing.proposeNextChapter(await this.contentProviderFor(root), root, chapterIndex);
   }
 
   /** 便捷: 续写提案第二阶段(选定方向 → writing_generate → chapters/pending 候选)。 */
-  generateNextChapter(
+  async generateNextChapter(
     root: string,
     chapterIndex: number,
     opts: writing.GenerateNextChapterOptions,
   ): Promise<writing.GenerateResult> {
-    return writing.generateNextChapter(this.llmProvider, root, chapterIndex, opts);
+    return writing.generateNextChapter(await this.contentProviderFor(root), root, chapterIndex, opts);
   }
 
   /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */

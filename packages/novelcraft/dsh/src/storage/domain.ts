@@ -45,15 +45,32 @@ const indexSchema = z.object({
   index: z.unknown(),
 });
 
-/** NovelCraft 的唯一 domain: 会话绑定 + 派生索引缓存(两张表, 无 global)。 */
+/** 内容手预设卡记录(N20; Key 永不进此表——预设只有 provider/model/参数, 铁律 6)。 */
+const presetSchema = z.object({
+  name: z.string().min(1),
+  label: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  temperature: z.number().optional(),
+  top_p: z.number().optional(),
+  max_tokens: z.number().optional(),
+  timeout_ms: z.number().optional(),
+  updatedAt: z.string().min(1),
+});
+
+/** NovelCraft 的唯一 domain: 会话绑定 + 派生索引缓存 + 内容手预设卡(三张表, 无 global)。 */
 export const novelcraftDomain = defineDomain({
   name: 'novelcraft',
   version: 1,
   tables: {
     sessions: domainTable<string, SessionBindingRecord>(sessionSchema),
     indexes: domainTable<string, IndexCacheRecord>(indexSchema),
+    presets: domainTable<string, z.infer<typeof presetSchema>>(presetSchema),
   },
 });
+
+/** 内容手预设卡记录类型(表值; 与 llm-step ContentPreset 对齐 + updatedAt)。 */
+export type ContentPresetRecord = z.infer<typeof presetSchema>;
 
 export type NovelcraftDomain = Domain<typeof novelcraftDomain>;
 
@@ -136,6 +153,26 @@ export class NovelcraftCache {
   async listSessions(): Promise<Array<[string, SessionBindingRecord]>> {
     const domain = await this.open();
     return [...domain.table('sessions').entries()];
+  }
+
+  /** 覆盖写一张预设卡(N20; 键 = 预设名)。 */
+  async putPreset(preset: Omit<ContentPresetRecord, 'updatedAt'>): Promise<void> {
+    const domain = await this.open();
+    await domain
+      .table('presets')
+      .put(preset.name, { ...preset, updatedAt: new Date().toISOString() });
+  }
+
+  /** 删除一张预设卡(不存在 → false)。种子预设不在此表, 天然不可删。 */
+  async deletePreset(name: string): Promise<boolean> {
+    const domain = await this.open();
+    return domain.table('presets').delete(name);
+  }
+
+  /** 全部已存预设卡(不含种子)。 */
+  async listPresets(): Promise<ContentPresetRecord[]> {
+    const domain = await this.open();
+    return [...domain.table('presets').entries()].map(([, v]) => v);
   }
 
   /** 关闭 domain(宿主 effect disposer 调用; 幂等)。 */

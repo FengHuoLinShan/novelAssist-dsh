@@ -79,7 +79,8 @@ export class DshProvider implements Provider {
     }
 
     const options: GenerateOptions = {
-      provider,
+      // 请求级 provider 覆盖优先(N20 预设卡); 缺省 = Config.llm.provider。
+      provider: req.provider ?? provider,
       model: req.model ?? this.opts.model ?? '',
       messages,
       ...(system !== undefined ? { system } : {}),

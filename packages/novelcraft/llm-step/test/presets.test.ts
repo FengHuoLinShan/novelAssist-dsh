@@ -1,5 +1,5 @@
 // N20 行为契约: 内容手预设卡(解析/校验/查找)+ provider 覆盖直通 + llm.yml preset 键(N5)。
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   parseContentPresets,
   resolvePolicy,
   runStep,
+  selectPresetInLlmYml,
   validateContentPreset,
 } from "../src/index";
 
@@ -98,5 +99,27 @@ describe("policy preset 键(N5: llm.yml 只存预设名与参数)", () => {
     const p = resolvePolicy(root);
     expect(p.llm.preset).toBe("writing-day");
     expect(p.llm.model).toBe("deepseek-v4-pro");
+  });
+
+  it("selectPresetInLlmYml 只动 preset 一键(N19): 其余键保留, null 移除, 非法名抛错", () => {
+    const root = makeRoot();
+    writeFileSync(paths(root).assistant.llm, 'model: m1\ntemperature: 0.5\n', "utf8");
+    selectPresetInLlmYml(root, "polish");
+    let text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).toContain("preset: polish");
+    expect(text).toContain("model: m1");
+    expect(text).toContain("temperature: 0.5");
+    // 覆盖写(替换而非追加)
+    selectPresetInLlmYml(root, "import-day");
+    text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).toContain("preset: import-day");
+    expect(text).not.toContain("polish");
+    // null 移除
+    selectPresetInLlmYml(root, null);
+    text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).not.toContain("preset:");
+    expect(text).toContain("model: m1");
+    // 非法名(NAME_RE 防 YAML 注入)
+    expect(() => selectPresetInLlmYml(root, "坏: 名字")).toThrow();
   });
 });

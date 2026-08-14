@@ -2,6 +2,9 @@
 // 预设 = 命名的一组 provider/model/参数; llm.yml 只存预设名引用(§22.5), Key 永不进预设(铁律 6/N5)。
 // 形态参考父仓库 CREATIVE_PRESETS 参数卡; 与其「前端硬编码、运行时无消费点」的教训不同,
 // 本类型经 dsh 包 withResolvedDefaults 注入 StepRequest.overrides, 直连执行路径(E8 缺口)。
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { paths } from "@novelcraft/vault";
+
 export interface ContentPreset {
   /** 预设名(llm.yml preset 键引用; slug 风格) */
   name: string;
@@ -85,4 +88,34 @@ export function parseContentPresets(v: unknown): ContentPreset[] {
 /** 按名查预设; 无 → undefined(调用方 fail-soft 回退默认路由)。 */
 export function findPreset(presets: ContentPreset[], name: string): ContentPreset | undefined {
   return presets.find((p) => p.name === name);
+}
+
+/**
+ * 把预设名写入 .assistant/llm.yml(N19: 只动 preset 一键; 其余键原样保留)。
+ * name = null → 移除 preset 键(回退继承); 非法名抛错(NAME_RE 防 YAML 注入)。
+ * 行级改写与 policy.ts parseFlatYaml 的读取口径一致(顶层 key: value)。
+ */
+export function selectPresetInLlmYml(root: string, name: string | null): void {
+  if (name !== null && !NAME_RE.test(name)) {
+    throw new Error(`预设名非法: ${name}(slug 风格, 字母数字起头)`);
+  }
+  const file = paths(root).assistant.llm;
+  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n") : [];
+  const out: string[] = [];
+  let wrote = false;
+  for (const line of lines) {
+    // 顶层 preset 键(缩进行属嵌套节, 不动)
+    if (!/^[\s]/.test(line) && /^preset\s*:/.test(line)) {
+      if (name !== null) out.push(`preset: ${name}`);
+      wrote = true;
+      continue;
+    }
+    out.push(line);
+  }
+  if (!wrote && name !== null) {
+    while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+    out.push(`preset: ${name}`);
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+  writeFileSync(file, out.join("\n") + "\n", "utf8");
 }

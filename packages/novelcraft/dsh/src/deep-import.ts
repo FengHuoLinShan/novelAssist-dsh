@@ -68,7 +68,8 @@ export async function deepImport(
   });
   const sink = new ImportTraceSink(importTraceFile(root));
   return imports.runDeepImport(root, plan, {
-    provider: service.llmProvider,
+    // 内容手经该书预设面(N20): llm.yml preset/直键注入 provider/model/参数默认。
+    provider: await service.contentProviderFor(root),
     approve: async (action, summary, items) => {
       const decision = await service.approval.request(agent, { action, summary, items });
       return toApprovalDecision(decision);

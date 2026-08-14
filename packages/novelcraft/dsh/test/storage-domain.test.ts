@@ -47,7 +47,8 @@ describe('NovelcraftCache(真实 storage-domain + json backend)', () => {
   it('domain 规格自检: 名称/版本/表集(挂载契约)', () => {
     expect(novelcraftDomain.name).toBe('novelcraft');
     expect(novelcraftDomain.version).toBe(1);
-    expect(Object.keys(novelcraftDomain.tables).sort()).toEqual(['indexes', 'sessions']);
+    // N20 加法: presets 表(内容手预设卡)进同一 domain, 版本不变(新增表不影响既有表)。
+    expect(Object.keys(novelcraftDomain.tables).sort()).toEqual(['indexes', 'presets', 'sessions']);
   });
 
   it('非法记录被 durable 边界拒绝(zod 校验, 重开时验证)', async () => {

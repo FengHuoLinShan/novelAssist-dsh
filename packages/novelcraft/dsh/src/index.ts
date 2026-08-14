@@ -9,6 +9,7 @@ export { NovelCraftService, NovelCraftService as default } from './service.js';
 export type { NovelcraftFacades } from './service.js';
 export * from './config.js';
 export * from './ctx.js';
+export * from './llm/preset.js';
 export * from './llm/provider.js';
 export * from './approval/gate.js';
 export * from './storage/domain.js';

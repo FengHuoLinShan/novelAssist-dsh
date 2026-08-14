@@ -153,6 +153,16 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       async execute(rawArgs, exec) {
         void exec.signal;
         const args = rawArgs as unknown as LlmStepArgs;
+        // 会话绑定解析 vault 根(D17): 该书预设/llm.yml 经 runStep 注入(N20); 未绑定 → 仅 Config.llm 默认。
+        let root: string | undefined;
+        const sessionId = (exec.agent as Agent | undefined)?.session?.id;
+        if (sessionId) {
+          try {
+            root = (await service.vaults.resolve(sessionId))?.root;
+          } catch {
+            root = undefined;
+          }
+        }
         const result = await service.runStep({
           specRef: args.spec,
           input: args.input,
@@ -163,7 +173,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
           },
           fixAttempts: args.fix_attempts ?? 1,
-        });
+        }, root);
         const text = result.ok
           ? result.result && typeof result.result === 'object'
             ? JSON.stringify(result.result)
