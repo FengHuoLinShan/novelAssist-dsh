@@ -15,6 +15,7 @@ import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import { ApprovalGate } from './approval/gate.js';
 import { Config, type Config as ConfigType } from './config.js';
+import { deepImport, type DeepImportOptions } from './deep-import.js';
 import { RadarScheduler } from './jobs/radar.js';
 import { DshProvider } from './llm/provider.js';
 import { NovelcraftCache } from './storage/domain.js';
@@ -128,5 +129,14 @@ export class NovelCraftService extends Service {
   /** 便捷: 收件箱视图(新鲜信号, 风险前置)。 */
   inbox(root: string, currentContentHash?: string): assistant.Signal[] {
     return assistant.inboxView(root, currentContentHash);
+  }
+
+  /** 便捷: 深度导入六阶段(adopt 经审批门, trace 落 .assistant/import-trace.jsonl)。 */
+  deepImport(
+    agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
+    root: string,
+    opts: DeepImportOptions,
+  ): Promise<imports.DeepImportResult> {
+    return deepImport(this, agent, root, opts);
   }
 }

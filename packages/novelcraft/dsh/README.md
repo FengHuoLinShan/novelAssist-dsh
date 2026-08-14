@@ -26,11 +26,12 @@ plugins:
 | `ctx.jobs` | `RadarScheduler` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval` |
 | `ctx.credentials` | (消费面) | 内容手 Key 由 DSH credentials/LLM 适配器层解析; `.assistant/llm.yml` 只存模型名与参数(N5), 本包不落 Key |
 | 会话↔vault | `SessionVaultBinder` | D17 一书一会话一 vault 根; 内存 + domain 双面绑定; §14 子代理 prompt 注入(书名/路径/纪律条款) |
-| `ctx.tools` | `registerNovelcraftTools` | 6 工具: llm_step / store_index / store_adopt(审批门控)/ inbox_view / inbox_act(四动词)/ signal_push; tools 服务缺失时静默跳过 |
+| `ctx.tools` | `registerNovelcraftTools` | 7 工具: llm_step / store_index / store_adopt(审批门控)/ inbox_view / inbox_act(四动词)/ signal_push / deep_import(六阶段, adopt 经审批门 + trace 落盘); tools 服务缺失时静默跳过 |
 | client-modules | (host 侧注册面) | client UI 本体留 R7/client 阶段(B); 本包不产出 client bundle |
 
 服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + `facades`(13 核心包
-命名空间, 供组合代码消费)+ 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox`。
+命名空间, 供组合代码消费)+ 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
+`deepImport`(runDeepImport 挂载: DshProvider + ApprovalGate + ImportTraceSink)。
 
 ## 工程约定
 

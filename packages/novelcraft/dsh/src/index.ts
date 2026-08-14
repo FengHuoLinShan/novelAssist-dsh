@@ -13,5 +13,6 @@ export * from './llm/provider.js';
 export * from './approval/gate.js';
 export * from './storage/domain.js';
 export * from './vault/binding.js';
+export * from './deep-import.js';
 export * from './jobs/radar.js';
 export * from './tools.js';

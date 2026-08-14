@@ -14,6 +14,7 @@ import * as store from '@novelcraft/store';
 import type { AdoptableKind } from '@novelcraft/store';
 import { GateDeniedError } from './approval/gate.js';
 import { svc } from './ctx.js';
+import { importTraceFile } from './deep-import.js';
 import type { NovelCraftService } from './service.js';
 
 /** tools 服务缺省时的空注册(返回空 disposer 列表)。 */
@@ -93,6 +94,10 @@ interface PushArgs extends RootArgs {
   proposed_action: string;
   reversibility: boolean;
   expires_when_draft_changes?: boolean;
+}
+interface DeepImportArgs extends RootArgs {
+  start_chapter: number;
+  end_chapter: number;
 }
 
 function buildTools(service: NovelCraftService): ToolDefinition[] {
@@ -386,6 +391,63 @@ function buildTools(service: NovelCraftService): ToolDefinition[] {
             : {}),
         });
         return { id: signal.id };
+      },
+    }),
+    // ---- 7. 深度导入(六阶段, adopt 经审批门; trace 落 .assistant/import-trace.jsonl) ----
+    defineTool({
+      name: 'novelcraft_deep_import',
+      description:
+        '深度导入: 按章节范围顺序跑六阶段(切分/补全/融合/Scene 采用/实体/别名关系/结构)。' +
+        'Scene 采用必经用户审批(fail-closed); 全程 trace 事件落 .assistant/import-trace.jsonl。' +
+        '多章为长任务, 建议由编排层分批触发; 本工具同步执行并返回摘要。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        start_chapter: { type: 'integer', required: true, description: '起始章节(1 起)' },
+        end_chapter: { type: 'integer', required: true, description: '结束章节(含)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          workflow_id: { type: 'string' },
+          adopted: { type: 'integer' },
+          committed: { type: 'integer' },
+          skipped: { type: 'integer' },
+          conflicts: { type: 'integer' },
+          rejected: { type: 'boolean' },
+          trace_file: { type: 'string' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      timeoutMs: 3_600_000,
+      async execute(rawArgs, exec) {
+        const args = rawArgs as unknown as DeepImportArgs;
+        const agent = exec.agent as Agent | undefined;
+        try {
+          const result = await service.deepImport(agent, args.root, {
+            startChapter: args.start_chapter,
+            endChapter: args.end_chapter,
+          });
+          return {
+            ok: true,
+            workflow_id: result.workflow_id,
+            adopted: result.adopted,
+            committed: result.committed.length,
+            skipped: result.skipped.length,
+            conflicts: result.conflicts.length,
+            rejected: result.rejected,
+            trace_file: importTraceFile(args.root),
+            message: result.rejected
+              ? '深度导入完成: Scene 采用未获批准(无提交)。'
+              : '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
+          };
+        } catch (err) {
+          return { ok: false, workflow_id: '', adopted: 0, committed: 0, skipped: 0, conflicts: 0, rejected: false, trace_file: '', message: errMessage(err) };
+        }
       },
     }),
   ];
