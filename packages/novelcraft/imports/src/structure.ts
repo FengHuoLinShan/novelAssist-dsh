@@ -4,7 +4,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit } from "@novelcraft/store";
+import { assertValidRelations, gitAdd, gitCommit } from "@novelcraft/store";
 import { slugify } from "@novelcraft/vault";
 
 export interface StructureResult {
@@ -22,6 +22,14 @@ interface StructItem {
   [k: string]: unknown;
 }
 
+/** 目录键(复数)→ 结构资产 kind(ADR-0019 附录 A 源 kind)。 */
+const DIR_KEY_TO_KIND: Record<string, "thread" | "arc" | "foreshadowing" | "reveal"> = {
+  threads: "thread",
+  arcs: "arc",
+  foreshadowing: "foreshadowing",
+  reveals: "reveal",
+};
+
 function applyThreshold(items: StructItem[], min = 0.96): { keep: StructItem[]; dropped: number } {
   const keep: StructItem[] = [];
   let dropped = 0;
@@ -34,6 +42,11 @@ function applyThreshold(items: StructItem[], min = 0.96): { keep: StructItem[]; 
 
 function writeStructFile(root: string, dir: string, title: string, item: StructItem, workflowId: string, kind: string): string {
   const slug = slugify(`${kind}-${title}`) || `item-${Date.now()}`;
+  // ADR-0019 P3(用户裁定): relations 写前硬错校验(自环/悬空/type 白名单/端点 kind)。
+  if (Array.isArray(item.relations)) {
+    const sourceKind = DIR_KEY_TO_KIND[kind] ?? "thread";
+    assertValidRelations(root, sourceKind, slug, item.relations);
+  }
   const lines = [
     "---",
     `title: ${JSON.stringify(title)}`,
@@ -42,6 +55,7 @@ function writeStructFile(root: string, dir: string, title: string, item: StructI
     `workflow: ${JSON.stringify(workflowId)}`,
   ];
   if (item.summary) lines.push(`summary: ${JSON.stringify(item.summary)}`);
+  // ADR-0019 P3: relations 有向对透传(新工作流写 relations, 不散写 related_*_ids)。
   const extra = Object.entries(item).filter(([k]) => !["title", "summary", "confidence"].includes(k));
   for (const [k, v] of extra) {
     lines.push(`${k}: ${JSON.stringify(v)}`);

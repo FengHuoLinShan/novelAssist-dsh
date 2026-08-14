@@ -38,11 +38,13 @@
 - [x] **client 迭代**: 剧情地图(`store.storyMap` + story/map 端点 + StoryMapAction)+ 写作台四模式(writing/desk 端点 + WritingDeskAction, 守望/计划/评审/参照 tab), 4 测试; 全仓 **266 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/client-迭代-验收.md
 - [x] 信号主动推送(轮询→mux): ADR-0018 定 DSH 共享层政策; 短轮询过渡 + 真 mux 推送均已落地——scripts/apply-dsh-patches.mjs 加 client/push allowlist + @novelcraft/dsh emit + @novelcraft/client ctx.remote.$on 订阅(seam 提案见 信号推送-远程事件seam提案.md); 上游 Discussion #1289 回应后去 fork 化
 - [x] 仓库迁出: codex/m4-dsh-plugin-rewrite → 独立仓库 novelAssist-dsh(annotated tag `dsh`, 2026-08-14)
+- [x] **结构资产统一关系模型(ADR-0019)**: Accepted + P0–P3 全落地——`validateRelations`/`assertValidRelations`(7 type 枚举 + 源/目标白名单 + 自环/悬空/端点 kind, 写链硬错)、结构资产 schema `relations: 'list'`、`VaultIndex.relations` 全资产有向图(`sourceKind` 标注源)、`storyMap().edges`(显式边 + `related_*_ids` 兼容投影并集去重, N17)、`planned_payoff_scene` 兑现 #11 slug、reveal required 放宽(「未归类」=「无边」); 剧情地图三缺口关闭, 验收见 client-迭代-验收.md
 - [x] **旧引擎退役(novelAssist-dsh 侧)**: 本仓库携带的 FastAPI/PG/Vue 旧引擎副本(backend/frontend-console/deploy/docker/docker-compose/Makefile/start.sh/tools/workflows + 旧 docs 与顶层旧文档)已删除, 归档于 annotated tag `old-engine`; 仓库现为纯 M4 DSH 插件 monorepo(重写 README/AGENTS/CLAUDE + 最小 ci.yml)
-- [ ] 旧引擎退役(ai-writing-assist main): 父仓库 main 的旧 FastAPI/PG/Vue 引擎保留, 退役时机另行裁决(ADR-0017 §1)
+- [ ] 旧引擎退役(ai-writing-assist main): 父仓库 main 的旧 FastAPI/PG/Vue 引擎保留, 退役时机另行裁决(ADR-0017 §1)。**【用户明确指示】不得反向改动父仓库 ai-writing-assist(含其 main)** —— 只读, 不回写/不退役/不同步
 
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面
   唯一收敛在 @novelcraft/dsh;
-- 旧引擎(novelAssist-dsh 侧)已退役, 归档 tag `old-engine`; ai-writing-assist main 的旧引擎保留 + 旧数据不迁移(D15); 新工作一律在 novelAssist-dsh 的 main 提交, push origin。
+- 旧引擎(novelAssist-dsh 侧)已退役, 归档 tag `old-engine`; ai-writing-assist main 的旧引擎保留 + 旧数据不迁移(D15); 新工作一律在 novelAssist-dsh 的 main 提交, push origin;
+  **禁止反向改动父仓库 ai-writing-assist(含其 main, 用户指示, 2026-08-14)** —— 只读。

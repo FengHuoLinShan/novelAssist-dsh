@@ -387,13 +387,14 @@ const STRUCTURE_FIELDS: Record<string, FieldType> = {
   start_chapter: 'integer',
   end_chapter: 'integer',
   planned_payoff_chapter: 'integer',
-  planned_payoff_scene: 'integer',
+  planned_payoff_scene: 'string', // adjudication #11: 整数索引 → slug 引用
   planned_seed_chapter: 'integer',
   planned_reinforce_chapters: 'list',
   related_thread_ids: 'list',
   related_character_ids: 'list',
   related_entity_ids: 'list',
   related_memory_ids: 'list',
+  relations: 'list', // ADR-0019 N14: 结构资产统一 relations 有向对写面
   target_type: 'string',
   target_id: 'string',
   secret_summary: 'string',
@@ -449,6 +450,7 @@ export const SCHEMAS: Record<AssetKind, AssetSchema> = {
       chapter_ids: 'list',
       pov_character_id: 'string',
       structure_meta: 'object',
+      relations: 'list', // ADR-0019 N14: Scene 也走统一 relations 写面
       content_hash: 'string',
       evidence: 'list',
       provenance_key: 'string',
@@ -502,7 +504,8 @@ export const SCHEMAS: Record<AssetKind, AssetSchema> = {
     statusValues: ['draft', 'canonical', 'deprecated'],
   },
   reveal: {
-    required: ['id', 'status', 'target_type', 'target_id', 'secret_summary', 'related_thread_ids'],
+    // ADR-0019 P3: related_thread_ids 从 required 放宽(「未归类」=「无边」, 用 serves_thread 边表达)
+    required: ['id', 'status', 'target_type', 'target_id', 'secret_summary'],
     fields: STRUCTURE_FIELDS,
     statusValues: ['draft', 'canonical', 'deprecated'],
   },

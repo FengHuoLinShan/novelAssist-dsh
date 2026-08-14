@@ -105,6 +105,8 @@ export interface StoryMapValue {
   arcs: StoryMapAssetCard[];
   foreshadowing: StoryMapAssetCard[];
   reveals: StoryMapAssetCard[];
+  /** 跨类关系边(ADR-0019: 显式 relations + related_*_ids 兼容投影并集去重)。 */
+  edges: Array<{ source: string; target: string; type: string; status: string; sourceKind?: string }>;
 }
 
 export interface WritingDeskPayload {

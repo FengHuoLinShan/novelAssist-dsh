@@ -45,3 +45,12 @@
 | N11 | relations 存储形态(store 实现期裁定) | 对象 frontmatter `relations: []` 为源, 有向对由索引派生(不做独立文件) |
 | N12 | 结构资产粒度(store 实现期裁定) | **目录化**: `structure/threads/<slug>.md`、`structure/arcs/<slug>.md`、`structure/foreshadowing/<slug>.md`、`structure/reveal/<slug>.md`; 总纲保持 `structure/outline.md` 单文件。每资产一文件 = 细粒度 CAS/手改/git diff |
 | N13 | content_hash 格式(store 实现期裁定) | 存储用纯 64 位 hex; 读入时兼容 `sha256:` 前缀 |
+
+## 第三批(关系模型批次, 2026-08-14 用户确认, ADR-0019)
+
+| # | 裁定 | 决定 |
+|---|---|---|
+| N14 | 结构资产关系表示法 | 结构资产(thread/arc/scene/foreshadowing/reveal)与对象一样以顶层 `relations: []` 有向对为关系写面(对齐 N11); `target` = 裸 slug, 目标 kind 由 type 白名单约束; `status` 默认 `canonical` |
+| N15 | relation type 枚举 + 白名单 | 核心 type 进 store 硬校验(确定性); type 表达关系语义、不编码源 kind; 每类资产 schema 声明允许 type 子集 + 目标 kind 约束; 扩展 type 走 policy 白名单。7 个核心 type 见 ADR-0019 附录 A |
+| N16 | 身份锚与关系边分层 | 必填单目标身份锚(`reveal.target_type/target_id`、`scene.pov_character_id`)保留顶层字段、不进 relations; 仅可选多目标关联走 `relations` |
+| N17 | `related_*_ids` 兼容投影 | 读面把 `related_*_ids` 展开为等价有向边并与 `relations` 并集去重; 写端已自然收敛到 `relations`(M4 无生产工作流写散字段)、读端长期保留(只做加法, 不删字段); `reveal.related_thread_ids` 必填已放宽(「未归类」=「无边」, 2026-08-14 用户裁定) |

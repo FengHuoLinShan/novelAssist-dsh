@@ -27,6 +27,8 @@ export interface RelationEntry {
   target: string;
   type: string;
   status: string;
+  /** 源的资产 kind(ADR-0019 §4 跨类索引)。缺省 = 对象(兼容存量对象边)。 */
+  sourceKind?: string;
 }
 
 export interface SceneEntry {
@@ -86,6 +88,30 @@ export function rebuildIndex(root: string): VaultIndex {
     for (const rel of listFilesRecursive(absDir)) cb(rel, path.join(absDir, rel));
   };
 
+  /** 提取资产 frontmatter 的 relations 有向对(N11/N14), 补 source/sourceKind。 */
+  const collectRelations = (
+    data: Record<string, unknown>,
+    slug: string,
+    sourceKind?: string,
+  ): void => {
+    if (!Array.isArray(data.relations)) return;
+    for (const r of data.relations) {
+      if (r && typeof r === 'object') {
+        const o = r as Record<string, unknown>;
+        const target = typeof o.target === 'string' ? o.target : typeof o.target_ref === 'string' ? (o.target_ref as string) : undefined;
+        if (typeof target === 'string' && target !== '') {
+          relations.push({
+            source: slug,
+            target,
+            type: String(o.type ?? o.relation_type ?? ''),
+            status: String(o.status ?? 'canonical'),
+            ...(sourceKind ? { sourceKind } : {}),
+          });
+        }
+      }
+    }
+  };
+
   const addObject = (rel: string, abs: string): void => {
     const { data } = parseFrontmatter(readText(abs));
     const slug = slugFromFilename(rel);
@@ -99,22 +125,7 @@ export function rebuildIndex(root: string): VaultIndex {
       aliases,
     });
     for (const a of aliases) rawAliases.push({ alias: a, normalized: normalizeAliasKey(a), owner: slug });
-    if (Array.isArray(data.relations)) {
-      for (const r of data.relations) {
-        if (r && typeof r === 'object') {
-          const o = r as Record<string, unknown>;
-          const target = typeof o.target === 'string' ? o.target : typeof o.target_ref === 'string' ? (o.target_ref as string) : undefined;
-          if (typeof target === 'string' && target !== '') {
-            relations.push({
-              source: slug,
-              target,
-              type: String(o.type ?? o.relation_type ?? ''),
-              status: String(o.status ?? 'canonical'),
-            });
-          }
-        }
-      }
-    }
+    collectRelations(data, slug);
   };
 
   scan(p.world.objects, (rel, abs) => {
@@ -127,12 +138,14 @@ export function rebuildIndex(root: string): VaultIndex {
   scan(p.scenes.dir, (rel, abs) => {
     if (!rel.endsWith('.md')) return;
     const { data } = parseFrontmatter(readText(abs));
+    const slug = slugFromFilename(rel);
     scenes.push({
-      slug: slugFromFilename(rel),
+      slug,
       file: `scenes/${rel}`,
       status: String(data.status ?? ''),
       chapters: normalizeChapterIds(data.chapter_ids),
     });
+    collectRelations(data, slug, 'scene'); // ADR-0019 §4: Scene 关系边进跨类索引
   });
 
   scan(p.chapters.dir, (rel, abs) => {
@@ -152,13 +165,18 @@ export function rebuildIndex(root: string): VaultIndex {
   scan(p.structure.dir, (rel, abs) => {
     if (!rel.endsWith('.md')) return;
     const { data } = parseFrontmatter(readText(abs));
+    const kind = assetKindFromPath(`structure/${rel}`);
+    const slug = slugFromFilename(rel);
     structure.push({
-      kind: assetKindFromPath(`structure/${rel}`),
-      slug: slugFromFilename(rel),
+      kind,
+      slug,
       file: `structure/${rel}`,
       status: String(data.status ?? ''),
       name: typeof data.name === 'string' ? data.name : typeof data.title === 'string' ? data.title : undefined,
     });
+    if (kind !== 'outline') {
+      collectRelations(data, slug, kind); // ADR-0019 §4: 结构资产关系边进跨类索引
+    }
   });
 
   // 确定性排序 + 别名去重(canonical owner 优先)。
@@ -182,7 +200,7 @@ export function rebuildIndex(root: string): VaultIndex {
     });
   aliases.sort((a, b) => cmpStr(a.normalized, b.normalized) || cmpStr(a.owner, b.owner));
 
-  relations.sort((a, b) => cmpStr(a.source, b.source) || cmpStr(a.target, b.target) || cmpStr(a.type, b.type));
+  relations.sort((a, b) => cmpStr(a.source, b.source) || cmpStr(a.sourceKind ?? '', b.sourceKind ?? '') || cmpStr(a.target, b.target) || cmpStr(a.type, b.type));
   scenes.sort((a, b) => cmpStr(a.slug, b.slug));
   chapters.sort((a, b) => a.index - b.index);
   structure.sort((a, b) => cmpStr(a.kind, b.kind) || cmpStr(a.slug, b.slug));
@@ -199,6 +217,7 @@ export * from './errors.js';
 export * from './hash.js';
 export * from './paths.js';
 export * from './frontmatter.js';
+export * from './relations.js';
 export * from './git.js';
 export * from './adopt.js';
 export * from './merge.js';

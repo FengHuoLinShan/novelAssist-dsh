@@ -1,12 +1,13 @@
-// store · 剧情地图聚合(storyMap): 纯读结构资产 + Scene/章节覆盖, 供剧情地图 UI 消费。
-// 跨类关系边(thread↔scene↔arc)不在 VaultIndex.relations 里(那只覆盖世界对象),
-// 由本函数直读各结构资产 frontmatter 的 related_*_ids / chapter_range 等字段组装。
-// 依据: 设计文档 §17.5(剧情地图)、N12(结构资产目录化)、frontmatter STRUCTURE_FIELDS。
+// store · 剧情地图聚合(storyMap): 纯读结构资产 + Scene/章节覆盖 + 跨类关系边, 供剧情地图 UI 消费。
+// 跨类边(P1/N14)已进 VaultIndex.relations(sourceKind 标注源 kind); 本函数补充
+// related_*_ids 兼容投影(N17: 展开为等价有向边, 与显式 relations 边并集去重)。
+// 依据: 设计文档 §17.5(剧情地图)、ADR-0019(附录 A type 枚举 + N14/N16/N17)、N12(目录化)。
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { parseFrontmatter } from "./frontmatter.js";
 import { readText } from "./fs.js";
 import { rebuildIndex } from "./index.js";
+import type { RelationEntry } from "./index.js";
 
 export interface StoryMapAsset {
   kind: "thread" | "arc" | "foreshadowing" | "reveal";
@@ -41,6 +42,8 @@ export interface StoryMap {
   arcs: StoryMapAsset[];
   foreshadowing: StoryMapAsset[];
   reveals: StoryMapAsset[];
+  /** 跨类关系边(显式 relations + related_*_ids 兼容投影并集去重, N17)。 */
+  edges: RelationEntry[];
 }
 
 function num(v: unknown): number | undefined {
@@ -56,7 +59,72 @@ function numArr(v: unknown): number[] | undefined {
   return Array.isArray(v) ? (v.filter((x) => typeof x === "number") as number[]) : undefined;
 }
 
-/** 聚合剧情地图: book + chapters + scenes + 四类结构资产(带深字段)。 */
+/**
+ * related_*_ids 兼容投影(N17): 按 ADR-0019 附录 A「对应存量字段」列展开为等价有向边。
+ * 身份锚(reveal.target_id / scene.pov_character_id)不进边(N16)。
+ */
+function expandLegacyEdges(
+  kind: string,
+  slug: string,
+  fm: Record<string, unknown>,
+  out: RelationEntry[],
+): void {
+  const push = (targets: unknown, type: string): void => {
+    if (!Array.isArray(targets)) return;
+    for (const t of targets) {
+      if (typeof t !== "string" || t === "") continue;
+      out.push({ source: slug, target: t, type, status: "canonical", sourceKind: kind });
+    }
+  };
+  const meta = (fm.structure_meta ?? {}) as Record<string, unknown>;
+
+  switch (kind) {
+    case "thread":
+      push(fm.related_character_ids, "references_character");
+      push(fm.related_entity_ids, "references_entity");
+      push(fm.related_memory_ids, "references_memory");
+      break;
+    case "arc":
+      push(fm.related_thread_ids, "serves_thread");
+      push(fm.related_character_ids, "references_character");
+      push(fm.related_entity_ids, "references_entity");
+      break;
+    case "scene":
+      push(fm.related_thread_ids ?? meta.related_thread_ids, "serves_thread");
+      push(fm.related_character_ids ?? meta.related_character_ids, "references_character");
+      push(fm.related_entity_ids ?? meta.related_entity_ids, "references_entity");
+      if (typeof meta.parent_outline_arc_id === "string" && meta.parent_outline_arc_id) {
+        out.push({
+          source: slug,
+          target: meta.parent_outline_arc_id,
+          type: "belongs_to_arc",
+          status: "canonical",
+          sourceKind: "scene",
+        });
+      }
+      break;
+    case "foreshadowing":
+      push(fm.related_thread_ids, "serves_thread");
+      push(fm.related_entity_ids, "references_entity");
+      if (typeof fm.planned_payoff_scene === "string" && fm.planned_payoff_scene) {
+        out.push({
+          source: slug,
+          target: fm.planned_payoff_scene,
+          type: "pays_off_in_scene",
+          status: "canonical",
+          sourceKind: "foreshadowing",
+        });
+      }
+      break;
+    case "reveal":
+      push(fm.related_thread_ids, "serves_thread");
+      break;
+    default:
+      break;
+  }
+}
+
+/** 聚合剧情地图: book + chapters + scenes + 四类结构资产(带深字段)+ 跨类边。 */
 export function storyMap(root: string): StoryMap {
   const index = rebuildIndex(root);
 
@@ -78,6 +146,44 @@ export function storyMap(root: string): StoryMap {
       title = undefined;
     }
     return { slug: s.slug, status: s.status, chapters: s.chapters, title };
+  });
+
+  // 跨类边 = 显式 relations 边(P1, 带 sourceKind)∪ related_*_ids 兼容投影(N17), 去重。
+  const explicit = index.relations.filter((e) => e.sourceKind !== undefined);
+  const edges: RelationEntry[] = [...explicit];
+  const seen = new Set<string>();
+  for (const e of explicit) {
+    seen.add(`${e.source}\u0000${e.sourceKind ?? ""}\u0000${e.target}\u0000${e.type}`);
+  }
+  const legacy: RelationEntry[] = [];
+  for (const s of index.scenes) {
+    try {
+      const { data } = parseFrontmatter(readText(path.join(root, s.file)));
+      expandLegacyEdges("scene", s.slug, data as Record<string, unknown>, legacy);
+    } catch {
+      // 场景文件缺失/损坏: 跳过投影
+    }
+  }
+  for (const st of index.structure) {
+    if (st.kind === "outline") continue;
+    try {
+      const { data } = parseFrontmatter(readText(path.join(root, st.file)));
+      expandLegacyEdges(st.kind, st.slug, data as Record<string, unknown>, legacy);
+    } catch {
+      // 结构资产文件缺失/损坏: 跳过投影
+    }
+  }
+  for (const e of legacy) {
+    const key = `${e.source}\u0000${e.sourceKind ?? ""}\u0000${e.target}\u0000${e.type}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      edges.push(e);
+    }
+  }
+  edges.sort((a, b) => {
+    const ka = `${a.source}\u0000${a.sourceKind ?? ""}\u0000${a.target}\u0000${a.type}`;
+    const kb = `${b.source}\u0000${b.sourceKind ?? ""}\u0000${b.target}\u0000${b.type}`;
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 
   const asset = (e: { kind: string; slug: string; file: string; status: string; name?: string }): StoryMapAsset => {
@@ -117,5 +223,6 @@ export function storyMap(root: string): StoryMap {
     arcs: pick("arc"),
     foreshadowing: pick("foreshadowing"),
     reveals: pick("reveal"),
+    edges,
   };
 }

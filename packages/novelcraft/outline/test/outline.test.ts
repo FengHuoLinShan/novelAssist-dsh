@@ -1,5 +1,5 @@
 // outline 行为契约(specs/assets/outline.md + N1/N12 + catalog §2)
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,6 +43,32 @@ describe("structureHealthSignals(N1 后两键)", () => {
     writeStructureAsset(root, "thread", { title: "主线", summary: "s" });
     const signals = structureHealthSignals(root);
     expect(signals.some((s) => s.keys.includes("structure_unassigned"))).toBe(true);
+  });
+
+  it("写链硬错(ADR-0019 P3): 悬空 relations 拒绝写入, 文件不落盘", () => {
+    const root = makeRoot();
+    expect(() =>
+      writeStructureAsset(root, "thread", {
+        title: "主线",
+        relations: [{ target: "不存在的对象", type: "references_entity" }],
+      }),
+    ).toThrowError(/relations 校验失败/);
+    // 硬错后文件未落盘(fail-closed)
+    expect(readdirSync(join(root, "structure", "threads"))).toEqual([]);
+  });
+
+  it("写链合法边(ADR-0019): 引用已存在的对象, 落盘成功", () => {
+    const root = makeRoot();
+    writeFileSync(
+      join(root, "world", "objects", "霜华剑.md"),
+      '---\nid: 霜华剑\nkind: item\nname: 霜华剑\nstatus: canonical\n---\n',
+    );
+    gitAdd(root); gitCommit(root, "obj");
+    const slug = writeStructureAsset(root, "thread", {
+      title: "主线",
+      relations: [{ target: "霜华剑", type: "references_entity" }],
+    });
+    expect(slug).toContain("主线");
   });
 });
 

@@ -2,7 +2,7 @@
 // 依据: specs/assets/outline.md + store-rules + N1(六键健康词汇表)+ N12(目录化)。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths, slugify } from "@novelcraft/vault";
-import { computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+import { assertValidRelations, computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
 
 export interface SceneLite {
   slug: string;
@@ -116,6 +116,10 @@ export function writeStructureAsset(
   const { summary: body, ...meta } = content as { summary?: string } & Record<string, unknown>;
   const fm: Record<string, unknown> = { status: "draft", title, ...meta };
   if (opts.workflowId) fm.workflow = opts.workflowId;
+  // ADR-0019 P3(用户裁定): relations 写前硬错校验(自环/悬空/type 白名单/端点 kind)。
+  if (Array.isArray(fm.relations)) {
+    assertValidRelations(root, kind, slug, fm.relations);
+  }
   writeFileSync(`${dir}/${slug}.md`, serializeFrontmatter(fm, String(body ?? "")), "utf8");
   gitAdd(root);
   gitCommit(root, `outline: ${kind} ${slug}`);

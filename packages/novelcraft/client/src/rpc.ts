@@ -195,7 +195,7 @@ export function createNovelcraftHandlers(ctx: Context) {
     async storyMap(payload: StoryMapPayload): Promise<RpcResult<StoryMapValue>> {
       const binding = await resolveRoot(novelcraft, payload);
       if (!binding) {
-        return rpcOk({ bound: null, book: '', chapters: [], scenes: [], threads: [], arcs: [], foreshadowing: [], reveals: [] });
+        return rpcOk({ bound: null, book: '', chapters: [], scenes: [], threads: [], arcs: [], foreshadowing: [], reveals: [], edges: [] });
       }
       try {
         const m = storyMap(binding.root);
@@ -208,6 +208,7 @@ export function createNovelcraftHandlers(ctx: Context) {
           arcs: m.arcs,
           foreshadowing: m.foreshadowing,
           reveals: m.reveals,
+          edges: m.edges,
         });
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));

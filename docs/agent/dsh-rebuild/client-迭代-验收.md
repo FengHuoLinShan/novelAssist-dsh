@@ -27,12 +27,14 @@
 
 ## ③ 信号推送(轮询 → mux)现状
 
-- 现状: 宠物四态 5s 轮询 watch/state; 收件箱挂载/手动/u 键/动作后即时刷新。
-- 阻塞(实现期核实): DSH rc.6 平台模块表不暴露 connection 事件/订阅 seam;
-  ConnectionHandle.start(sinks) 的 mux 帧订阅被 runtime 单持有者独占。插件唯一
-  数据面是 connection.rpc.call。
-- 落点: 真 mux 推送需动 DSH 共享层(宿主发信号帧 + runtime/平台模块暴露订阅 seam),
-  属上层确认/ADR 范畴; 本包内低成本「事件触发短轮询」未做(留待 ADR 后一并)。
+- 现状: 宠物四态事件触发短轮询 + 退避(ADR-0018 §2); 收件箱挂载/手动/u 键/动作后即时刷新。
+- 核实: 真推送 seam 已存在(host api-proxy 按 API_REMOTE_FORWARDED_EVENTS allowlist 转发
+  host/remote-event 帧 → client runtime 扇出到 ctx.remote.$on); 缺口是 allowlist 封闭(11 条)。
+- 落点(ADR-0018): 真 mux 推送已落地——scripts/apply-dsh-patches.mjs 给
+  @deepseek-ai/dsh-api-remotes 的 allowlist 加通用 client/push + @novelcraft/dsh emit +
+  @novelcraft/client ctx.remote.$on 订阅(seam 提案见
+  docs/agent/dsh-rebuild/信号推送-远程事件seam提案.md); 上游 Discussion #1289 回应后去
+  fork 化; 本包内「事件触发短轮询 + 退避」作兜底保留。
 
 ## 验证矩阵(全部通过)
 
@@ -69,7 +71,7 @@ npm run build:client -w @novelcraft/client   # 浏览器 bundle(tsdown)
 
 ## 剩余
 
-- [ ] 信号主动推送: 需 DSH 共享层 ADR(见 ③)。
-- [ ] 剧情地图: foreshadowing↔reveal 配对、scene↔thread 外键、跨类关系索引(读面已就绪, 图/边增强留后)。
-- [ ] 写作台: 计划台续写提案(proposeNextChapter 空引用未实现)、健康信号扫描器→pushSignal 落盘。
-- [ ] 旧引擎退役仪式(ai-writing-assist main, 时点待用户)。
+- [x] 信号主动推送: ADR-0018 + 窄缝补丁已落地(client/push 真推送 + 短轮询兜底, 见 ③)。
+- [x] 剧情地图: foreshadowing↔reveal 配对(`reveals_foreshadowing` 边)、scene↔thread slug 引用边(`serves_thread`)、跨类关系索引(`VaultIndex.relations` 全资产有向图 + `storyMap().edges`; ADR-0019 Accepted, P0–P3 落地: validateRelations 写链硬错 + related_*_ids 兼容投影并集去重; 图/边 UI 增强留后)。
+- [x] 写作台: 计划台续写提案(proposeNextChapter → writing.proposeNextChapter + novelcraft_propose_next_chapter 工具, 计划 tab 展示)、健康信号扫描器→pushSignal 落盘(assistant.scanHealthSignals, 幂等确定性 id)。
+- [ ] 旧引擎退役(ai-writing-assist main, 父仓库旧引擎保留, 时点待用户; novelAssist-dsh 侧已退役, 见 旧引擎退役-验收.md)。

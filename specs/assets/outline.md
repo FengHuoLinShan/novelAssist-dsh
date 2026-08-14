@@ -43,6 +43,7 @@
 | chapter_ids | list\<string\> | 否 | 关联章节引用列表(章节编号/slug) |
 | pov_character_id | string | 否 | POV 人物引用(指向 world 人物对象) |
 | structure_meta | dict | 否 | 结构整理元信息(见下「structure_meta 子字段」) |
+| relations | list\<dict\> | 否 | 统一关系边(ADR-0019 N14: 元素 `{target: slug, type, status}`, type 枚举与白名单见 adjudications N15) |
 | content_hash | string | 是(adopt 时) | 内容 sha256(§22.2: 每次内容变更更新, 进 frontmatter) |
 | evidence | list | 否 | 证据引用(§22.2/§24.2 指定, 旧代码无独立列, 由 source-mapping/provenance 派生) |
 
@@ -154,6 +155,7 @@ draft ──adopt──▶ canonical ──替换/删除(不硬删)──▶ dep
 | related_character_ids | list\<string\> | 否 | 关联人物引用 |
 | related_entity_ids | list\<string\> | 否 | 关联实体引用 |
 | related_memory_ids | list\<string\> | 否 | 关联记忆引用 |
+| relations | list\<dict\> | 否 | 统一关系边(ADR-0019 N14, 同 Scene) |
 | reader_known_state | string | 否 | 读者已知状态 |
 | author_known_state | string | 否 | 作者已知状态 |
 | provenance_meta | dict | 否 | 来源元信息(见下) |
@@ -248,6 +250,7 @@ draft ──adopt──▶ canonical ──替换/删除──▶ deprecated
 | related_thread_ids | list\<string\> | 否 | 关联剧情线引用 |
 | related_character_ids | list\<string\> | 否 | 关联人物引用 |
 | related_entity_ids | list\<string\> | 否 | 关联实体引用 |
+| relations | list\<dict\> | 否 | 统一关系边(ADR-0019 N14, 同 Scene) |
 | provenance_meta | dict | 否 | 同 PlotThread 的 provenance_meta 公共子字段 |
 
 ### 状态机
@@ -410,9 +413,10 @@ head.current_revision_id  ──create_revision──▶ 新 revision 成为 cur
 | planned_seed_chapter | int | 否 | 埋设章节(≥1) |
 | planned_reinforce_chapters | list\<int\> | 否 | 强化章节列表(每项 ≥1) |
 | planned_payoff_chapter | int | 否 | 兑现章节(≥1) |
-| planned_payoff_scene | int | 否 | 兑现 Scene 索引(≥0, scene-centric 编译用) |
+| planned_payoff_scene | string(slug) | 否 | 兑现 Scene 引用(adjudication #11: 整数索引 → slug) |
 | related_entity_ids | list\<string\> | 否 | 关联实体引用 |
 | related_thread_ids | list\<string\> | 否 | 关联剧情线引用 |
+| relations | list\<dict\> | 否 | 统一关系边(ADR-0019 N14, 同 Scene) |
 | provenance_meta | dict | 否 | 同 PlotThread 公共子字段 |
 
 ### 状态机
@@ -441,17 +445,13 @@ head.current_revision_id  ──create_revision──▶ 新 revision 成为 cur
 
 - **未归类判定**: `related_thread_ids` 与非 deprecated PlotThread 的交集为空 → 视为
   「未归入有效剧情线」(`unassigned=True` 过滤; 来源: `foreshadowing_repository.py:56-81`)。
-- 章节字段边界: seed/reinforce/payoff ≥1, payoff_scene ≥0(`schemas.py:675-678`)。
+- 章节字段边界: seed/reinforce/payoff ≥1, payoff_scene 为 slug(adjudication #11)
+  (`schemas.py:675-678`)。
 - 按 `planned_seed_chapter` 排序(`foreshadowing_repository.py:16, 49-52`)。
-
-### 待定
-
-- 【待定】`planned_payoff_scene` 是 Scene 索引(整数), 在 M4 是否改为 Scene 引用(slug),
-  与 `planned_payoff_chapter` 的章节编号口径如何统一。
 
 ---
 
-## RevealPlan(M4 落点: 【待定】建议 `structure/reveal.md` 或并入 `foreshadowing.md`)
+## RevealPlan(M4 落点: `structure/reveal/<slug>.md`, adjudication #2/N12 目录化)
 
 ### 语义
 
@@ -469,6 +469,7 @@ head.current_revision_id  ──create_revision──▶ 新 revision 成为 cur
 | secret_summary | string | 是 | 被隐藏的秘密 |
 | reveal_stages | list\<object\> | 否 | 揭示阶段, 见子字段 |
 | related_thread_ids | list\<string\> | 是 | 关联剧情线引用(空数组 = 尚未归类) |
+| relations | list\<dict\> | 否 | 统一关系边(ADR-0019 N14, 同 Scene; 配对用 `reveals_foreshadowing`) |
 | provenance_meta | dict | 否 | 同 PlotThread 公共子字段 |
 
 **reveal_stages 元素**:
@@ -509,8 +510,6 @@ head.current_revision_id  ──create_revision──▶ 新 revision 成为 cur
 
 ### 待定
 
-- 【待定】§22.2 只列出 `foreshadowing.md`, 未列 `reveal.md`; RevealPlan 落点需裁定
-  (并入 foreshadowing 或单开文件)。
 - 【待定】`reveal_stages` 无 in-chapter offset, 同章内先后顺序在 M4 是否需要更细粒度。
 
 ---
@@ -526,6 +525,10 @@ head.current_revision_id  ──create_revision──▶ 新 revision 成为 cur
 | scene_chapter_links | Scene ↔ 章节编号查询索引 | 派生索引 |
 | scene_summary_checkpoints | Scene 按可见截止位置的防剧透摘要 | 派生索引 |
 | scene_fusion_suggestions | 持久 Scene 融合建议(pending/adopted/dismissed/stale) | 信号/收件箱(.assistant/signals/*.json) |
+
+跨类关系索引(ADR-0019 §4): 结构资产 + Scene 的 `relations` 边与 `related_*_ids`
+兼容投影统一进 `VaultIndex.relations`(sourceKind 标注源 kind), `storyMap().edges`
+消费该索引, 仍为纯派生、可全量重建、非编辑入口。
 
 来源: `models.py:248-410`, `schemas.py:539-610`; mapping_status 枚举见
 `scene_workbench.py:103-108`。

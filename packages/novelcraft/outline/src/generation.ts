@@ -38,11 +38,14 @@ export async function generateOutlineItem(
   if (!r.ok) return { ok: false, error: r.error };
   const content = (r.result as { content?: Record<string, unknown> }).content ?? (r.result as Record<string, unknown>);
   const kind = target === "plot_thread" ? "thread" : "arc";
-  const slug = writeStructureAsset(root, kind, {
+  const fm: Record<string, unknown> = {
     title: String(content.title ?? content.name ?? "未命名"),
     summary: String(content.summary ?? content.trajectory ?? ""),
     confidence: typeof content.confidence === "number" ? content.confidence : 0.8,
-  }, opts);
+  };
+  // ADR-0019 P3: 新工作流写 relations 有向对(不再散写 related_*_ids)。
+  if (Array.isArray(content.relations)) fm.relations = content.relations;
+  const slug = writeStructureAsset(root, kind, fm, opts);
   return { ok: true, slug };
 }
 

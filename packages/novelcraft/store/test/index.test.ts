@@ -67,6 +67,58 @@ describe('rebuildIndex(R12 · 幂等可重建)', () => {
     expect(idx.relations).toContainEqual({ source: 'obj_a', target: 'obj_b', type: 'friend_of', status: 'canonical' });
   });
 
+  it('对象边不写 sourceKind, 缺省即对象(存量兼容)', () => {
+    const r = fixture();
+    scaffold(r);
+    const idx = rebuildIndex(r);
+    const edge = idx.relations.find((x) => x.source === 'obj_a');
+    expect(edge?.sourceKind).toBeUndefined();
+  });
+
+  it('结构资产与 Scene 的 relations 边进跨类索引并带 sourceKind(ADR-0019 §4/N14)', () => {
+    const r = fixture();
+    scaffold(r);
+    writeAsset(r, 'structure/reveal/身世.md', {
+      id: '身世', status: 'canonical', name: '身世',
+      target_type: 'character', target_id: 'obj_a', secret_summary: '孤儿',
+      related_thread_ids: [],
+      relations: [{ target: '怀表', type: 'reveals_foreshadowing' }],
+    }, '身世');
+    writeAsset(r, 'structure/foreshadowing/怀表.md', {
+      id: '怀表', status: 'canonical', name: '怀表',
+      relations: [{ target: 's012', type: 'pays_off_in_scene' }],
+    }, '怀表');
+    writeAsset(r, 'scenes/s012.md', {
+      id: 's012', status: 'draft', scene_index: 12, narrative_tag: 'draft', source: 'manual',
+      chapter_ids: [7],
+      relations: [{ target: '主线', type: 'serves_thread' }],
+    }, 'scene');
+    const idx = rebuildIndex(r);
+    expect(idx.relations).toContainEqual({
+      source: '身世', target: '怀表', type: 'reveals_foreshadowing', status: 'canonical', sourceKind: 'reveal',
+    });
+    expect(idx.relations).toContainEqual({
+      source: '怀表', target: 's012', type: 'pays_off_in_scene', status: 'canonical', sourceKind: 'foreshadowing',
+    });
+    expect(idx.relations).toContainEqual({
+      source: 's012', target: '主线', type: 'serves_thread', status: 'canonical', sourceKind: 'scene',
+    });
+  });
+
+  it('跨类索引幂等: 两次 rebuild 边集合一致(纯派生, R12)', () => {
+    const r = fixture();
+    scaffold(r);
+    writeAsset(r, 'structure/reveal/身世.md', {
+      id: '身世', status: 'canonical', name: '身世',
+      target_type: 'character', target_id: 'obj_a', secret_summary: '孤儿',
+      related_thread_ids: [],
+      relations: [{ target: '怀表', type: 'reveals_foreshadowing' }],
+    }, '身世');
+    const a = rebuildIndex(r).relations;
+    const b = rebuildIndex(r).relations;
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
   it('derives Scene → chapter coverage', () => {
     const r = fixture();
     scaffold(r);

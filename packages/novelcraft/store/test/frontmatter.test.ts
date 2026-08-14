@@ -97,6 +97,36 @@ describe('validateFrontmatter(必填/类型/状态机取值)', () => {
     });
     expect(good).toEqual([]);
   });
+
+  it('结构资产与 Scene 接受 relations 字段(N14), 类型必须为 list', () => {
+    const rel = [{ target: '主线', type: 'serves_thread' }];
+    expect(validateFrontmatter('reveal', {
+      id: '身世', status: 'draft', name: '身世',
+      target_type: 'character', target_id: '苏婉', secret_summary: '孤儿',
+      related_thread_ids: [],
+      relations: rel,
+    })).toEqual([]);
+    expect(validateFrontmatter('scene', {
+      id: 's012', status: 'draft', scene_index: 12, narrative_tag: 'draft', source: 'manual',
+      relations: rel,
+    })).toEqual([]);
+
+    const badType = validateFrontmatter('thread', {
+      id: '主线', status: 'draft', name: '主线', thread_type: 'plot',
+      relations: 'not-a-list',
+    });
+    expect(badType.some((i) => i.code === 'INVALID_TYPE' && i.path === 'relations')).toBe(true);
+  });
+
+  it('reveal 不再强制 related_thread_ids(ADR-0019 P3 放宽, 「未归类」=「无边」)', () => {
+    const issues = validateFrontmatter('reveal', {
+      id: '身世', status: 'draft', name: '身世',
+      target_type: 'character', target_id: '苏婉', secret_summary: '孤儿',
+      // 无 related_thread_ids: 放宽后不报 MISSING_REQUIRED
+    });
+    expect(issues.some((i) => i.code === 'MISSING_REQUIRED' && i.path === 'related_thread_ids')).toBe(false);
+    expect(issues).toEqual([]);
+  });
 });
 
 describe('R29 · entity_type 20 枚举校验', () => {
