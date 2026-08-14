@@ -215,16 +215,56 @@ export class NovelCraftService extends Service {
     return rag.syncRagIndex(root);
   }
 
-  /** 便捷: RAG 语义检索(L0 BM25 召回; rerank 默认开, 走该书预设面 N20, 失败自动降级 BM25)。 */
+  /** 便捷: RAG 语义检索(L2 向量召回按 llm.yml embedding 键启用; rerank 默认开, 走该书预设面 N20, 失败自动降级)。 */
   async ragSearch(
     root: string,
     query: string,
     opts?: { topK?: number; rerank?: boolean },
   ): Promise<rag.RagSearchResult> {
     const provider = opts?.rerank !== false ? await this.contentProviderFor(root) : undefined;
+    const embeddingBackend = await this.embeddingBackendFor(root);
     return rag.searchRag(root, query, {
       ...(opts?.topK !== undefined ? { topK: opts.topK } : {}),
       ...(provider ? { provider } : {}),
+      ...(embeddingBackend ? { embeddingBackend } : {}),
     });
+  }
+
+  /**
+   * 便捷: L2 嵌入后端(root 的 llm.yml 设 embedding: bge-local-v1 时启用)。
+   * @novelcraft/rag-bge 为可选依赖: 动态 import 失败 → undefined(全链可降级), 不阻塞。
+   */
+  async embeddingBackendFor(root?: string): Promise<rag.EmbeddingBackend | undefined> {
+    if (!root) return undefined;
+    try {
+      const policy = llmStep.resolvePolicy(root);
+      if (policy.llm.embedding !== 'bge-local-v1') return undefined;
+    } catch {
+      return undefined; // llm.yml 读取失败视为未启用。
+    }
+    try {
+      const m = await import('@novelcraft/rag-bge');
+      return m.createBgeEmbeddingBackend();
+    } catch (err) {
+      this.ctx.logger?.warn?.(
+        '[novelcraft] L2 嵌入后端不可用: ' + (err instanceof Error ? err.message : String(err)),
+      );
+      return undefined;
+    }
+  }
+
+  /** 便捷: 批量嵌入待向量化片段(L2; 后端不可用 → 全 0 + 提示消息, 不抛错)。 */
+  async ragEmbed(root: string): Promise<rag.RagEmbedStats & { message?: string }> {
+    const backend = await this.embeddingBackendFor(root);
+    if (!backend) {
+      return {
+        embedded: 0,
+        failed: 0,
+        skipped: 0,
+        message:
+          '嵌入未启用或后端不可用(在 .assistant/llm.yml 设 embedding: bge-local-v1 并确保 @novelcraft/rag-bge 已安装)',
+      };
+    }
+    return rag.embedPendingChunks(root, backend);
   }
 }

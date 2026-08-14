@@ -119,3 +119,38 @@ export function selectPresetInLlmYml(root: string, name: string | null): void {
   while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
   writeFileSync(file, out.join("\n") + "\n", "utf8");
 }
+/** L2 嵌入后端合法值(llm.yml embedding 键)。 */
+export type EmbeddingBackendKey = "off" | "bge-local-v1";
+
+const EMBEDDING_KEYS: readonly string[] = ["off", "bge-local-v1"];
+
+/**
+ * 把嵌入后端写入 .assistant/llm.yml(M6 Track B: 只动 embedding 一键; 其余键原样保留)。
+ * value = null → 移除 embedding 键(回退不启用); 非法值抛错且不写(文件内容不变)。
+ * 行级改写与 policy.ts parseFlatYaml 的读取口径一致(顶层 key: value), 与
+ * selectPresetInLlmYml 同款单键纪律。
+ */
+export function selectEmbeddingInLlmYml(root: string, value: "off" | "bge-local-v1" | null): void {
+  if (value !== null && !EMBEDDING_KEYS.includes(value)) {
+    throw new Error(`嵌入后端值非法: ${String(value)}(可选: off / bge-local-v1)`);
+  }
+  const file = paths(root).assistant.llm;
+  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n") : [];
+  const out: string[] = [];
+  let wrote = false;
+  for (const line of lines) {
+    // 顶层 embedding 键(缩进行属嵌套节, 不动)
+    if (!/^[\s]/.test(line) && /^embedding\s*:/.test(line)) {
+      if (value !== null) out.push(`embedding: ${value}`);
+      wrote = true;
+      continue;
+    }
+    out.push(line);
+  }
+  if (!wrote && value !== null) {
+    while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+    out.push(`embedding: ${value}`);
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+  writeFileSync(file, out.join("\n") + "\n", "utf8");
+}

@@ -3,16 +3,21 @@
 // - chunk.summary 命中查询词时按出现次数额外 +0.5/词 加分;
 // - topK 默认 8; 零得分文档不返回; 空 query / 空 chunks 返回 []。
 // 纯确定性: 同输入恒同输出(同分保持输入顺序, sort 为稳定排序)。
+// M6 Track B 加法: scoreChunksBm25 抽出带原始分值的打分(供 L2 向量融合归一化用);
+// rankChunksBm25 行为与之前完全一致(过滤 >0 → 降序 → 截 topK)。
 import { tokenizeRagText } from "./tokenize.js";
 
 const K1 = 1.5;
 const B = 0.75;
 
-export function rankChunksBm25<T extends { text: string; summary?: string }>(
+/**
+ * BM25 打分(M6 Track B 加法): 对全部输入 chunk 打分, 不过滤、不排序、不截断。
+ * 供 L2 向量融合(两组各自 min-max 归一化)复用同一评分口径。
+ */
+export function scoreChunksBm25<T extends { text: string; summary?: string }>(
   chunks: readonly T[],
   query: string,
-  topK = 8,
-): T[] {
+): Array<{ c: T; score: number }> {
   if (chunks.length === 0 || query.trim().length === 0) {
     return [];
   }
@@ -42,7 +47,7 @@ export function rankChunksBm25<T extends { text: string; summary?: string }>(
   const qTerms = tokenizeRagText(query);
   const qDistinct = [...new Set(qTerms)];
 
-  const scored = chunks.map((c, i) => {
+  return chunks.map((c, i) => {
     // 正文 TF。
     const tf = new Map<string, number>();
     for (const t of docs[i]) {
@@ -66,8 +71,14 @@ export function rankChunksBm25<T extends { text: string; summary?: string }>(
     }
     return { c, score };
   });
+}
 
-  return scored
+export function rankChunksBm25<T extends { text: string; summary?: string }>(
+  chunks: readonly T[],
+  query: string,
+  topK = 8,
+): T[] {
+  return scoreChunksBm25(chunks, query)
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score) // 稳定排序: 同分保持原顺序。
     .slice(0, topK)

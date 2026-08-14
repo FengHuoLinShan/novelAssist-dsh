@@ -22,6 +22,8 @@ export interface ResolvedPolicy {
     top_p?: number;
     max_tokens?: number;
     timeout_ms?: number;
+    /** 嵌入后端(可选, L2; llm.yml 键: off | bge-local-v1) */
+    embedding?: string;
   };
   // per-book 校准(calibration.md 显式覆盖)
   calibration: Record<string, string>;
@@ -108,6 +110,7 @@ export function resolvePolicy(root: string): ResolvedPolicy {
   base.llm.top_p = llmYml.top_p === undefined ? undefined : num(llmYml.top_p, NaN);
   base.llm.max_tokens = llmYml.max_tokens === undefined ? undefined : num(llmYml.max_tokens, NaN);
   base.llm.timeout_ms = llmYml.timeout_ms === undefined ? undefined : num(llmYml.timeout_ms, NaN);
+  base.llm.embedding = str(llmYml.embedding);
   if (Number.isNaN(base.llm.temperature)) delete base.llm.temperature;
   if (Number.isNaN(base.llm.top_p)) delete base.llm.top_p;
   if (Number.isNaN(base.llm.max_tokens)) delete base.llm.max_tokens;

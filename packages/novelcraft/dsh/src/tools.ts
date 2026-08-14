@@ -281,8 +281,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               ? [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]
               : EVENT_RADAR_MAP.adopt,
           );
-          // 事件触发 RAG 索引(§11): adopt(含章候选分支)后资产/正文变化, 增量同步派生索引。
-          fireRagHook(ctx, args.root);
+          // 事件触发 RAG 索引(§11): adopt(含章候选分支)后资产/正文变化, 增量同步派生索引;
+          // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
+          fireRagHook(ctx, args.root, () => service.ragEmbed(args.root));
           return {
             ok: true,
             commit: result.commit,
@@ -480,8 +481,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           });
           // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
           fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.deepImport);
-          // 事件触发 RAG 索引(§11): 导入后章节内容变化, 增量同步派生索引。
-          fireRagHook(ctx, args.root);
+          // 事件触发 RAG 索引(§11): 导入后章节内容变化, 增量同步派生索引;
+          // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
+          fireRagHook(ctx, args.root, () => service.ragEmbed(args.root));
           return {
             ok: true,
             workflow_id: result.workflow_id,
@@ -670,8 +672,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           }
           // 事件触发雷达(§11): 摄入对账 + 写作健康。
           fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.ingest);
-          // 事件触发 RAG 索引(§11): 新章落库后增量同步派生索引。
-          fireRagHook(ctx, args.root);
+          // 事件触发 RAG 索引(§11): 新章落库后增量同步派生索引;
+          // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
+          fireRagHook(ctx, args.root, () => service.ragEmbed(args.root));
           const dup = report.warnings.includes('duplicate_import');
           const conflictNote = (report.conflicts?.length ?? 0) > 0
             ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
@@ -751,7 +754,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       name: 'novelcraft_rag_search',
       description:
         '语义检索: 在已索引片段(章节正文/角色/世界对象)中按查询找相关片段。BM25 召回 + 内容手精排' +
-        '(rerank=false 可关), 精排失败自动降级 BM25; 索引由 adopt/ingest/deep_import 事件自动维护, ' +
+        '(rerank=false 可关), 精排失败自动降级 BM25; .assistant/llm.yml 设 embedding: bge-local-v1 时' +
+        '叠加本地 BGE 向量召回(L2, 失败自动回退文本检索); 索引由 adopt/ingest/deep_import 事件自动维护, ' +
         '本工具只检索不建索引——若提示无索引, 请先文本入库或采用资产后重试。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
@@ -788,14 +792,63 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             char_count: c.char_count,
             text: c.text,
           }));
-          const rankingLabel = r.ranking === 'llm_rerank' ? '精排' : 'BM25';
-          const degradedNote = r.degraded ? '; 精排失败已降级' : '';
+          const rankingLabel = r.ranking === 'llm_rerank' ? '精排' : r.ranking === 'vector' ? '向量召回' : 'BM25';
+          const degradedNote = r.degraded
+            ? r.degraded.includes('rerank_failed')
+              ? '; 精排失败已降级'
+              : '; 嵌入失败, 已回退文本检索'
+            : '';
           const message = hits.length > 0
             ? `命中 ${hits.length} 条(${rankingLabel}${degradedNote})。`
             : '无命中或索引为空, 可先文本入库/采用资产后重试。';
           return { ok: true, hits, ranking: r.ranking, degraded: r.degraded ?? '', message };
         } catch (err) {
           return { ok: false, hits: [], ranking: 'bm25', degraded: '', message: errMessage(err) };
+        }
+      },
+    }),
+
+    // ---- 14. RAG 批量嵌入(L2; 全链可降级, 后端不可用返回提示不报错) ----
+    defineTool({
+      name: 'novelcraft_rag_embed',
+      description:
+        '批量嵌入: 对索引中待向量化片段(pending/failed 且无 vector)调用本地 BGE 嵌入后端生成向量, ' +
+        '逐批落盘 .assistant/rag-index.json(中断可重入)。需在 .assistant/llm.yml 设 embedding: bge-local-v1 ' +
+        '且 @novelcraft/rag-bge 已安装; 未启用时返回提示, 不报错。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          embedded: { type: 'integer' },
+          failed: { type: 'integer' },
+          skipped: { type: 'integer' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      async execute(rawArgs) {
+        const { root } = rawArgs as unknown as RootArgs;
+        try {
+          const r = await service.ragEmbed(root);
+          if (r.message !== undefined) {
+            // 后端不可用: 原样返回提示(作者语言), ok=false。
+            return { ok: false, embedded: 0, failed: 0, skipped: 0, message: r.message };
+          }
+          return {
+            ok: true,
+            embedded: r.embedded,
+            failed: r.failed,
+            skipped: r.skipped,
+            message: `已嵌入 ${r.embedded} 个片段(失败 ${r.failed}, 跳过 ${r.skipped})`,
+          };
+        } catch (err) {
+          return { ok: false, embedded: 0, failed: 0, skipped: 0, message: errMessage(err) };
         }
       },
     }),

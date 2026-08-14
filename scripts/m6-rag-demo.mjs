@@ -1,13 +1,15 @@
 // M6 Track A3 RAG L0 demo(纯 node, 无 DSH CLI):
 //   initVault → 手写 3 章 + 1 个世界对象(frontmatter 资产)→ syncRagIndex 两次
 //   (首次建索引 / 二次幂等全 0)→ searchRag 无 provider 检索两个中文查询(BM25)。
+// M6 Track B 追加 ⑤b: 模型已缓存时演示 L2 向量召回(embedPendingChunks + searchRag(embeddingBackend));
+//   未缓存则提示跳过(首次启用会自动下载)。
 // 运行: node scripts/m6-rag-demo.mjs
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { initVault } from "../packages/novelcraft/vault/dist/index.js";
 import { serializeFrontmatter } from "../packages/novelcraft/store/dist/index.js";
-import { syncRagIndex, searchRag } from "../packages/novelcraft/rag/dist/index.js";
+import { embedPendingChunks, syncRagIndex, searchRag } from "../packages/novelcraft/rag/dist/index.js";
 
 const dataDir = mkdtempSync(join(tmpdir(), "nc-m6-rag-"));
 const root = join(dataDir, "demo-book");
@@ -66,7 +68,26 @@ try {
     }
   }
 
-  console.log("M6 RAG L0 demo OK");
+  console.log("⑤b BGE L2 向量召回演示(模型缓存存在才启用)");
+  const modelCache = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "novelcraft", "models");
+  const hasCache = existsSync(modelCache) && readdirSync(modelCache).length > 0;
+  if (!hasCache) {
+    console.log("   BGE 模型未缓存, 跳过 L2 演示(首次启用会自动下载)");
+  } else {
+    const { createBgeEmbeddingBackend } = await import("../packages/novelcraft/rag-bge/dist/index.js");
+    const backend = createBgeEmbeddingBackend();
+    const stats = await embedPendingChunks(root, backend);
+    console.log(`   嵌入: embedded=${stats.embedded} failed=${stats.failed} skipped=${stats.skipped}(模型缓存: ${modelCache})`);
+    for (const q of ["青锋剑", "林晚"]) {
+      const r = await searchRag(root, q, { embeddingBackend: backend });
+      console.log(`   查询「${q}」: ranking=${r.ranking}${r.degraded ? ` degraded=${r.degraded}` : ""} hits=${r.hits.length}`);
+      for (const h of r.hits) {
+        console.log(`     - [${h.chunk_id}] ${h.source_type}${h.chapter_index !== undefined ? ` ch${h.chapter_index}` : ""} 「${h.text.slice(0, 40)}」`);
+      }
+    }
+  }
+
+  console.log("M6 RAG L0/L2 demo OK");
 } finally {
   rmSync(dataDir, { recursive: true, force: true });
 }

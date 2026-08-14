@@ -11,6 +11,7 @@ import {
   parseContentPresets,
   resolvePolicy,
   runStep,
+  selectEmbeddingInLlmYml,
   selectPresetInLlmYml,
   validateContentPreset,
 } from "../src/index";
@@ -121,5 +122,45 @@ describe("policy preset 键(N5: llm.yml 只存预设名与参数)", () => {
     expect(text).toContain("model: m1");
     // 非法名(NAME_RE 防 YAML 注入)
     expect(() => selectPresetInLlmYml(root, "坏: 名字")).toThrow();
+  });
+});
+describe("policy embedding 键 + selectEmbeddingInLlmYml(M6 Track B, L2)", () => {
+  it("llm.yml 的 embedding 键进 ResolvedPolicy.llm.embedding; 缺省 undefined", () => {
+    const root = makeRoot();
+    expect(resolvePolicy(root).llm.embedding).toBeUndefined();
+    writeFileSync(paths(root).assistant.llm, 'embedding: bge-local-v1\nmodel: m1\n', "utf8");
+    const p = resolvePolicy(root);
+    expect(p.llm.embedding).toBe("bge-local-v1");
+    expect(p.llm.model).toBe("m1"); // 其他键不受影响
+    writeFileSync(paths(root).assistant.llm, 'embedding: off\n', "utf8");
+    expect(resolvePolicy(root).llm.embedding).toBe("off");
+  });
+
+  it("selectEmbeddingInLlmYml 写/覆盖/null 删除: 只动 embedding 一键", () => {
+    const root = makeRoot();
+    writeFileSync(paths(root).assistant.llm, 'model: m1\ntemperature: 0.5\n', "utf8");
+    selectEmbeddingInLlmYml(root, "bge-local-v1");
+    let text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).toContain("embedding: bge-local-v1");
+    expect(text).toContain("model: m1");
+    expect(text).toContain("temperature: 0.5");
+    // 覆盖写(替换而非追加)
+    selectEmbeddingInLlmYml(root, "off");
+    text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).toContain("embedding: off");
+    expect(text).not.toContain("bge-local-v1");
+    // null 删除该键
+    selectEmbeddingInLlmYml(root, null);
+    text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).not.toContain("embedding:");
+    expect(text).toContain("model: m1");
+  });
+
+  it("非法值拒写: 抛错且文件内容不变", () => {
+    const root = makeRoot();
+    writeFileSync(paths(root).assistant.llm, 'model: m1\n', "utf8");
+    const before = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(() => selectEmbeddingInLlmYml(root, "bad-value" as never)).toThrow();
+    expect(readFileSync(paths(root).assistant.llm, "utf8")).toBe(before); // 未写
   });
 });
