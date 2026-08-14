@@ -94,6 +94,7 @@ describe('NovelCraftService 端到端', () => {
       'novelcraft_llm_step',
       'novelcraft_propose_next_chapter',
       'novelcraft_radar_sweep',
+      'novelcraft_rag_search',
       'novelcraft_signal_push',
       'novelcraft_store_adopt',
       'novelcraft_store_index',

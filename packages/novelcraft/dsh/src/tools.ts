@@ -16,6 +16,7 @@ import { GateDeniedError } from './approval/gate.js';
 import { svc } from './ctx.js';
 import { importTraceFile } from './deep-import.js';
 import { EVENT_RADAR_MAP, fireRadarHooks } from './radar-hooks.js';
+import { fireRagHook } from './rag-hooks.js';
 import type { NovelCraftService } from './service.js';
 import { pushSignalsChanged } from './push.js';
 
@@ -116,6 +117,11 @@ interface IngestFileArgs extends RootArgs {
 }
 interface RadarSweepArgs extends RootArgs {
   radar?: string;
+}
+interface RagSearchArgs extends RootArgs {
+  query: string;
+  top_k?: number;
+  rerank?: boolean;
 }
 
 function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
@@ -275,6 +281,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               ? [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]
               : EVENT_RADAR_MAP.adopt,
           );
+          // 事件触发 RAG 索引(§11): adopt(含章候选分支)后资产/正文变化, 增量同步派生索引。
+          fireRagHook(ctx, args.root);
           return {
             ok: true,
             commit: result.commit,
@@ -472,6 +480,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           });
           // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
           fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.deepImport);
+          // 事件触发 RAG 索引(§11): 导入后章节内容变化, 增量同步派生索引。
+          fireRagHook(ctx, args.root);
           return {
             ok: true,
             workflow_id: result.workflow_id,
@@ -660,6 +670,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           }
           // 事件触发雷达(§11): 摄入对账 + 写作健康。
           fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.ingest);
+          // 事件触发 RAG 索引(§11): 新章落库后增量同步派生索引。
+          fireRagHook(ctx, args.root);
           const dup = report.warnings.includes('duplicate_import');
           const conflictNote = (report.conflicts?.length ?? 0) > 0
             ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
@@ -731,6 +743,59 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           };
         } catch (err) {
           return { ok: false, results: {}, plot_summary: '', message: errMessage(err) };
+        }
+      },
+    }),
+    // ---- 13. RAG 语义检索(只读; 索引由事件钩子维护, 本工具不触发同步) ----
+    defineTool({
+      name: 'novelcraft_rag_search',
+      description:
+        '语义检索: 在已索引片段(章节正文/角色/世界对象)中按查询找相关片段。BM25 召回 + 内容手精排' +
+        '(rerank=false 可关), 精排失败自动降级 BM25; 索引由 adopt/ingest/deep_import 事件自动维护, ' +
+        '本工具只检索不建索引——若提示无索引, 请先文本入库或采用资产后重试。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        query: { type: 'string', required: true, description: '检索查询(作者语言关键词或句子)' },
+        top_k: { type: 'integer', description: '返回条数上限(缺省 8)' },
+        rerank: { type: 'boolean', description: '内容手精排开关(缺省 true; false = 纯 BM25, 不调 LLM)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          hits: { type: 'array' },
+          ranking: { type: 'string' },
+          degraded: { type: 'string' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      async execute(rawArgs) {
+        const args = rawArgs as unknown as RagSearchArgs;
+        try {
+          const r = await service.ragSearch(args.root, args.query, {
+            ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
+            ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
+          });
+          // hits 摊平为作者可读字段(dsh-tools 输出根必须 JSON 开放; 逐键构造字面量)。
+          const hits = r.hits.map((c) => ({
+            chunk_id: c.chunk_id,
+            source_type: c.source_type,
+            ...(c.chapter_index !== undefined ? { chapter_index: c.chapter_index } : {}),
+            char_count: c.char_count,
+            text: c.text,
+          }));
+          const rankingLabel = r.ranking === 'llm_rerank' ? '精排' : 'BM25';
+          const degradedNote = r.degraded ? '; 精排失败已降级' : '';
+          const message = hits.length > 0
+            ? `命中 ${hits.length} 条(${rankingLabel}${degradedNote})。`
+            : '无命中或索引为空, 可先文本入库/采用资产后重试。';
+          return { ok: true, hits, ranking: r.ranking, degraded: r.degraded ?? '', message };
+        } catch (err) {
+          return { ok: false, hits: [], ranking: 'bm25', degraded: '', message: errMessage(err) };
         }
       },
     }),

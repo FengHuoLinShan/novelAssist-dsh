@@ -13,6 +13,7 @@ import * as memory from '@novelcraft/memory';
 import * as outline from '@novelcraft/outline';
 import * as rag from '@novelcraft/rag';
 import * as store from '@novelcraft/store';
+import { ensureVaultGitignore } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import { ApprovalGate } from './approval/gate.js';
@@ -206,5 +207,24 @@ export class NovelCraftService extends Service {
   /** 便捷: 雷达巡检(默认五面; §11 事件/手动触发, 非定时)。 */
   radarSweep(root: string, radars?: assistant.RadarKind[]): assistant.SweepResult {
     return assistant.runRadarSweep(root, radars ? { radars } : {});
+  }
+
+  /** 便捷: RAG 索引增量同步(兼容旧 vault: 先补 .gitignore 再重建派生索引; R5/R12 可随时重建)。 */
+  ragSync(root: string): rag.RagSyncStats {
+    ensureVaultGitignore(root, ['.assistant/rag-index.json']);
+    return rag.syncRagIndex(root);
+  }
+
+  /** 便捷: RAG 语义检索(L0 BM25 召回; rerank 默认开, 走该书预设面 N20, 失败自动降级 BM25)。 */
+  async ragSearch(
+    root: string,
+    query: string,
+    opts?: { topK?: number; rerank?: boolean },
+  ): Promise<rag.RagSearchResult> {
+    const provider = opts?.rerank !== false ? await this.contentProviderFor(root) : undefined;
+    return rag.searchRag(root, query, {
+      ...(opts?.topK !== undefined ? { topK: opts.topK } : {}),
+      ...(provider ? { provider } : {}),
+    });
   }
 }
