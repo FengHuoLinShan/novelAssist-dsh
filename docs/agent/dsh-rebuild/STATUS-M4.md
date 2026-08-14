@@ -25,7 +25,8 @@
 - [x] R2 完成: @novelcraft/llm-step(19 测试, 两次子代理无产出后由主会话实现)
 - [x] R3 完成: writing 垂直切片闭环(15 测试 + r3-demo 通过); store chapter 采用语义修正
 - [ ] R3 writing 垂直切片(首个可用闭环)
-- [ ] R4 imports → R5 其余领域 → R6 assistant → R7 client + 发布
+- [~] R4 imports: Phase 1 完成(12 测试 + r4a-demo); Phase 2/3 + L0–L4 待 R4b
+- [ ] R5 其余领域(部分已先行: memory 5 测试 / assistant 核心 11 测试)→ R6 → R7 client + 发布
 
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
