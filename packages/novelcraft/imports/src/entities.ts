@@ -103,6 +103,8 @@ export async function extractEntityBatch(
     const slug = slugifyName(d.name, serial++);
     const fmLines = [
       "---",
+      // N23(用户裁定): pending/object schema required 含 id; id=落盘 slug, 与文件名同源确定性(N2)。
+      `id: ${JSON.stringify(slug)}`,
       `name: ${JSON.stringify(d.name)}`,
       `kind: ${JSON.stringify(d.kind)}`, // B1(用户裁定): 写面统一 kind, 不再写 entity_type
       "status: candidate",

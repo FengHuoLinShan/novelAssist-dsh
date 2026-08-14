@@ -5,7 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
 import { registerImportSpecs } from "./specs-imports.js";
 import { listCanonicalObjects } from "./entities.js";
 import { readChapterText } from "./stages.js";
@@ -104,7 +104,15 @@ export async function aliasRelationBatch(
       const aliases: string[] = Array.isArray(tgtFm.aliases) ? tgtFm.aliases.map(String) : [];
       if (!aliases.includes(alias)) {
         aliases.push(alias);
-        writeFileSync(file, serializeFrontmatter({ ...tgtFm, aliases }, body), "utf8");
+        const nextFm = { ...tgtFm, aliases };
+        // N23(用户裁定): 别名附着改写对象文件前, 按 'object' schema 校验最终 fm(required=id/kind/name/status),
+        // 失败 fail-closed 不写字、不进 git commit(校验先于 writeFileSync)。
+        const issues = validateFrontmatter("object", nextFm);
+        if (issues.length > 0) {
+          const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+          throw new StoreError("VALIDATION_FAILED", `object ${target} frontmatter 校验失败: ${detail}`, issues);
+        }
+        writeFileSync(file, serializeFrontmatter(nextFm, body), "utf8");
         result.aliases_attached += 1;
         touched.add(target);
       }
@@ -127,9 +135,17 @@ export async function aliasRelationBatch(
         },
       ]);
       if (added > 0) {
+        const nextFm = { ...srcFm, relations: rows };
+        // N23(用户裁定): relations 合并改写对象文件前, 按 'object' schema 校验最终 fm(relations 为 list 形态),
+        // 失败 fail-closed 不写字、不进 git commit(校验先于 writeFileSync)。
+        const issues = validateFrontmatter("object", nextFm);
+        if (issues.length > 0) {
+          const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+          throw new StoreError("VALIDATION_FAILED", `object ${source} frontmatter 校验失败: ${detail}`, issues);
+        }
         writeFileSync(
           file,
-          serializeFrontmatter({ ...srcFm, relations: rows }, body),
+          serializeFrontmatter(nextFm, body),
           "utf8",
         );
         result.relations_written += added;

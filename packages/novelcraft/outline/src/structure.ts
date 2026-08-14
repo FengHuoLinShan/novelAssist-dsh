@@ -2,7 +2,7 @@
 // 依据: specs/assets/outline.md + store-rules + N1(六键健康词汇表)+ N12(目录化)。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths, slugify } from "@novelcraft/vault";
-import { assertValidRelations, computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+import { assertValidRelations, computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
 
 export interface SceneLite {
   slug: string;
@@ -103,6 +103,13 @@ export function writeOutline(
     ...meta,
   };
   if (opts.workflowId) fm.workflow = opts.workflowId;
+  // N23/M7-C: 落盘前按 outline schema 校验(frontmatter.ts:513)。outline_markdown 落正文,
+  // 校验视图并入; issues 非空 fail-closed 不写字。
+  const issues = validateFrontmatter("outline", { ...fm, outline_markdown: String(body ?? "") });
+  if (issues.length > 0) {
+    const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+    throw new StoreError("VALIDATION_FAILED", `outline frontmatter 校验失败: ${detail}`, issues);
+  }
   writeFileSync(file, serializeFrontmatter(fm, String(body ?? "")), "utf8");
   gitAdd(root);
   gitCommit(root, opts.message ?? "outline: update story outline");
@@ -147,6 +154,13 @@ export function writeStructureAsset(
   // ADR-0019 P3(用户裁定): relations 写前硬错校验(自环/悬空/type 白名单/端点 kind)。
   if (Array.isArray(fm.relations)) {
     assertValidRelations(root, kind, slug, fm.relations);
+  }
+  // N23/M7-C: B3 必填补齐 + relations 校验之后、落盘之前, 按 kind schema 校验
+  // (thread/arc/foreshadowing/reveal, frontmatter.ts:491-511); issues 非空 fail-closed 不写字。
+  const issues = validateFrontmatter(kind, fm);
+  if (issues.length > 0) {
+    const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+    throw new StoreError("VALIDATION_FAILED", `${kind} frontmatter 校验失败: ${detail}`, issues);
   }
   writeFileSync(`${dir}/${slug}.md`, serializeFrontmatter(fm, String(body ?? "")), "utf8");
   gitAdd(root);

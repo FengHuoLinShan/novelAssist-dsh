@@ -1,5 +1,5 @@
 // imports Phase 1 行为契约(PLAN.md / store-rules / imports.md)
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -155,6 +155,19 @@ describe("commitScenes(幂等/冲突/归一)", () => {
     const fb = { ...c, candidate_id: "fb", fallback_required: true, needs_review: true, review_reason: "fallback" };
     const r = commitScenes(root, [c, fb], { workflowId: "w1" });
     expect(r.fallbacks).toBe(1);
+  });
+  it("scene fm 校验失败(title 类型非法)→ fail-closed 拒写且不产生文件(N23)", () => {
+    const root = makeRoot();
+    // N23(用户裁定): 落盘前按 'scene' schema 校验最终 fm; title 应为 string, 数字触发 INVALID_TYPE。
+    const bad = { ...candidate(1, "A1"), payload: { ...candidate(1, "A1").payload, title: 42 } } as unknown as SceneCandidate;
+    let err: unknown = null;
+    try {
+      commitScenes(root, [bad], { workflowId: "w1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "VALIDATION_FAILED" }); // N23 fail-closed: 校验失败即抛 StoreError
+    expect(existsSync(join(root, "scenes", "s001.md"))).toBe(false); // 不产生文件
   });
 });
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
+import { StoreError, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { createObject, listObjects, listPending, listTags, readObject, suggestBiblePage, suggestEntity, updateObject, worldChat, worldConverge, worldExplore, worldInspect } from "../src/index";
 
 const dirs: string[] = [];
@@ -39,6 +40,30 @@ describe("objects CRUD(薄封装)", () => {
     expect(() => createObject(root, { name: "克莱恩", entityType: "character" })).toThrow(/已存在/);
     updateObject(root, slug, { tags: ["主角"] });
     expect(readObject(root, slug).tags).toEqual(["主角"]);
+  });
+  it("createObject 落盘含 id 且过 object schema(N23/M7-C)", () => {
+    const root = makeRoot();
+    const slug = createObject(root, { name: "林晚", entityType: "character", aliases: ["晚娘"], tags: ["配角"] });
+    const raw = readFileSync(join(root, "world", "objects", slug + ".md"), "utf8");
+    expect(raw).toContain(`id: ${JSON.stringify(slug)}`); // N23: object required 含 id(frontmatter.ts:417)
+    const { data } = parseFrontmatter(raw);
+    expect(validateFrontmatter("object", data)).toEqual([]); // 合规写入不受影响
+  });
+  it("updateObject: 缺必填 id 的 legacy 对象 → VALIDATION_FAILED 且文件未被改写(N23/M7-C)", () => {
+    const root = makeRoot();
+    const file = join(root, "world", "objects", "obj-legacy.md");
+    writeFileSync(file, ["---", 'name: "旧人"', 'kind: "character"', "status: canonical", "---", ""].join("\n"), "utf8");
+    const before = readFileSync(file, "utf8");
+    let err: unknown;
+    try {
+      updateObject(root, "obj-legacy", { tags: ["新标签"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(StoreError); // N23: 校验失败统一 StoreError(与 assertValidRelations 同构)
+    expect((err as StoreError).code).toBe("VALIDATION_FAILED");
+    // fail-closed: 校验发生在任何写入之前, 文件内容不变(无部分状态)
+    expect(readFileSync(file, "utf8")).toBe(before);
   });
   it("legacy 兼容: 只含 entity_type 的旧对象文件仍可读(B1 fallback)", () => {
     const root = makeRoot();

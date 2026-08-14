@@ -4,7 +4,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
-import { assertValidRelations, gitAdd, gitCommit } from "@novelcraft/store";
+import { assertValidRelations, gitAdd, gitCommit, StoreError, validateFrontmatter } from "@novelcraft/store";
 import { slugify } from "@novelcraft/vault";
 
 export interface StructureResult {
@@ -42,35 +42,40 @@ function applyThreshold(items: StructItem[], min = 0.96): { keep: StructItem[]; 
 
 function writeStructFile(root: string, dir: string, title: string, item: StructItem, workflowId: string, kind: string): string {
   const slug = slugify(`${kind}-${title}`) || `item-${Date.now()}`;
+  const assetKind = DIR_KEY_TO_KIND[kind] ?? "thread"; // threads→thread / arcs→arc / foreshadowing→foreshadowing / reveals→reveal
   // ADR-0019 P3(用户裁定): relations 写前硬错校验(自环/悬空/type 白名单/端点 kind)。
   if (Array.isArray(item.relations)) {
-    const sourceKind = DIR_KEY_TO_KIND[kind] ?? "thread";
-    assertValidRelations(root, sourceKind, slug, item.relations);
+    assertValidRelations(root, assetKind, slug, item.relations);
   }
-  const lines = [
-    "---",
-    `id: ${JSON.stringify(slug)}`,
-    `title: ${JSON.stringify(title)}`,
-    "status: canonical", // ≥0.96 自动应用(imports.md 结构去重); 审批门 Phase F 另行收口
-    `confidence: ${item.confidence ?? 0}`,
-    `workflow: ${JSON.stringify(workflowId)}`,
-  ];
+  const fm: Record<string, unknown> = {
+    id: slug,
+    title,
+    status: "canonical", // ≥0.96 自动应用(imports.md 结构去重); 审批门 Phase F 另行收口
+    confidence: item.confidence ?? 0,
+    workflow: workflowId,
+  };
   // B3 必填补齐(frontmatter.ts:491-511): thread=name/thread_type, foreshadowing=name;
   // name 默认取 title, thread_type 自由字符串常见 main(specs/assets/outline.md:148)。
   if (kind === "threads" || kind === "foreshadowing") {
-    lines.push(`name: ${JSON.stringify(typeof item.name === "string" && item.name ? item.name : title)}`);
+    fm.name = typeof item.name === "string" && item.name ? item.name : title;
   }
   if (kind === "threads") {
-    lines.push(`thread_type: ${JSON.stringify(typeof item.thread_type === "string" && item.thread_type ? item.thread_type : "main")}`);
+    fm.thread_type = typeof item.thread_type === "string" && item.thread_type ? item.thread_type : "main";
   }
-  if (item.summary) lines.push(`summary: ${JSON.stringify(item.summary)}`);
+  if (item.summary) fm.summary = item.summary;
   // ADR-0019 P3: relations 有向对透传(新工作流写 relations, 不散写 related_*_ids)。
   // name/thread_type 已显式落列(见上), 其余(reveal 的 target_type/target_id/secret_summary 等)原样透传。
   const extra = Object.entries(item).filter(([k]) => !["title", "summary", "confidence", "name", "thread_type"].includes(k));
   for (const [k, v] of extra) {
-    lines.push(`${k}: ${JSON.stringify(v)}`);
+    fm[k] = v;
   }
-  lines.push("---", "");
+  // N23(用户裁定): 落盘前按资产 kind 校验最终 fm(必填/类型/状态机), 失败 fail-closed 不写字、不进 git commit。
+  const issues = validateFrontmatter(assetKind, fm);
+  if (issues.length > 0) {
+    const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+    throw new StoreError("VALIDATION_FAILED", `${assetKind} ${slug} frontmatter 校验失败: ${detail}`, issues);
+  }
+  const lines = ["---", ...Object.entries(fm).map(([k, v]) => `${k}: ${JSON.stringify(v)}`), "---", ""];
   writeFileSync(`${dir}/${slug}.md`, lines.join("\n") + `# ${title}\n\n${item.summary ?? ""}\n`, "utf8");
   return slug;
 }

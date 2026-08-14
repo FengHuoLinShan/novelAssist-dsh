@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
-import { gitAdd, gitCommit, parseFrontmatter } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
 import type { SceneCandidate } from "./stages.js";
 
 export interface CommitResult {
@@ -60,7 +60,7 @@ function listExistingScenes(root: string): ExistingScene[] {
     });
 }
 
-function buildFrontmatter(c: SceneCandidate, index: number, workflowId: string, contentHash: string): string {
+function buildSceneFm(c: SceneCandidate, index: number, workflowId: string, contentHash: string): Record<string, unknown> {
   const key = provenanceKey({
     workflowId,
     candidateId: c.candidate_id,
@@ -68,30 +68,34 @@ function buildFrontmatter(c: SceneCandidate, index: number, workflowId: string, 
     operation: c.operation,
     sourceChapterIndices: c.source_chapter_indices,
   });
-  const fields: Array<[string, unknown]> = [
-    ["id", slugifyId(index)],
-    ["status", "draft"],
+  const fm: Record<string, unknown> = {
+    id: slugifyId(index),
+    status: "draft",
     // B3 必填补齐(frontmatter.ts:436): scene required=id/status/scene_index/narrative_tag/source。
-    ["scene_index", index], // 序贯整数, 与 id(slug 数字)同源
-    ["source", "deep_import"], // 深度导入写点语义(imports.md; source 枚举见 specs/assets/outline.md:586)
-    ["chapter_ids", c.source_chapter_indices],
-    ["title", c.payload.title],
-    ["narrative_tag", normalizeNarrativeTag(c.payload.narrative_tag)],
-    ["content_hash", contentHash],
-    ["provenance_key", key],
-    ["workflow", workflowId],
-  ];
-  if (c.payload.goal) fields.push(["goal", c.payload.goal]);
-  if (c.payload.core_conflict) fields.push(["core_conflict", c.payload.core_conflict]);
-  if (c.payload.emotional_beat) fields.push(["emotional_beat", c.payload.emotional_beat]);
-  if (c.payload.must_happen) fields.push(["must_happen", c.payload.must_happen]);
-  if (c.payload.must_not_happen) fields.push(["must_not_happen", c.payload.must_not_happen]);
+    scene_index: index, // 序贯整数, 与 id(slug 数字)同源
+    source: "deep_import", // 深度导入写点语义(imports.md; source 枚举见 specs/assets/outline.md:586)
+    chapter_ids: c.source_chapter_indices,
+    title: c.payload.title,
+    narrative_tag: normalizeNarrativeTag(c.payload.narrative_tag),
+    content_hash: contentHash,
+    provenance_key: key,
+    workflow: workflowId,
+  };
+  if (c.payload.goal) fm.goal = c.payload.goal;
+  if (c.payload.core_conflict) fm.core_conflict = c.payload.core_conflict;
+  if (c.payload.emotional_beat) fm.emotional_beat = c.payload.emotional_beat;
+  if (c.payload.must_happen) fm.must_happen = c.payload.must_happen;
+  if (c.payload.must_not_happen) fm.must_not_happen = c.payload.must_not_happen;
   if (c.needs_review) {
-    fields.push(["needs_review", true]);
-    fields.push(["review_reason", c.review_reason]);
+    fm.needs_review = true;
+    fm.review_reason = c.review_reason;
   }
-  if (c.fallback_required) fields.push(["fallback_required", true]);
-  const lines = ["---", ...fields.map(([k, v]) => scalar(k, v)), "---", ""];
+  if (c.fallback_required) fm.fallback_required = true;
+  return fm;
+}
+
+function serializeFm(fm: Record<string, unknown>): string {
+  const lines = ["---", ...Object.entries(fm).map(([k, v]) => scalar(k, v)), "---", ""];
   return lines.join("\n");
 }
 
@@ -157,7 +161,15 @@ export function commitScenes(
     const contentHash = createHash("sha256")
       .update(JSON.stringify(c.payload))
       .digest("hex");
-    writeFileSync(file, buildFrontmatter(c, nextIndex - 1, opts.workflowId, contentHash) + "\n", "utf8");
+    const fm = buildSceneFm(c, nextIndex - 1, opts.workflowId, contentHash);
+    // N23(用户裁定): scene 落盘前按 'scene' schema 校验最终 fm(B3 已补 scene_index/source/narrative_tag),
+    // 失败 fail-closed 不写字、不进 git commit(校验先于 writeFileSync)。
+    const issues = validateFrontmatter("scene", fm);
+    if (issues.length > 0) {
+      const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+      throw new StoreError("VALIDATION_FAILED", `scene ${slug} frontmatter 校验失败: ${detail}`, issues);
+    }
+    writeFileSync(file, serializeFm(fm) + "\n", "utf8");
     result.created.push(slug);
   }
 

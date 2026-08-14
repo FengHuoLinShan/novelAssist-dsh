@@ -35,6 +35,9 @@ describe("generateNextChapter(选定方向 → 正文候选)", () => {
     const raw = readFileSync(file, "utf8");
     expect(raw).toContain("status: candidate");
     expect(raw).toContain("chapter_index: 2");
+    // N23: chapter_candidate 必填 status/content_hash/source。
+    expect(raw).toContain("source: writing_generate");
+    expect(raw).toMatch(/content_hash: [0-9a-f]{64}/);
     expect(raw).toContain("proposal_title: \"雨夜对峙\"");
     expect(raw).toContain("第二章正文候选");
   });

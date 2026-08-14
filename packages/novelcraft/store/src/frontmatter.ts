@@ -640,3 +640,20 @@ export function validateFrontmatter(kind: AssetKind, fm: Frontmatter): Validatio
   }
   return issues;
 }
+
+/**
+ * 写链接入(N23): 校验「最终落盘 frontmatter」并 fail-closed, 与 assertValidRelations
+ * 同构(issues 非空即抛 StoreError(VALIDATION_FAILED, 明细, issues))。
+ * 缺 id 时确定性补 id = 目标文件 slug(N2: id=文件名 slug; B3 写端同约定)再校验;
+ * 返回补全后的 fm, 调用方落盘此返回值(校验通过才可能写文件, 无部分状态)。
+ */
+export function validateFrontmatterForWrite(kind: AssetKind, fm: Frontmatter, targetSlug: string): Frontmatter {
+  const target: Frontmatter = { ...fm };
+  if (target.id === undefined || target.id === null || target.id === '') {
+    target.id = targetSlug;
+  }
+  const issues = validateFrontmatter(kind, target);
+  if (issues.length === 0) return target;
+  const detail = issues.map((i) => `${i.path}: ${i.message}`).join('; ');
+  throw new StoreError('VALIDATION_FAILED', `frontmatter 校验失败(${kind}): ${detail}`, issues);
+}

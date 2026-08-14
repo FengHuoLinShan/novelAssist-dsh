@@ -5,6 +5,7 @@ import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import { adopt, gitAdd, gitCommit } from "@novelcraft/store";
 import { chapterBody, latestReview, registerWritingSpecsOnce } from "./review.js";
+import { contentHashOf } from "./ingest.js";
 
 export interface ReviseResult {
   ok: boolean;
@@ -20,7 +21,9 @@ function findingsText(
     .join("\n");
 }
 
-/** 对选定 findings 生成修订候选 → chapters/pending/{NNN}.md(status=candidate)。 */
+/** 对选定 findings 生成修订候选 → chapters/pending/{NNN}.md
+ *  (status=candidate; N23: chapter_candidate 必填 status/content_hash/source,
+ *  source=writing_revise 标记修订来源)。 */
 export async function applyRevision(
   provider: Provider,
   root: string,
@@ -44,13 +47,16 @@ export async function applyRevision(
   const revised = (r.result as { text: string }).text;
   const p = paths(root);
   const candidateFile = `${p.chapters.pending}/${String(chapterIndex).padStart(3, "0")}.md`;
+  // N23: content_hash = 候选正文自身哈希(N13), source 标记修订来源。
   const fm = [
     "---",
     `chapter_index: ${chapterIndex}`,
     "status: candidate",
+    `content_hash: ${contentHashOf(revised)}`,
     `base_chapter: ${chapterIndex}`,
     `base_content_hash: ${contentHash}`,
     `finding_ids: [${findingIndexes.join(", ")}]`,
+    "source: writing_revise",
     `produced_at: ${new Date().toISOString()}`,
     "---",
     "",

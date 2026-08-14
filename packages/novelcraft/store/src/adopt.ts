@@ -4,7 +4,7 @@ import type { AssetKind, Frontmatter } from './types.js';
 import { StoreError } from './errors.js';
 import { contentHash, normalizeContentHash } from './hash.js';
 import { resolveAsset, resolveWithin, slugFromFilename } from './paths.js';
-import { parseFrontmatter, serializeFrontmatter, canTransition } from './frontmatter.js';
+import { parseFrontmatter, serializeFrontmatter, canTransition, validateFrontmatterForWrite } from './frontmatter.js';
 import { isGitRepo, hasUncommittedChanges, gitAdd, gitCommit } from './git.js';
 import { readText, writeText, listFilesRecursive } from './fs.js';
 
@@ -123,7 +123,8 @@ export function adopt(root: string, kind: AdoptableKind, ref: string, opts: Adop
       adopted_by: opts.adoptedBy ?? 'author',
     };
     delete draftFm.adopted_from_candidate_id;
-    writeText(resolveWithin(root, targetRel), serializeFrontmatter(draftFm, body));
+    // N23: 两个落盘 frontmatter 先校验后写入(无部分状态); chapter_candidate→chapter schema
+    const draftChecked = validateFrontmatterForWrite('chapter', draftFm, slugFromFilename(targetRel));
 
     const depFm: Frontmatter = { ...fm, status: 'deprecated', content_hash: hash };
     depFm.provenance = {
@@ -132,7 +133,9 @@ export function adopt(root: string, kind: AdoptableKind, ref: string, opts: Adop
       deprecated_from_status: from,
       rejected_at: now,
     };
-    writeText(src.abs, serializeFrontmatter(depFm, body));
+    const depChecked = validateFrontmatterForWrite('chapter_candidate', depFm, src.slug);
+    writeText(resolveWithin(root, targetRel), serializeFrontmatter(draftChecked, body));
+    writeText(src.abs, serializeFrontmatter(depChecked, body));
 
     gitAdd(root);
     const commit = gitCommit(root, `adopt(chapter): ${src.slug} -> ${targetRel}`);
@@ -148,7 +151,9 @@ export function adopt(root: string, kind: AdoptableKind, ref: string, opts: Adop
     newFm.version_number = Number(fm.version_number ?? 0) + 1; // 发布 version+1(R7)
   }
 
-  writeText(resolveWithin(root, targetRel), serializeFrontmatter(newFm, body));
+  // N23: 落盘前校验最终目标 frontmatter(缺 id 确定性补 id=slug, N2/B3)
+  const checked = validateFrontmatterForWrite(transitionKind(kind) as AssetKind, newFm, src.slug);
+  writeText(resolveWithin(root, targetRel), serializeFrontmatter(checked, body));
   if (targetRel !== src.rel) {
     fs.unlinkSync(src.abs);
   }
@@ -189,7 +194,8 @@ export function softDelete(root: string, kind: SoftDeletableKind, ref: string): 
   }
   const newFm: Frontmatter = { ...fm, status: terminal, content_hash: contentHash(body) };
   newFm.provenance = { ...asObject(fm.provenance), deprecated_from_status: from, deprecated_at: new Date().toISOString() };
-  writeText(src.abs, serializeFrontmatter(newFm, body));
+  const checked = validateFrontmatterForWrite(kind as AssetKind, newFm, src.slug); // N23 落盘前校验
+  writeText(src.abs, serializeFrontmatter(checked, body));
   gitAdd(root);
   const commit = gitCommit(root, `soft-delete(${kind}): ${src.slug}`);
   return { kind, ref: src.slug, status: terminal, commit };
@@ -221,7 +227,8 @@ function resolveSuggestion(root: string, ref: string, to: 'accepted' | 'rejected
   if (from !== 'pending') {
     throw new StoreError('ILLEGAL_TRANSITION', `建议已裁决, 不可重复 claim (R32): status=${from}`);
   }
-  writeText(src.abs, serializeFrontmatter({ ...fm, status: to }, body));
+  const checked = validateFrontmatterForWrite('pending', { ...fm, status: to }, src.slug); // N23 落盘前校验
+  writeText(src.abs, serializeFrontmatter(checked, body));
   gitAdd(root);
   const commit = gitCommit(root, `${to}(suggestion): ${src.slug}`);
   return { ref: src.slug, fromStatus: from, toStatus: to, commit };

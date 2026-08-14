@@ -9,6 +9,7 @@ import {
   resolveWithin,
   StoreError,
   contentHash,
+  gitLogSubjects,
 } from '../src/index';
 import { tmpVault, initRepo, commitAll, writeAsset, readFrontmatter, readBody } from './helpers';
 
@@ -186,5 +187,58 @@ describe('N12 · 结构资产 adopt(draft→canonical, 目录化路径)', () => 
     commitAll(r);
     expect(softDelete(r, 'arc', 'a1').status).toBe('deprecated');
     expect(readFrontmatter(r, 'structure/arcs/a1.md').status).toBe('deprecated');
+  });
+});
+
+describe('N23 · validateFrontmatter 接入 adopt 写链(落盘前 fail-closed)', () => {
+  it('rejects schema-nonconforming object adopt: VALIDATION_FAILED, 文件未移动、无 commit', () => {
+    const r = fixture();
+    // 缺必填 name(object schema: id/kind/name/status), 其余门禁全过
+    writeAsset(r, 'world/pending/pend_x.md', { id: 'pend_x', kind: 'character', status: 'candidate' }, '正文');
+    commitAll(r);
+    const headBefore = gitLogSubjects(r).length;
+    let failure: StoreError | null = null;
+    try {
+      adopt(r, 'object', 'pend_x');
+    } catch (err) {
+      failure = err as StoreError;
+    }
+    expect(failure).not.toBeNull();
+    expect(failure!.code).toBe('VALIDATION_FAILED'); // N23
+    expect((failure!.details as unknown[]).length).toBeGreaterThan(0); // issues 明细随抛
+    // 文件未移动、源文件未被改写、无 commit 产生(无部分状态, N23)
+    expect(fs.existsSync(path.join(r, 'world/pending/pend_x.md'))).toBe(true);
+    expect(fs.existsSync(path.join(r, 'world/objects/pend_x.md'))).toBe(false);
+    expect(readFrontmatter(r, 'world/pending/pend_x.md').status).toBe('candidate');
+    expect(gitLogSubjects(r).length).toBe(headBefore);
+  });
+
+  it('rejects schema-nonconforming chapter_candidate adopt: 目标章未落盘、无 commit', () => {
+    const r = fixture();
+    // chapter_index 为字符串: 通过 BAD_CANDIDATE 数值化, 但 chapter schema 要求 integer
+    writeAsset(r, 'chapters/pending/cand_x.md', {
+      id: 'cand_x', chapter_index: '3', status: 'candidate', source: 'writing_generate', content_hash: contentHash('正文'),
+    }, '正文');
+    commitAll(r);
+    const headBefore = gitLogSubjects(r).length;
+    expect(() => adopt(r, 'chapter_candidate', 'cand_x')).toThrowError(
+      expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
+    );
+    // 无部分状态: 目标章未创建、候选未改写、无 commit
+    expect(fs.existsSync(path.join(r, 'chapters/003.md'))).toBe(false);
+    expect(readFrontmatter(r, 'chapters/pending/cand_x.md').status).toBe('candidate');
+    expect(gitLogSubjects(r).length).toBe(headBefore);
+  });
+
+  it('合规 adopt 行为不变; 缺 id 时确定性补 id=目标 slug(N2/B3)', () => {
+    const r = fixture();
+    writeAsset(r, 'world/pending/pend_y.md', { kind: 'character', name: '红衣女子', status: 'candidate' }, '正文');
+    commitAll(r);
+    const res = adopt(r, 'object', 'pend_y');
+    expect(res.toStatus).toBe('canonical');
+    const fm = readFrontmatter(r, 'world/objects/pend_y.md');
+    expect(fm.id).toBe('pend_y'); // N23: 校验前确定性补 id=slug
+    expect(fm.status).toBe('canonical');
+    expect(fm.name).toBe('红衣女子');
   });
 });

@@ -2,7 +2,7 @@
 // 依据: specs/assets/world.md + store-rules; 知识标签 = 对象 frontmatter tags 派生(N13)。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths, slugify } from "@novelcraft/vault";
-import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
 
 /** 对象 relations 有向对(N11/N14): source=宿主对象文件本身, 不落 source 字段。 */
 export interface ObjectRelation {
@@ -107,14 +107,29 @@ export function createObject(
   const slug = slugify(`obj-${input.name}`) || `obj-${Date.now()}`;
   const file = paths(root).world.objectFile(slug);
   if (existsSync(file)) throw new Error(`对象已存在: ${slug}`);
+  const fm: Record<string, unknown> = {
+    id: slug, // N23/M7-C: object schema required 含 id(frontmatter.ts:417), 落盘即带
+    name: input.name.trim(),
+    kind: input.entityType || "object", // B1(用户裁定): 字段表用 kind(specs/assets/world.md)
+    status: "canonical",
+  };
+  if (input.aliases?.length) fm.aliases = input.aliases;
+  if (input.tags?.length) fm.tags = input.tags;
+  // N23/M7-C: 落盘前 schema 校验, issues 非空 fail-closed 拒写(与 assertValidRelations 同构)。
+  const issues = validateFrontmatter("object", fm);
+  if (issues.length > 0) {
+    const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+    throw new StoreError("VALIDATION_FAILED", `object frontmatter 校验失败: ${detail}`, issues);
+  }
   const lines = [
     "---",
-    `name: ${JSON.stringify(input.name.trim())}`,
-    `kind: ${JSON.stringify(input.entityType || "object")}`, // B1(用户裁定): 字段表用 kind(specs/assets/world.md)
+    `id: ${JSON.stringify(fm.id)}`,
+    `name: ${JSON.stringify(fm.name)}`,
+    `kind: ${JSON.stringify(fm.kind)}`,
     "status: canonical",
   ];
-  if (input.aliases?.length) lines.push(`aliases: [${input.aliases.map((a) => JSON.stringify(a)).join(", ")}]`);
-  if (input.tags?.length) lines.push(`tags: [${input.tags.map((t) => JSON.stringify(t)).join(", ")}]`);
+  if (Array.isArray(fm.aliases)) lines.push(`aliases: [${fm.aliases.map((a) => JSON.stringify(a)).join(", ")}]`);
+  if (Array.isArray(fm.tags)) lines.push(`tags: [${fm.tags.map((t) => JSON.stringify(t)).join(", ")}]`);
   lines.push("---", "");
   writeFileSync(file, lines.join("\n") + `# ${input.name}\n\n${input.description ?? ""}\n`, "utf8");
   gitAdd(root);
@@ -137,6 +152,12 @@ export function updateObject(
   const next = { ...data };
   if (patch.name !== undefined) next.name = patch.name;
   if (patch.tags !== undefined) next.tags = patch.tags;
+  // N23/M7-C: 合并 patch 后的 fm 落盘前同样校验; 缺 id 等必填 → fail-closed 不写(无部分状态)。
+  const issues = validateFrontmatter("object", next);
+  if (issues.length > 0) {
+    const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+    throw new StoreError("VALIDATION_FAILED", `object frontmatter 校验失败: ${detail}`, issues);
+  }
   writeFileSync(obj.file, serializeFrontmatter(next, patch.description !== undefined ? patch.description : body), "utf8");
   gitAdd(root);
   gitCommit(root, `world: update ${slug}`);

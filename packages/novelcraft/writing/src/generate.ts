@@ -8,6 +8,7 @@ import type { Provider } from "@novelcraft/llm-step";
 import { gitAdd, gitCommit } from "@novelcraft/store";
 import { chapterBody } from "./review.js";
 import { compileProposalContext } from "./propose.js";
+import { contentHashOf } from "./ingest.js";
 
 export interface GenerateNextChapterOptions {
   /** 选定提案标题(作者语言方向) */
@@ -42,13 +43,17 @@ export async function generateNextChapter(
   const draft = (r.result as { text: string }).text;
   const next = chapterIndex + 1;
   const candidateFile = `${paths(root).chapters.pending}/${String(next).padStart(3, "0")}.md`;
+  // N23: chapter_candidate schema 必填 status/content_hash/source;
+  // content_hash = 候选正文自身哈希(N13); source 标记生成来源。
   const fm = [
     "---",
     `chapter_index: ${next}`,
     "status: candidate",
+    `content_hash: ${contentHashOf(draft)}`,
     `base_chapter: ${chapterIndex}`,
     `base_content_hash: ${contentHash}`,
     `proposal_title: ${JSON.stringify(opts.proposalTitle)}`,
+    "source: writing_generate",
     `produced_at: ${new Date().toISOString()}`,
     "---",
     "",

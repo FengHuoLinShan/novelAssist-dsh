@@ -68,6 +68,9 @@ describe("applyRevision / adoptChapterCandidate(步骤 3/4)", () => {
     const raw = readFileSync(join(root, "chapters", "pending", "001.md"), "utf8");
     expect(raw).toContain("status: candidate");
     expect(raw).toContain("base_content_hash:");
+    // N23: chapter_candidate 必填 status/content_hash/source。
+    expect(raw).toContain("source: writing_revise");
+    expect(raw).toMatch(/content_hash: [0-9a-f]{64}/);
     expect(raw).toContain("修订后的正文");
   });
   it("采用后 chapters/001.md 更新为修订正文, 候选已处理, git 干净", async () => {
@@ -84,6 +87,10 @@ describe("applyRevision / adoptChapterCandidate(步骤 3/4)", () => {
     expect(r.ok).toBe(true);
     const raw = readFileSync(join(root, "chapters", "001.md"), "utf8");
     expect(raw).toContain("修订后的正文");
+    // N23: 原候选转 deprecated 后仍保留 source(校验的是最终落盘 frontmatter)。
+    const dep = readFileSync(join(root, "chapters", "pending", "001.md"), "utf8");
+    expect(dep).toContain("status: deprecated");
+    expect(dep).toContain("source: writing_revise");
   });
   it("无候选可采用时抛错", () => {
     const root = makeRoot();

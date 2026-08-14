@@ -9,6 +9,7 @@ import {
   normalizeAliases,
   normalizeAliasKey,
   isPlaceholderWord,
+  validateFrontmatterForWrite,
 } from './frontmatter.js';
 import { gitAdd, gitCommit } from './git.js';
 import { readText, writeText } from './fs.js';
@@ -123,8 +124,11 @@ export function mergeEntities(
   }
 
   const now = new Date().toISOString();
-  writeText(tgt.abs, serializeFrontmatter({ ...tgtFm, aliases: tgtAliases }, tgtBody));
-  writeText(src.abs, serializeFrontmatter({ ...srcFm, status: 'merged', merged_into: tgt.slug, merged_at: now }, srcBody));
+  // N23: 两个落盘 frontmatter 先校验后写入(无部分状态, 均按 object schema)
+  const checkedTgt = validateFrontmatterForWrite('object', { ...tgtFm, aliases: tgtAliases }, tgt.slug);
+  const checkedSrc = validateFrontmatterForWrite('object', { ...srcFm, status: 'merged', merged_into: tgt.slug, merged_at: now }, src.slug);
+  writeText(tgt.abs, serializeFrontmatter(checkedTgt, tgtBody));
+  writeText(src.abs, serializeFrontmatter(checkedSrc, srcBody));
 
   const record: MergeRecord = {
     operation: 'merge',
@@ -174,8 +178,11 @@ export function splitMerge(root: string, sourceRef: string): SplitResult {
   delete restored.merged_into;
   delete restored.merged_at;
 
-  writeText(src.abs, serializeFrontmatter(restored, srcBody));
-  writeText(tgt.abs, serializeFrontmatter({ ...tgtFm, aliases: tgtAliases }, tgtBody));
+  // N23: 两个落盘 frontmatter 先校验后写入(无部分状态, 均按 object schema)
+  const checkedSrc = validateFrontmatterForWrite('object', restored, src.slug);
+  const checkedTgt = validateFrontmatterForWrite('object', { ...tgtFm, aliases: tgtAliases }, tgt.slug);
+  writeText(src.abs, serializeFrontmatter(checkedSrc, srcBody));
+  writeText(tgt.abs, serializeFrontmatter(checkedTgt, tgtBody));
 
   const record: MergeRecord = {
     operation: 'split',
@@ -240,7 +247,8 @@ export function attachAlias(
   }
   aliases.push(alias);
 
-  writeText(tgt.abs, serializeFrontmatter({ ...tgtFm, aliases }, body));
+  const checked = validateFrontmatterForWrite('object', { ...tgtFm, aliases }, tgt.slug); // N23 落盘前校验
+  writeText(tgt.abs, serializeFrontmatter(checked, body));
   gitAdd(root, [tgt.rel]);
   const commit = gitCommit(root, `attach_alias: ${tgt.slug} += ${alias}`);
   return { target: tgt.slug, alias, count: aliases.length, commit };

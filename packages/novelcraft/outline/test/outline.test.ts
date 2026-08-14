@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
+import { StoreError, gitAdd, gitCommit, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { analyzeOutline, generateOutlineItem, generateStoryOutline, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
 
 const dirs: string[] = [];
@@ -232,5 +232,52 @@ describe("写端 schema 必填补齐(B3)", () => {
     expect(fm.target_id).toBe("obj-klein");
     expect(fm.secret_summary).toBe("克莱恩是穿越者");
     expect(validateFrontmatter("thread", fm as never)).toEqual([]);
+  });
+});
+
+describe("写链 validateFrontmatter 接入(N23/M7-C)", () => {
+  function readFm(root: string, rel: string): Record<string, unknown> {
+    return parseFrontmatter(readFileSync(join(root, rel), "utf8")).data as Record<string, unknown>;
+  }
+
+  it("writeStructureAsset: 类型不合规(relations 非 list) → VALIDATION_FAILED 且文件未落盘", () => {
+    const root = makeRoot();
+    let err: unknown;
+    try {
+      writeStructureAsset(root, "thread", { title: "主线", relations: "legacy-string" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(StoreError); // N23: 校验失败统一 StoreError(与 assertValidRelations 同构)
+    expect((err as StoreError).code).toBe("VALIDATION_FAILED");
+    expect(readdirSync(join(root, "structure", "threads"))).toEqual([]); // fail-closed: 不写字
+  });
+
+  it("writeStructureAsset: 合规写入不受校验影响(N23)", () => {
+    const root = makeRoot();
+    const slug = writeStructureAsset(root, "arc", { title: "第二卷", summary: "s" });
+    const fm = readFm(root, `structure/arcs/${slug}.md`);
+    expect(fm.id).toBe(slug);
+    expect(validateFrontmatter("arc", fm as never)).toEqual([]);
+  });
+
+  it("writeOutline: 缺必填 title → VALIDATION_FAILED 且 outline.md 未创建", () => {
+    const root = makeRoot();
+    let err: unknown;
+    try {
+      writeOutline(root, { outline_markdown: "# 卷一" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(StoreError);
+    expect((err as StoreError).code).toBe("VALIDATION_FAILED");
+    expect(existsSync(join(root, "structure", "outline.md"))).toBe(false); // fail-closed: 不写字
+  });
+
+  it("writeOutline: 合规写入不受校验影响(N23)", () => {
+    const root = makeRoot();
+    writeOutline(root, { title: "总纲", outline_markdown: "# 卷一" });
+    const { data, body } = parseFrontmatter(readFileSync(join(root, "structure", "outline.md"), "utf8"));
+    expect(validateFrontmatter("outline", { ...data, outline_markdown: body.trim() } as never)).toEqual([]);
   });
 });

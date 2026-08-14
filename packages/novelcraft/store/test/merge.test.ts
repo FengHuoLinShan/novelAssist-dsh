@@ -7,6 +7,7 @@ import {
   attachAlias,
   readMergeLog,
   StoreError,
+  gitLogSubjects,
 } from '../src/index';
 import { tmpVault, initRepo, commitAll, writeAsset, readFrontmatter } from './helpers';
 
@@ -152,5 +153,55 @@ describe('merge-log(.assistant/merge-log.jsonl)', () => {
     expect(log[0].target).toBe('obj_a');
     expect(log[0].reversible).toBe(true);
     expect(log[0].workflow).toBe('import-deep');
+  });
+});
+
+describe('N23 · merge/split/attach_alias 落盘前校验(fail-closed)', () => {
+  it('merge 拒绝 schema 不合规源对象: VALIDATION_FAILED, 无写入、无 commit', () => {
+    const r = fixture();
+    writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
+    // 源对象缺必填 name(object schema), 其余门禁全过
+    writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', status: 'draft' }, 'B');
+    commitAll(r);
+    const headBefore = gitLogSubjects(r).length;
+    expect(() => mergeEntities(r, 'obj_b', 'obj_a')).toThrowError(
+      expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
+    );
+    // 无部分状态: 双文件均未改写、无 merge-log、无 commit
+    expect(readFrontmatter(r, 'world/objects/obj_b.md').status).toBe('draft');
+    expect(readFrontmatter(r, 'world/objects/obj_b.md').merged_into).toBeUndefined();
+    expect(readFrontmatter(r, 'world/objects/obj_a.md').aliases).toBeUndefined();
+    expect(readMergeLog(r).length).toBe(0);
+    expect(gitLogSubjects(r).length).toBe(headBefore);
+  });
+
+  it('split 拒绝 schema 不合规已合并源: VALIDATION_FAILED, 不恢复、无 split 记录', () => {
+    const r = fixture();
+    writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
+    writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', name: '红衣女子', status: 'draft', aliases: ['红裙'] }, 'B');
+    commitAll(r);
+    mergeEntities(r, 'obj_b', 'obj_a');
+    // 手改合并源为 schema 不合规(缺必填 name)
+    writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', status: 'merged', merged_into: 'obj_a' }, 'B');
+    const logBefore = readMergeLog(r).length;
+    expect(() => splitMerge(r, 'obj_b')).toThrowError(
+      expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
+    );
+    // 无部分状态: 未恢复 status、无 split 记录
+    expect(readFrontmatter(r, 'world/objects/obj_b.md').status).toBe('merged');
+    expect(readMergeLog(r).length).toBe(logBefore);
+  });
+
+  it('attach_alias 拒绝 schema 不合规目标: VALIDATION_FAILED, 别名未写入、无 commit', () => {
+    const r = fixture();
+    // canonical 但缺必填 name(object schema)
+    writeAsset(r, 'world/objects/obj_x.md', { id: 'obj_x', kind: 'character', status: 'canonical' }, 'X');
+    commitAll(r);
+    const headBefore = gitLogSubjects(r).length;
+    expect(() => attachAlias(r, 'obj_x', '红衣女子')).toThrowError(
+      expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
+    );
+    expect(readFrontmatter(r, 'world/objects/obj_x.md').aliases).toBeUndefined();
+    expect(gitLogSubjects(r).length).toBe(headBefore);
   });
 });
