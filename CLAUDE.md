@@ -23,7 +23,7 @@
 ## 常用命令
 
 ```sh
-npm test                    # 全仓 279 测试
+npm test                    # 全仓 304 测试
 npm run typecheck           # 全仓零错误
 npm test -w @novelcraft/<pkg>
 npm run build --workspaces  # 注意拓扑序: vault→trace→store→llm-step→rag→memory→context→outline→assistant→world→writing→imports→dsh→client

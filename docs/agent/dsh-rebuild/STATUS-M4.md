@@ -35,7 +35,7 @@
   docs/agent/dsh-rebuild/客户端阶段-验收.md。全仓 **231 测试全绿**。
 - [x] **trace contract 测试框架(C)**: `@novelcraft/trace`(trace/assert/mock, 17 测试)+ `imports` 的 `runDeepImport` 编排 seam(11 测试); 全仓 **259 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/trace-contract-验收.md
 - [x] **C 的 DSH 挂载收尾**: `@novelcraft/dsh` 新增 `deepImport` 便捷方法 + `novelcraft_deep_import` 工具(runtime.provider=DshProvider、approve=ApprovalGate fail-closed、trace=ImportTraceSink 落 .assistant/import-trace.jsonl), 3 测试
-- [x] **client 迭代**: 剧情地图(`store.storyMap` + story/map 端点 + StoryMapAction)+ 写作台四模式(writing/desk 端点 + WritingDeskAction, 守望/计划/评审/参照 tab), 4 测试; 全仓 **266 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/client-迭代-验收.md
+- [x] **client 迭代**: 剧情地图(`store.storyMap` + story/map 端点 + StoryMapAction)+ 写作台四模式(writing/desk 端点 + WritingDeskAction, 守望/计划/评审/参照 tab), 4 测试; 全仓 **304 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/client-迭代-验收.md
 - [x] 信号主动推送(轮询→mux): ADR-0018 定 DSH 共享层政策; 短轮询过渡 + 真 mux 推送均已落地——scripts/apply-dsh-patches.mjs 加 client/push allowlist + @novelcraft/dsh emit + @novelcraft/client ctx.remote.$on 订阅(seam 提案见 信号推送-远程事件seam提案.md); 上游 Discussion #1289 回应后去 fork 化
 - [x] 仓库迁出: codex/m4-dsh-plugin-rewrite → 独立仓库 novelAssist-dsh(annotated tag `dsh`, 2026-08-14)
 - [x] **结构资产统一关系模型(ADR-0019)**: Accepted + P0–P3 全落地——`validateRelations`/`assertValidRelations`(7 type 枚举 + 源/目标白名单 + 自环/悬空/端点 kind, 写链硬错)、结构资产 schema `relations: 'list'`、`VaultIndex.relations` 全资产有向图(`sourceKind` 标注源)、`storyMap().edges`(显式边 + `related_*_ids` 兼容投影并集去重, N17)、`planned_payoff_scene` 兑现 #11 slug、reveal required 放宽(「未归类」=「无边」); 剧情地图三缺口关闭, 验收见 client-迭代-验收.md

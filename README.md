@@ -32,7 +32,7 @@
 
 ```sh
 npm install
-npm test            # 266 测试全绿
+npm test            # 304 测试全绿
 npm run typecheck   # 零错误
 npm run build --workspaces   # 全部分包构建(注意: 需按拓扑序, 见 docs/agent/dsh-rebuild/跨会话交接.md)
 ```
