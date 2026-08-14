@@ -117,6 +117,17 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* 宠物静默态的一句话剧情摘要(§9 默认答复)。 */
+.plotSummary {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-background-secondary, rgba(128, 128, 128, 0.08));
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .verbRow {
   display: flex;
   flex-direction: column;

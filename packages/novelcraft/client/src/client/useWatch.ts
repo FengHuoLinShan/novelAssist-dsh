@@ -33,7 +33,7 @@ async function call<T>(
 export const POLL_MIN_MS = 1000
 export const POLL_MAX_MS = 15000
 
-/** 宠物状态(四态 + 徽标数)。 */
+/** 宠物状态(四态 + 徽标数 + 剧情一句话)。 */
 export interface WatchSnapshot {
   bound: boolean
   book: string | null
@@ -41,6 +41,8 @@ export interface WatchSnapshot {
   attention: boolean
   threshold: number
   radarRunning: boolean
+  /** 剧情雷达一句话摘要(§9 静默态默认答复); 未绑定/失败为 null。 */
+  plotSummary: string | null
 }
 
 const EMPTY_WATCH: WatchSnapshot = {
@@ -50,6 +52,7 @@ const EMPTY_WATCH: WatchSnapshot = {
   attention: false,
   threshold: 5,
   radarRunning: false,
+  plotSummary: null,
 }
 
 /** 轮询 watch/state(宠物数据源): 事件触发立即刷新 + 退避短轮询(ADR-0018 §2)。 */
@@ -72,6 +75,7 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
       attention: value.attention,
       threshold: value.threshold,
       radarRunning: value.radarRunning,
+      plotSummary: value.plotSummary ?? null,
     }
     const changed =
       next.bound !== lastRef.current.bound ||
@@ -79,7 +83,8 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
       next.open !== lastRef.current.open ||
       next.attention !== lastRef.current.attention ||
       next.threshold !== lastRef.current.threshold ||
-      next.radarRunning !== lastRef.current.radarRunning
+      next.radarRunning !== lastRef.current.radarRunning ||
+      next.plotSummary !== lastRef.current.plotSummary
     lastRef.current = next
     if (changed) setSnapshot(next)
     return changed

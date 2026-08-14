@@ -7,6 +7,7 @@ export type NovelcraftKey =
   | 'pet.busy'
   | 'pet.attention'
   | 'pet.title'
+  | 'pet.plot'
   | 'inbox.title'
   | 'inbox.empty'
   | 'inbox.unbound'
@@ -70,6 +71,7 @@ export const zh: Record<NovelcraftKey, string> = {
   'pet.busy': '忙碌',
   'pet.attention': '待确认',
   'pet.title': 'NovelCraft 守望',
+  'pet.plot': '当前剧情',
   'inbox.title': '收件箱',
   'inbox.empty': '没有待处理信号。',
   'inbox.unbound': '这本书还没绑定工作区: 请在助手会话里打开它(每书一会话)。',
@@ -134,6 +136,7 @@ export const en: Record<NovelcraftKey, string> = {
   'pet.busy': 'Busy',
   'pet.attention': 'Needs you',
   'pet.title': 'NovelCraft Watch',
+  'pet.plot': 'Current plot',
   'inbox.title': 'Inbox',
   'inbox.empty': 'No open signals.',
   'inbox.unbound': 'No vault bound for this book — open it in an assistant session (one book, one session).',

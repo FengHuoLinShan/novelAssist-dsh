@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
-import { act, inboxView, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
+import { act, inboxView, plotSummaryLine, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
 import { resolvePolicy } from '@novelcraft/llm-step';
 import { rebuildIndex, storyMap } from '@novelcraft/store';
 import { latestProposal } from '@novelcraft/writing';
@@ -130,12 +130,20 @@ export function createNovelcraftHandlers(ctx: Context) {
       } catch {
         radarRunning = false;
       }
+      // 剧情雷达摘要(§9: 宠物静默态点击的默认答复; 确定性, 失败兜底空串)。
+      let plotSummary = '';
+      try {
+        plotSummary = plotSummaryLine(binding.root);
+      } catch {
+        plotSummary = '';
+      }
       return rpcOk({
         bound: { book: binding.book, root: binding.root },
         open,
         attention: open >= threshold,
         threshold,
         radarRunning,
+        plotSummary,
       });
     },
 

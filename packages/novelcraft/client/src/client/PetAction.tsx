@@ -65,6 +65,12 @@ export function PetAction(props: PetActionProps): JSX.Element {
         closeLabel={t('inbox.close')}
         contentClassName={css.modalContent}
       >
+        {/* 静默态默认答复(§9): 无待确认信号时, 先给剧情雷达的一句话摘要。 */}
+        {snapshot.open === 0 && snapshot.plotSummary ? (
+          <p className={css.plotSummary} aria-label={t('pet.plot')}>
+            {t('pet.plot')}: {snapshot.plotSummary}
+          </p>
+        ) : null}
         <InboxPanel
           connection={connection}
           sessionId={sessionId}

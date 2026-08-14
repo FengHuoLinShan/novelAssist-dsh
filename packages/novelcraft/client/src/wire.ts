@@ -22,6 +22,8 @@ export interface WatchStateValue {
   attention: boolean;
   threshold: number;
   radarRunning: boolean;
+  /** 剧情雷达一句话摘要(§9: 宠物静默态点击的默认答复; 未绑定缺省)。 */
+  plotSummary?: string;
 }
 
 export interface InboxListPayload {
