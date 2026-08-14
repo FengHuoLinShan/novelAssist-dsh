@@ -184,6 +184,19 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
     degradationNote: "提案只进 .assistant/proposals/ 临时预览, 不写正文; 失败不落盘。",
     contractVersion: "v1",
   },
+  {
+    // catalog §3.1: 正文候选生成(续写模式追加)。outputFormat=text → result={text}。
+    specRef: "writing_generate",
+    description: "正文候选生成: 基于选定续写方向/上下文输出下一章正文候选(续写模式追加)。",
+    inputNotes: "选定提案(title/premise)+ 上下文(总纲/剧情线/上一章正文结尾)。",
+    outputSchema: { type: "object" },
+    outputFormat: "text",
+    budgetTokens: 0,
+    temperature: 0.7,
+    timeoutMs: 1_800_000,
+    degradationNote: "候选只进 chapters/pending/; 失败不改写正文(catalog §3.1)。",
+    contractVersion: "v1",
+  },
 ];
 
 const registry = new Map(BUILTIN_SPECS.map((s) => [s.specRef, s]));

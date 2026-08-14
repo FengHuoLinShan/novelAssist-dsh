@@ -3,3 +3,4 @@ export * from "./ingest.js";
 export * from "./review.js";
 export * from "./revise.js";
 export * from "./propose.js";
+export * from "./generate.js";

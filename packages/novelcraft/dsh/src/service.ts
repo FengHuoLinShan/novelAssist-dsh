@@ -145,6 +145,15 @@ export class NovelCraftService extends Service {
     return writing.proposeNextChapter(this.llmProvider, root, chapterIndex);
   }
 
+  /** 便捷: 续写提案第二阶段(选定方向 → writing_generate → chapters/pending 候选)。 */
+  generateNextChapter(
+    root: string,
+    chapterIndex: number,
+    opts: writing.GenerateNextChapterOptions,
+  ): Promise<writing.GenerateResult> {
+    return writing.generateNextChapter(this.llmProvider, root, chapterIndex, opts);
+  }
+
   /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */
   scanHealth(root: string): assistant.HealthScanResult {
     return assistant.scanHealthSignals(root);

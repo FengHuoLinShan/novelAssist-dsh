@@ -44,7 +44,7 @@ function assetLines(
 }
 
 /** 确定性上下文编译(总纲 + 结构资产 + 上一章结尾; 上限截断避免超预算)。 */
-function compileProposalContext(root: string, chapterIndex: number): string {
+export function compileProposalContext(root: string, chapterIndex: number): string {
   const parts: string[] = [];
   const outline = readOutline(root);
   if (outline && typeof outline.outline_markdown === "string" && outline.outline_markdown.trim()) {
