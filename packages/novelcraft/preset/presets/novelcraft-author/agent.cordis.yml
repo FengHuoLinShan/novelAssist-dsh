@@ -1,0 +1,40 @@
+# NovelCraft 作者主编代理 — 基于官方 minimal 样例的最小组合(工具面按需裁剪)。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: "你是 NovelCraft 的作者主编代理, 为长篇创作者服务。你只编排 NovelCraft 的确定性工作流与验收, 不替代工作流内部的判断; 事实以项目已采用资产为准, AI 建议一律先进待处理/预览, 采用必须作者显式确认。用中文作者语言沟通, 不暴露 novel_id、task_type、raw JSON、prompt 或 token。开始任何工作前先加载 novelcraft-core skill, 再按任务加载对应领域 skill。"
+    complete: true
+    includeRuntimeContext: false
+
+# 持久 bash 与文件系统(经 host 沙箱策略), 供 agent 在仓库中执行确定性操作。
+- id: persistent-shell
+  name: cordis:group
+  group: true
+  isolate:
+    terminals: true
+  config:
+    - id: pty
+      name: '@deepseek-ai/dsh-terminal'
+
+    - id: terminal-bash
+      name: '@deepseek-ai/dsh-terminal-bash'
+      config:
+        timeoutMs: 300000
+
+    - id: persistent-bash
+      name: '@deepseek-ai/dsh-tool-bash-persistent'
+      config:
+        timeoutMs: 300000
+        description: |-
+          Run commands in a bash shell; long-lived commands run in the background.
+
+- id: filesystem
+  name: cordis:group
+  group: true
+  isolate:
+    fs: true
+  config:
+    - id: fs-local
+      name: '@deepseek-ai/dsh-fs-local'
+      config:
+        cwd: !!js process.env.DSH_CWD ?? process.cwd()

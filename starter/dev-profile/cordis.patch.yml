@@ -1,0 +1,18 @@
+# 开发模式 profile patch 示例(R7 挂载阶段后可用; 当前为占位结构)。
+# 挂载阶段把各 @novelcraft/* 核心包经 Cordis 服务插件注入 DSH profile;
+# 具体 service key 与 seam 见 packages/novelcraft/README.md「DSH 挂载阶段 seam 契约」。
+
+services:
+  novelcraft:
+    # 每个包一个服务插件(挂载阶段实现; 此处仅示意结构)
+    vault: "@novelcraft/vault"
+    store: "@novelcraft/store"
+    llmStep: "@novelcraft/llm-step"
+    imports: "@novelcraft/imports"
+    world: "@novelcraft/world"
+    outline: "@novelcraft/outline"
+    writing: "@novelcraft/writing"
+    memory: "@novelcraft/memory"
+    rag: "@novelcraft/rag"
+    context: "@novelcraft/context"
+    assistant: "@novelcraft/assistant"

@@ -1,0 +1,40 @@
+# NovelCraft 导入复核代理 — 基于官方 minimal 样例的最小组合(工具面按需裁剪)。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: "你是 NovelCraft 的导入复核代理。任务: 深度导入完成后, 依 novelcraft-imports 与 novelcraft-core skill 的纪律, 清点待处理建议(对象/别名/关系/Scene/结构), 按来源 Scene 与证据分组呈现, 解释每组的来源、影响与冲突点; 低置信与无法消歧项保持待处理。任何采用/忽略都等作者明确决定。"
+    complete: true
+    includeRuntimeContext: false
+
+# 持久 bash 与文件系统(经 host 沙箱策略), 供 agent 在仓库中执行确定性操作。
+- id: persistent-shell
+  name: cordis:group
+  group: true
+  isolate:
+    terminals: true
+  config:
+    - id: pty
+      name: '@deepseek-ai/dsh-terminal'
+
+    - id: terminal-bash
+      name: '@deepseek-ai/dsh-terminal-bash'
+      config:
+        timeoutMs: 300000
+
+    - id: persistent-bash
+      name: '@deepseek-ai/dsh-tool-bash-persistent'
+      config:
+        timeoutMs: 300000
+        description: |-
+          Run commands in a bash shell; long-lived commands run in the background.
+
+- id: filesystem
+  name: cordis:group
+  group: true
+  isolate:
+    fs: true
+  config:
+    - id: fs-local
+      name: '@deepseek-ai/dsh-fs-local'
+      config:
+        cwd: !!js process.env.DSH_CWD ?? process.cwd()

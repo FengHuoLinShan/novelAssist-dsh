@@ -1,0 +1,6 @@
+{
+  "name": "@novelcraft/preset",
+  "version": "0.0.1",
+  "description": "NovelCraft skills 家族(9 册)与 agent presets(4 套)——profile bundle 入口",
+  "files": ["skills", "presets", "README.md"]
+}
