@@ -68,6 +68,27 @@
 - 裁定: specs/adjudications.md 第五批 N21/N22; 工具数 **12 → 14**; 全仓测试 **440 全绿**,
   typecheck 零错误(HEAD 209b633a)
 
+## M7 review 修复批次(多模块 review 后续修复, 提交区间 2114657f..15e6c166 七笔)
+
+- [x] **Phase A 文档同步**(2114657f): M7 批次基线(v4-flash 子代理 10 单元 + 汇总 review 后续
+  修复: 契约漂移/文档滞后/审批门旁路)
+- [x] **Phase D rag_rerank 预算转录**(1f617388, N24): rag_rerank 内容手预算转录
+- [x] **Phase B 字段漂移**(7ff5747f, N14/N26): 对象写端统一 kind; 关系写面 N14 list 形态对象边对
+  story-map/radar 可见; 结构与场景与 outline 必填补齐 reveal fail-closed; memory scene_id
+  第二幂等键
+- [x] **Phase C validateFrontmatter 接入写链**(90e3c4a7, N23): adopt/merge/world/outline/imports
+  落盘前 fail-closed; validateFrontmatterForWrite 补 id=slug; writing 候选补 source/content_hash
+- [x] **Phase E catalog 预算/温度/超时转录**(bc6644cc, N27): entity_extraction/structure_analysis
+  预算/温度/超时转录 + 输入主导豁免清单 + specs-transcription 钉死测试
+- [x] **Phase G writing 回执**(fb7408ad, N30): finding_id=finding_<sha256-20>; severity
+  blocker/major/minor 摄入归一化; rejectFindingById; applyRevision 基线哈希校验
+- [x] **Phase F 审批门收口**(15e6c166, N31): imports 结构资产落 draft 升格走审批门; dsh
+  worldCreateGuarded/worldUpdateGuarded + facades.world 写存根 GateRequiredError
+- 执行模式: 实现全部由 deepseek-v4-flash 子代理(workflow 编排, provider deepseek-official)
+  完成, 主会话编排 + 逐 Phase diff 复核 + 全量门禁 + 提交
+- 裁定: specs/adjudications.md 第六批 N23–N31(M7 占 N23/N24/N25/N26/N27/N30/N31;
+  N28/N29 属并行的第七批 map-atlas 批次); 全仓测试 **517 全绿**, typecheck 零错误(HEAD 15e6c166)
+
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面
