@@ -17,7 +17,10 @@ interface TestEnv {
   cleanup: () => void;
 }
 
-function setup(): TestEnv {
+function setup(overrides: {
+  service?: Partial<NovelcraftHostService>;
+  llm?: { listProviders?: () => string[] };
+} = {}): TestEnv {
   const ctx = new Context();
   const root = mkdtempSync(path.join(os.tmpdir(), 'nc-client-'));
   initVault(root, { title: '测试书' });
@@ -26,11 +29,13 @@ function setup(): TestEnv {
       resolve: async (sessionId) => (sessionId === 's1' ? { book: '测试书', root } : undefined),
       resolveFromPath: (p) => (p.startsWith(root) ? { book: '测试书', root } : undefined),
     },
+    ...overrides.service,
   };
   ctx.provide('novelcraft', service);
   ctx.provide('jobs', {
     list: () => [{ kind: 'novelcraft-radar', status: 'running' }],
   });
+  if (overrides.llm) ctx.provide('llm', overrides.llm);
   return { ctx, root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -405,6 +410,152 @@ describe('novelcraft RPC 处理器', () => {
       expect(result.value.dossier.scenes).toEqual([]);
       expect(result.value.signals).toEqual([]);
       expect(result.value.proposal).toBeNull();
+    }
+    env.cleanup();
+  });
+
+  // ===========================================================================
+  // presets/list + presets/select(模型预设 N20/D13): 注册表 ∪ 种子; active 反映
+  // llm.yml 的 preset 键; 写边界 N19 —— 只经 selectPresetInLlmYml 动 preset 单键
+  // (配置非资产, 不过 approval); 预设不存在 → 拒绝不写文件。
+  // ===========================================================================
+
+  it('presets/list: 未绑定 → 缺省(种子卡 source=seed, active null, 不炸)', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.presetsList({ sessionId: 'unknown' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound).toBeNull();
+      expect(result.value.active).toBeNull();
+      expect(result.value.defaultRoute).toEqual({ provider: 'deepseek', model: 'deepseek-chat' });
+      expect(result.value.availableProviders).toEqual([]);
+      // 最小 profile(宿主无 presets 面)→ 种子兜底, 全部 source=seed
+      const names = result.value.presets.map((p) => p.name);
+      expect(names).toContain('default');
+      expect(names).toContain('writing-day');
+      expect(names).toContain('polish');
+      expect(result.value.presets.every((p) => p.source === 'seed')).toBe(true);
+    }
+    env.cleanup();
+  });
+
+  it('presets/list: 绑定后 active 反映 llm.yml; defaultRoute/availableProviders 来自宿主; 存储卡 source=stored', async () => {
+    const { DEFAULT_CONTENT_PRESETS } = await import('@novelcraft/llm-step');
+    const env = setup({
+      service: {
+        config: { llm: { provider: 'deepseek', model: 'deepseek-v4-pro' } },
+        presets: {
+          list: async () => [
+            ...DEFAULT_CONTENT_PRESETS,
+            { name: 'my-card', label: '我的卡', provider: 'fake', model: 'fake-x', temperature: 0.33 },
+          ],
+        },
+      },
+      llm: { listProviders: () => ['deepseek', 'fake'] },
+    });
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(env.root, '.assistant'), { recursive: true });
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'preset: writing-day\nmodel: old-model\n', 'utf8');
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.presetsList({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound?.book).toBe('测试书');
+      expect(result.value.active).toBe('writing-day'); // llm.yml preset 键反映
+      expect(result.value.defaultRoute).toEqual({ provider: 'deepseek', model: 'deepseek-v4-pro' });
+      expect(result.value.availableProviders).toEqual(['deepseek', 'fake']);
+      const myCard = result.value.presets.find((p) => p.name === 'my-card');
+      expect(myCard).toMatchObject({
+        label: '我的卡', provider: 'fake', model: 'fake-x', temperature: 0.33, source: 'stored',
+      });
+      expect(result.value.presets.find((p) => p.name === 'writing-day')?.source).toBe('seed');
+    }
+    env.cleanup();
+  });
+
+  it('presets/select: 写入只动 preset 键(先写 model 键再 select, model 原样保留)', async () => {
+    const env = setup();
+    const { writeFileSync, readFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(env.root, '.assistant'), { recursive: true });
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'model: gpt-x\n', 'utf8');
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.presetsSelect({ sessionId: 's1', preset: 'writing-day' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.ok).toBe(true);
+      expect(result.value.active).toBe('writing-day');
+      expect(result.value.message).toContain('内容手已切到');
+      expect(result.value.message).toContain('写作日');
+      expect(result.value.message).toContain('deepseek');
+    }
+    const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
+    expect(content).toContain('model: gpt-x'); // N19: 其余键原样保留
+    expect(content).toContain('preset: writing-day');
+    env.cleanup();
+  });
+
+  it('presets/select: 未知预设拒绝且不写文件', async () => {
+    const env = setup();
+    const { writeFileSync, readFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(env.root, '.assistant'), { recursive: true });
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'model: gpt-x\n', 'utf8');
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.presetsSelect({ sessionId: 's1', preset: 'nope' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('预设不存在');
+    }
+    const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
+    expect(content).not.toContain('preset:');
+    expect(content).toContain('model: gpt-x');
+    env.cleanup();
+  });
+
+  it('presets/select: null 清除回退(移除 preset 键, 其余键保留)', async () => {
+    const env = setup();
+    const { writeFileSync, readFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(env.root, '.assistant'), { recursive: true });
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'preset: writing-day\nmodel: gpt-x\n', 'utf8');
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.presetsSelect({ sessionId: 's1', preset: null });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.ok).toBe(true);
+      expect(result.value.active).toBeNull();
+      expect(result.value.message).toContain('默认');
+    }
+    const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
+    expect(content).not.toContain('preset:');
+    expect(content).toContain('model: gpt-x');
+    env.cleanup();
+  });
+
+  it('presets/select: 未绑定 → 作者语言错误(不写文件)', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.presetsSelect({ preset: 'writing-day' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('未绑定');
+    env.cleanup();
+  });
+
+  it('presets: 服务缺省(无 presets 面)不炸 —— list 种子兜底, select 种子名照常写', async () => {
+    const env = setup(); // 基础 service 无 presets 面
+    const h = createNovelcraftHandlers(env.ctx);
+    const list = await h.presetsList({ sessionId: 's1' });
+    expect(list.ok).toBe(true);
+    if (list.ok) {
+      expect(list.value.bound?.book).toBe('测试书');
+      expect(list.value.presets.some((p) => p.name === 'writing-day' && p.source === 'seed')).toBe(true);
+      expect(list.value.active).toBeNull();
+    }
+    // 存在性按种子兜底 → select 照常经 selectPresetInLlmYml 写 llm.yml
+    const sel = await h.presetsSelect({ sessionId: 's1', preset: 'polish' });
+    expect(sel.ok).toBe(true);
+    if (sel.ok) {
+      expect(sel.value.active).toBe('polish');
+      expect(sel.value.message).toContain('精修校对');
     }
     env.cleanup();
   });

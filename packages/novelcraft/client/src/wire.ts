@@ -10,6 +10,8 @@ export const ENDPOINTS = {
   storyMap: 'story/map',
   writingDesk: 'writing/desk',
   chapterDossier: 'chapter/dossier',
+  presetsList: 'presets/list',
+  presetsSelect: 'presets/select',
 } as const;
 
 export interface WatchStatePayload {
@@ -213,4 +215,50 @@ export interface ChapterDossierValue {
   signals: SignalCard[];
   /** next_chapter==N 的最新一条续写提案(无则 null)。 */
   proposal: ProposalCard | null;
+}
+
+export interface PresetsListPayload {
+  sessionId?: string;
+  workspacePath?: string;
+}
+
+/** 内容手预设卡(纯 JSON 投影; N20/D13; 卡片信息序对齐父仓库 account-provider-card: 名称→模型→状态行)。 */
+export interface ContentPresetCard {
+  name: string;
+  label?: string;
+  provider?: string;
+  model?: string;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  timeout_ms?: number;
+  /** 来源: 种子(内置 DEFAULT_CONTENT_PRESETS)或存储(用户自定义卡)。 */
+  source: 'seed' | 'stored';
+}
+
+export interface PresetsListValue {
+  bound: { book: string; root: string } | null;
+  /** 全量预设(种子 ∪ 存储); 最小 profile(宿主无 presets 面)时种子兜底。 */
+  presets: ContentPresetCard[];
+  /** 当前书生效预设名(llm.yml preset 键; 未设/未绑定 null)。 */
+  active: string | null;
+  /** 内容手默认路由(宿主 Config.llm; 缺省兜底 deepseek/deepseek-chat)。 */
+  defaultRoute: { provider: string; model: string };
+  /** 已注册 provider 路由 id 列表(ctx.llm; 最小 profile 空数组, 不炸)。 */
+  availableProviders: string[];
+}
+
+export interface PresetsSelectPayload {
+  sessionId?: string;
+  workspacePath?: string;
+  /** 预设名; null = 恢复默认(移除 llm.yml 的 preset 键, N19 只动这一键)。 */
+  preset: string | null;
+}
+
+export interface PresetsSelectValue {
+  ok: boolean;
+  /** 写入后生效的预设名(null = 默认/继承助手配置)。 */
+  active: string | null;
+  /** 作者语言结果消息。 */
+  message: string;
 }

@@ -355,3 +355,66 @@
   color: var(--dsw-alias-label-tertiary);
   white-space: nowrap;
 }
+
+/* 模型预设(N20/D13): 半宽纵向(D10); 卡信息序对齐父仓库 account-provider-card
+   (名称 → 模型 → 状态行), 参数摘要对齐 LlmFormFields presetSummary(T/P)。 */
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+}
+
+.presetsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* 预设卡: 复用 .card 基态(边框/圆角/点击), 加名称→模型→状态行三段式。 */
+.presets button.card {
+  align-items: stretch;
+  text-align: left;
+}
+
+.presetRoute {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.presetStatusRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.presetBadge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  border-radius: 8px;
+  color: var(--dsw-alias-accent, var(--dsw-alias-primary));
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.presetUseHint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.presetParams {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.presetMeta {
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}

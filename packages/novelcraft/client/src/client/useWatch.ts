@@ -8,6 +8,8 @@ import type {
   InboxActPayload,
   InboxActValue,
   InboxListValue,
+  PresetsListValue,
+  PresetsSelectValue,
   StoryMapValue,
   WatchStateValue,
   WritingDeskValue,
@@ -193,6 +195,44 @@ export function useWritingDesk(connection: RpcCaller | undefined, sessionId: str
     void refresh()
   }, [refresh])
   return { data, refresh }
+}
+
+/** 模型预设数据源(presets/list + presets/select; N20/D13)。select 失败返回 {ok:false, message}。 */
+export function useModelPresets(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  const [data, setData] = useState<PresetsListValue | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(async () => {
+    const value = await call<PresetsListValue>(connection, ENDPOINTS.presetsList, { sessionId })
+    if (value) setData(value)
+  }, [connection, sessionId])
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  /** 选择/清除预设: 回宿主 selectPresetInLlmYml(N19 只动 llm.yml preset 键); 成功即刷新。 */
+  const select = useCallback(
+    async (preset: string | null): Promise<{ ok: boolean; message: string } | null> => {
+      setBusy(true)
+      try {
+        const result = await call<RpcResult<PresetsSelectValue>>(connection, ENDPOINTS.presetsSelect, {
+          sessionId,
+          preset,
+        })
+        if (result === null) return null
+        if (result.ok) {
+          void refresh()
+          return { ok: true, message: result.value.message }
+        }
+        return { ok: false, message: result.error?.message ?? '' }
+      } finally {
+        setBusy(false)
+      }
+    },
+    [connection, sessionId, refresh],
+  )
+
+  return { data, busy, refresh, select }
 }
 
 /** 章节档案数据源(chapter/dossier; §17.5.1 每章一整页钻取; chapterIndex 变化重取, null 清空)。 */

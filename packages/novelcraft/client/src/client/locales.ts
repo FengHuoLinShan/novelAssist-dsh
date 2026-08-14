@@ -92,6 +92,17 @@ export type NovelcraftKey =
   | 'dossier.signals'
   | 'dossier.proposal'
   | 'dossier.empty'
+  | 'preset.title'
+  | 'preset.unbound'
+  | 'preset.current'
+  | 'preset.use'
+  | 'preset.default.name'
+  | 'preset.default.desc'
+  | 'preset.available'
+  | 'preset.select.ok'
+  | 'preset.select.fail'
+  | 'preset.source.seed'
+  | 'preset.source.stored'
 
 export const zh: Record<NovelcraftKey, string> = {
   'pet.silent': '静默',
@@ -184,6 +195,17 @@ export const zh: Record<NovelcraftKey, string> = {
   'dossier.signals': '相关信号',
   'dossier.proposal': '续写提案',
   'dossier.empty': '暂无',
+  'preset.title': '模型预设',
+  'preset.unbound': '这本书还没绑定工作区。',
+  'preset.current': '当前使用',
+  'preset.use': '点击应用',
+  'preset.default.name': '默认(继承助手配置)',
+  'preset.default.desc': '不指定预设, 内容手跟随助手当前模型配置。',
+  'preset.available': '可用模型服务',
+  'preset.select.ok': '已应用',
+  'preset.select.fail': '应用失败, 请稍后再试',
+  'preset.source.seed': '内置',
+  'preset.source.stored': '自定义',
 }
 
 export const en: Record<NovelcraftKey, string> = {
@@ -277,4 +299,15 @@ export const en: Record<NovelcraftKey, string> = {
   'dossier.signals': 'Signals',
   'dossier.proposal': 'Next-chapter proposal',
   'dossier.empty': 'None',
+  'preset.title': 'Model Presets',
+  'preset.unbound': 'No vault bound for this book.',
+  'preset.current': 'Current',
+  'preset.use': 'Click to apply',
+  'preset.default.name': 'Default (inherit assistant config)',
+  'preset.default.desc': "No preset — the content hand follows the assistant's current model settings.",
+  'preset.available': 'Available providers',
+  'preset.select.ok': 'Applied',
+  'preset.select.fail': 'Apply failed, please try again later',
+  'preset.source.seed': 'Built-in',
+  'preset.source.stored': 'Custom',
 }

@@ -18,12 +18,17 @@ export type {
   ChapterDossierAsset,
   ChapterDossierPayload,
   ChapterDossierValue,
+  ContentPresetCard,
   DossierSceneCard,
   InboxActPayload,
   InboxActValue,
   InboxListPayload,
   InboxListValue,
   ObjectCard,
+  PresetsListPayload,
+  PresetsListValue,
+  PresetsSelectPayload,
+  PresetsSelectValue,
   ReviewCard,
   SignalCard,
   StoryMapAssetCard,
@@ -61,6 +66,10 @@ export function apply(ctx: Context): void {
         return handlers.writingDesk(payload as never);
       case ENDPOINTS.chapterDossier:
         return handlers.chapterDossier(payload as never);
+      case ENDPOINTS.presetsList:
+        return handlers.presetsList(payload as never);
+      case ENDPOINTS.presetsSelect:
+        return handlers.presetsSelect(payload as never);
       default:
         return { ok: false, error: { code: 'internal', message: `unknown endpoint: ${endpoint}`, details: {} } };
     }

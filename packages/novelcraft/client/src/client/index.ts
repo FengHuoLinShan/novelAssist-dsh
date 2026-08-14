@@ -14,6 +14,8 @@ import { WritingDeskAction } from './WritingDeskAction.tsx'
 import type { WritingDeskActionProps } from './WritingDeskAction.tsx'
 import { ChapterDossier } from './ChapterDossier.tsx'
 import type { ChapterDossierProps } from './ChapterDossier.tsx'
+import { ModelPresetsAction } from './ModelPresetsAction.tsx'
+import type { ModelPresetsActionProps } from './ModelPresetsAction.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -23,12 +25,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps }
+export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps }
 export { NS }
 export { PetAction } from './PetAction.tsx'
 export { StoryMapAction } from './StoryMapAction.tsx'
 export { WritingDeskAction } from './WritingDeskAction.tsx'
 export { ChapterDossier } from './ChapterDossier.tsx'
+export { ModelPresetsAction } from './ModelPresetsAction.tsx'
 
 /** 浏览器侧连接投影(结构面; 与 dsh-client-connection/client 的 ConnectionHandle 对齐)。 */
 export interface RpcCaller {
@@ -78,6 +81,16 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: (): { connection: RpcCaller | undefined } => actionSlot(),
     }, WritingDeskAction),
+  )
+  ctx.slots.inject(
+    'conversation.session.header.actions',
+    () => ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'novelcraft-model-presets',
+      order: 60,
+      locale: NS,
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
+    }, ModelPresetsAction),
   )
 
   // 订阅宿主推送(ADR-0018 §1): client/push 帧到达 → 广播 DOM 事件, useWatch 据此即时刷新。

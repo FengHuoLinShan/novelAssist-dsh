@@ -10,17 +10,22 @@ import path from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
 import { act, inboxView, plotSummaryLine, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
-import { resolvePolicy } from '@novelcraft/llm-step';
+import { DEFAULT_CONTENT_PRESETS, resolvePolicy, selectPresetInLlmYml } from '@novelcraft/llm-step';
 import { chapterDossier, rebuildIndex, storyMap } from '@novelcraft/store';
 import { latestProposal, type ProposalRecord } from '@novelcraft/writing';
 import type {
   ChapterDossierAsset,
   ChapterDossierPayload,
   ChapterDossierValue,
+  ContentPresetCard,
   InboxActPayload,
   InboxActValue,
   InboxListPayload,
   InboxListValue,
+  PresetsListPayload,
+  PresetsListValue,
+  PresetsSelectPayload,
+  PresetsSelectValue,
   ReviewCard,
   SignalCard,
   StoryMapPayload,
@@ -32,6 +37,18 @@ import type {
 } from './wire.js';
 import { ENDPOINTS } from './wire.js';
 
+/** 预设条目的结构形状(宿主 presets.list 返回 / llm-step ContentPreset 的投影)。 */
+export type PresetLike = {
+  name: string;
+  label?: string;
+  provider?: string;
+  model?: string;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  timeout_ms?: number;
+};
+
 /** 宿主侧的 novelcraft 服务结构面(运行时 ctx.get('novelcraft'), 不硬依赖 @novelcraft/dsh)。 */
 export interface NovelcraftHostService {
   vaults: {
@@ -40,6 +57,12 @@ export interface NovelcraftHostService {
     /** 任意路径 → 最近 vault 根; 未找到 undefined。 */
     resolveFromPath(startPath: string): { book: string; root: string } | undefined;
   };
+  /** 内容手预设卡注册表(N20: seed ∪ domain KV presets 表; 最小 profile 可缺省, 缺省时种子兜底)。 */
+  presets?: {
+    list(): Promise<PresetLike[]>;
+  };
+  /** 宿主配置(内容手默认路由 Config.llm; 缺省兜底 deepseek/deepseek-chat)。 */
+  config?: { llm?: { provider: string; model: string } };
 }
 
 interface JobsHostService {
@@ -137,6 +160,47 @@ async function resolveRoot(
     return svc.vaults.resolveFromPath(payload.workspacePath);
   }
   return undefined;
+}
+
+/** 内容手默认路由: 宿主 Config.llm; 缺省兜底 deepseek/deepseek-chat。 */
+function defaultRouteOf(svc: NovelcraftHostService | undefined): { provider: string; model: string } {
+  const p = svc?.config?.llm?.provider;
+  const m = svc?.config?.llm?.model;
+  return p && m ? { provider: p, model: m } : { provider: 'deepseek', model: 'deepseek-chat' };
+}
+
+/** 宿主预设面(list)容错读: 缺面/抛错 → 空数组(调用方种子兜底)。 */
+async function listPresets(svc: NovelcraftHostService | undefined): Promise<PresetLike[]> {
+  try {
+    return (await svc?.presets?.list?.()) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** 预设卡纯 JSON 投影 + source 标注(种子 = DEFAULT_CONTENT_PRESETS 名单; 其余 stored)。 */
+function presetCard(p: PresetLike, seedNames: ReadonlySet<string>): ContentPresetCard {
+  return {
+    name: p.name,
+    ...(p.label !== undefined ? { label: p.label } : {}),
+    ...(p.provider !== undefined ? { provider: p.provider } : {}),
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
+    ...(p.top_p !== undefined ? { top_p: p.top_p } : {}),
+    ...(p.max_tokens !== undefined ? { max_tokens: p.max_tokens } : {}),
+    ...(p.timeout_ms !== undefined ? { timeout_ms: p.timeout_ms } : {}),
+    source: seedNames.has(p.name) ? 'seed' : 'stored',
+  };
+}
+
+/** 已注册 provider 路由 id 列表(ctx.llm); 服务缺省/抛错 → 空数组, 不炸。 */
+function listAvailableProviders(ctx: Context): string[] {
+  try {
+    const llm = ctx.get('llm') as { listProviders?: () => string[] } | undefined;
+    return llm?.listProviders?.() ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** 构造端点处理器(测试可直接调用, 不经 HTTP)。 */
@@ -331,6 +395,64 @@ export function createNovelcraftHandlers(ctx: Context) {
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));
       }
+    },
+
+    async presetsList(payload: PresetsListPayload): Promise<RpcResult<PresetsListValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      // 注册表(种子 ∪ 存储); 无 presets 面(最小 profile)→ 种子兜底, 不炸。
+      const registered = await listPresets(novelcraft);
+      const list = registered.length > 0 ? registered : DEFAULT_CONTENT_PRESETS;
+      const seedNames = new Set(DEFAULT_CONTENT_PRESETS.map((s) => s.name));
+      return rpcOk({
+        bound: binding ? { book: binding.book, root: binding.root } : null,
+        presets: list.map((p) => presetCard(p, seedNames)),
+        active: binding ? (resolvePolicy(binding.root).llm.preset ?? null) : null,
+        defaultRoute: defaultRouteOf(novelcraft),
+        availableProviders: listAvailableProviders(ctx),
+      });
+    },
+
+    async presetsSelect(payload: PresetsSelectPayload): Promise<RpcResult<PresetsSelectValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcFail('未绑定工作区: 请先在助手侧打开这本书的会话(每书一会话, D17)。');
+      }
+      const name = payload.preset ?? null;
+      // 校验: 非 null 时预设必须存在(注册表 ∪ 种子); 不存在 → 拒绝, 不写文件(N19 写边界)。
+      if (name !== null) {
+        const registered = await listPresets(novelcraft);
+        const known = registered.length > 0 ? registered : DEFAULT_CONTENT_PRESETS;
+        const found = known.find((p) => p.name === name);
+        if (!found) {
+          return rpcFail(`预设不存在: ${name}`);
+        }
+        // 写边界(N19): 只允许经 selectPresetInLlmYml 写 llm.yml 的 preset 单键(配置非资产, 不过 approval)。
+        try {
+          selectPresetInLlmYml(binding.root, name);
+        } catch (err) {
+          return rpcFail(err instanceof Error ? err.message : String(err));
+        }
+        const route = defaultRouteOf(novelcraft);
+        const provider = found.provider ?? route.provider;
+        const model = found.model ?? route.model;
+        const label = found.label ?? name;
+        return rpcOk({
+          ok: true,
+          active: resolvePolicy(binding.root).llm.preset ?? null,
+          message: `内容手已切到「${label}」(${provider}·${model})`,
+        });
+      }
+      // name === null: 恢复默认(移除 llm.yml 的 preset 键, 其余键原样保留)。
+      try {
+        selectPresetInLlmYml(binding.root, null);
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+      return rpcOk({
+        ok: true,
+        active: resolvePolicy(binding.root).llm.preset ?? null,
+        message: '已恢复默认(内容手继承助手配置)',
+      });
     },
   };
 }
