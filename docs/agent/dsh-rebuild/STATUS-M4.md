@@ -20,13 +20,10 @@
 - [x] R1 内核完成并集成验收: vault 29 测试(dist 发布, N9/N10/N12)+ store 68 测试
   (frontmatter/adopt/merge/dedup/index/health/git, R1–R64 可测规则全覆盖); 根
   workspaces 97/97 全绿, typecheck 零错误; 两包经 vault dist 直接依赖, 无 alias 残留
-- [x] R2 完成: @novelcraft/llm-step(19 测试, 两次子代理无产出后由主会话实现)
-- [x] R3 完成: writing 垂直切片闭环(15 测试 + r3-demo 通过); store chapter 采用语义修正
-- [x] R2 完成: @novelcraft/llm-step(19 测试, 两次子代理无产出后由主会话实现)
-- [x] R3 完成: writing 垂直切片闭环(15 测试 + r3-demo 通过); store chapter 采用语义修正
-- [ ] R3 writing 垂直切片(首个可用闭环)
+- [x] R2 完成: @novelcraft/llm-step(19 测试)
+- [x] R3 完成: writing 垂直切片闭环(15 测试 + r3-demo); store chapter 采用语义修正
 - [~] R4 imports: Phase 1 完成(12 测试 + r4a-demo); Phase 2/3 + L0–L4 待 R4b
-- [ ] R5 其余领域(部分已先行: memory 5 测试 / assistant 核心 11 测试)→ R6 → R7 client + 发布
+- [ ] R5 其余领域(部分先行: memory 5 测试 / assistant 核心 11 测试)→ R6 → R7 client + 发布
 
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
