@@ -252,7 +252,7 @@ export async function runDeepImport(
   phaseResults["2b"] = result.aliases;
   emitCheckpoint(sink, "2b", fingerprint);
 
-  // --- Phase 3: structure(≥0.96 自动应用, 低置信只计数) ---
+  // --- Phase 3: structure(≥0.96 自动落 draft 待采用(N31), 低置信只计数; canonical 升格走 novelcraft_store_adopt 审批门) ---
   const struct = await analyzeStructure(provider, root, { workflowId });
   result.structure.threads = struct.threads.length;
   result.structure.arcs = struct.arcs.length;

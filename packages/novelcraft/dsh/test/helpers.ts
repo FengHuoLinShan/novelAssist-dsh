@@ -75,6 +75,9 @@ export interface FakeApprovalConfig {
   /** 缺省 outcome; 未设置时按 decisions 表, 再缺省 rejected(fail-closed 可测) */
   outcome?: ApprovalOutcome;
   decisions?: Record<string, ApprovalOutcome>;
+  /** 逐请求 outcome 队列(先进先出; 耗尽后回落 outcome/decisions/rejected)。用于
+   *  allowed-once 单次放行场景: 首次放行、后续调用必须重新申请审批(N31)。 */
+  sequence?: ApprovalOutcome[];
 }
 
 export class FakeApproval extends ApprovalService {
@@ -88,6 +91,9 @@ export class FakeApproval extends ApprovalService {
 
   override async request(req: ApprovalRequest): Promise<ApprovalOutcome> {
     this.requests.push(req);
+    if (this.config.sequence && this.config.sequence.length > 0) {
+      return this.config.sequence.shift() as ApprovalOutcome;
+    }
     return this.config.outcome ?? this.config.decisions?.[req.toolName] ?? 'rejected';
   }
 }

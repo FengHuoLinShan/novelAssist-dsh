@@ -1,5 +1,6 @@
 // imports · Phase 3 结构分析 + 结构去重(imports.md「结构去重建议」+ catalog §1.8)。
-// 规则: 同 workflow 且置信 ≥0.96 才自动应用(shouldAutoPromote); 低置信只报告。
+// N31(用户裁定): ≥0.96 自动落 draft 待采用(applyThreshold 过滤语义不变, 低置信只报告);
+// canonical 升格走 novelcraft_store_adopt 审批门(铁律3, fail-closed), 不再直置 canonical。
 import { existsSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
@@ -50,7 +51,7 @@ function writeStructFile(root: string, dir: string, title: string, item: StructI
   const fm: Record<string, unknown> = {
     id: slug,
     title,
-    status: "canonical", // ≥0.96 自动应用(imports.md 结构去重); 审批门 Phase F 另行收口
+    status: "draft", // N31: ≥0.96 自动落 draft 待采用; canonical 升格走 novelcraft_store_adopt 审批门(铁律3)
     confidence: item.confidence ?? 0,
     workflow: workflowId,
   };
@@ -80,7 +81,7 @@ function writeStructFile(root: string, dir: string, title: string, item: StructI
   return slug;
 }
 
-/** Phase 3: 单次结构分析 → 阈值过滤(≥0.96)→ 落 structure/ 目录(N12)。 */
+/** Phase 3: 单次结构分析 → 阈值过滤(≥0.96)→ 落 structure/ 目录(N12; N31: 落 draft, 升格走 adopt 审批门)。 */
 export async function analyzeStructure(
   provider: Provider,
   root: string,

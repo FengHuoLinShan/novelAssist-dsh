@@ -34,6 +34,17 @@ export class GateDeniedError extends Error {
 }
 
 /**
+ * 写面未走审批门即被调用(拒绝存根抛此错误; N31 收口 + 铁律3 fail-closed)。
+ * 与 GateDeniedError 的区别: 后者是走了审批但被拒, 前者是调用方根本没走审批门。
+ */
+export class GateRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GateRequiredError';
+  }
+}
+
+/**
  * 把 ctx.approval 包装为 NovelCraft 的审批门。
  * - allowed-once → 'allowed'(DSH 语义: 授权只适用于本次请求动作);
  * - rejected/cancelled/unavailable/无 agent → 拒绝(fail-closed)。

@@ -25,7 +25,7 @@
 | `aliasRelationBatch(provider, scene)` | alias_relation | 别名附着(只附着不建新对象)+ 关系(create-or-merge, N11) |
 | `dedupeGroup(L1/L2)` | dedup_judge(仅 L2 低置信) | L1 分组判断(编排脑)+ L2 精判 + 去重报告(§6.1 形态) |
 | `applyDedup(root, report)` | 无 LLM | store merge/split/attach_alias + merge-log(N4)+ 一次确认由上层 approval 门禁 |
-| `analyzeStructure(provider, range)` | structure_analysis | structure/{threads,arcs,foreshadowing,reveal}/ + 置信 ≥0.96 才自动应用(R 结构去重) |
+| `analyzeStructure(provider, range)` | structure_analysis | structure/{threads,arcs,foreshadowing,reveal}/ + 置信 ≥0.96 才落盘(status=draft, N31; canonical 升格走 novelcraft_store_adopt 审批门) |
 | `resumeImport(root)` | 无 LLM | 读 checkpoint.json 跳过已完成批次(幂等续跑) |
 
 ## 降级条款(进 policy + 每函数显式实现, catalog §1 + store-rules 降级节)

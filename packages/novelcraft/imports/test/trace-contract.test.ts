@@ -56,6 +56,8 @@ function happyResponses(n: number): Array<{ text?: string; throwError?: Error }>
   }
   for (let i = 0; i < n; i++) responses.push({ text: JSON.stringify({ entities: [] }) });
   for (let i = 0; i < n; i++) responses.push({ text: JSON.stringify({ aliases: [], relations: [], uncertain_items: [] }) });
+  // Phase 3 结构(N31): 本队列返回空结构; 非空 ≥0.96 项落 structure/ status=draft,
+  // canonical 升格走 novelcraft_store_adopt 审批门(见 phase2-3.test.ts 的 N31 断言)。
   responses.push({ text: JSON.stringify({ threads: [], arcs: [], foreshadowing: [], reveals: [] }) });
   return responses;
 }

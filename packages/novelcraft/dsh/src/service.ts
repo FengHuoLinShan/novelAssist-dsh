@@ -16,7 +16,7 @@ import * as store from '@novelcraft/store';
 import { ensureVaultGitignore } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
-import { ApprovalGate } from './approval/gate.js';
+import { ApprovalGate, GateRequiredError } from './approval/gate.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
 import { RadarScheduler } from './jobs/radar.js';
@@ -38,7 +38,7 @@ export interface NovelcraftFacades {
   llmStep: typeof llmStep;
   writing: typeof writing;
   imports: typeof imports;
-  world: typeof world;
+  world: WorldFacade;
   outline: typeof outline;
   memory: typeof memory;
   rag: typeof rag;
@@ -46,12 +46,51 @@ export interface NovelcraftFacades {
   assistant: typeof assistant;
 }
 
+/** world.createObject 输入(与 @novelcraft/world 同形)。 */
+export interface WorldCreateInput {
+  name: string;
+  entityType: string;
+  aliases?: string[];
+  tags?: string[];
+  description?: string;
+}
+
+/** world.updateObject patch(与 @novelcraft/world 同形)。 */
+export interface WorldUpdatePatch {
+  name?: string;
+  description?: string;
+  tags?: string[];
+}
+
+/**
+ * world facade 包装类型(N31, M7 Phase F): 读取面原样透传;
+ * createObject/updateObject 两写函数收口为拒绝存根(采用类写入必过审批门, 铁律3)。
+ */
+export type WorldFacade = Omit<typeof world, 'createObject' | 'updateObject'> & {
+  createObject: (root: string, input: WorldCreateInput) => never;
+  updateObject: (root: string, slug: string, patch: WorldUpdatePatch) => never;
+};
+
+/** 写面拒绝存根工厂: 未经审批门调用采用类写操作 → 抛错(fail-closed, N31)。 */
+function worldWriteStub(op: string): never {
+  throw new GateRequiredError(
+    `采用类写操作请经 NovelCraftService.worldCreateGuarded/worldUpdateGuarded（审批门, N31）: ${op}`,
+  );
+}
+
+/** world 包装命名空间: 读面透传, 两写函数为拒绝存根(N31 + 铁律3)。 */
+export const WORLD_FACADE: WorldFacade = {
+  ...world,
+  createObject: (root, input) => worldWriteStub(`world.createObject(${root}, ${input.name})`),
+  updateObject: (root, slug) => worldWriteStub(`world.updateObject(${root}, ${slug})`),
+};
+
 export const FACADES: NovelcraftFacades = {
   store,
   llmStep,
   writing,
   imports,
-  world,
+  world: WORLD_FACADE,
   outline,
   memory,
   rag,
@@ -131,6 +170,35 @@ export class NovelCraftService extends Service {
       summary: note ?? `vault ${root} 中的 ${ref}`,
       items: [ref],
     }, async () => store.adopt(root, kind, ref, opts));
+  }
+
+  /** 便捷: 审批门控的 world 对象创建(采用类写入必过 approval, N31 + 铁律3 fail-closed)。 */
+  worldCreateGuarded(
+    agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
+    root: string,
+    input: WorldCreateInput,
+    note?: string,
+  ): Promise<string> {
+    return this.approval.guard(agent, {
+      action: '创建世界对象',
+      summary: note ?? `vault ${root} 中的「${input.name}」`,
+      items: [input.name],
+    }, async () => world.createObject(root, input));
+  }
+
+  /** 便捷: 审批门控的 world 对象修改(采用类写入必过 approval, N31 + 铁律3 fail-closed)。 */
+  worldUpdateGuarded(
+    agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
+    root: string,
+    slug: string,
+    patch: WorldUpdatePatch,
+    note?: string,
+  ): Promise<void> {
+    return this.approval.guard(agent, {
+      action: '修改世界对象',
+      summary: note ?? `vault ${root} 中的 ${slug}`,
+      items: [slug],
+    }, async () => world.updateObject(root, slug, patch));
   }
 
   /** 便捷: 重建派生索引并把结果写入 domain 缓存(文件仍是唯一真相)。 */

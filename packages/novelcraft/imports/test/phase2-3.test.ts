@@ -161,8 +161,8 @@ describe("aliasRelationBatch(2b)", () => {
   });
 });
 
-describe("analyzeStructure(3, ≥0.96 自动应用)", () => {
-  it("高置信落 canonical 文件, 低置信仅计数", async () => {
+describe("analyzeStructure(3, ≥0.96 落 draft 待采用, N31)", () => {
+  it("高置信落 draft 文件, 低置信仅计数(N31)", async () => {
     const root = makeRoot();
     planImport(root, { startChapter: 1, endChapter: 1, confirmed: true });
     const provider = new MockProvider({
@@ -186,6 +186,9 @@ describe("analyzeStructure(3, ≥0.96 自动应用)", () => {
     expect(data.id).toBe(r.threads[0]);
     expect(data.name).toBe("主线");
     expect(data.thread_type).toBe("main");
+    // N31(用户裁定): ≥0.96 结构项落盘 status=draft(不再直置 canonical); canonical 升格经
+    // store.adopt(thread/arc/foreshadowing/reveal), 该 adopt 在 dsh 层过 ApprovalGate(铁律3, fail-closed)。
+    expect(data.status).toBe("draft");
     expect(validateFrontmatter("thread", data as never)).toEqual([]);
   });
   it("合规 reveal(含 target_type/target_id/secret_summary)→ 正常落盘且过 schema(N23)", async () => {
@@ -203,6 +206,7 @@ describe("analyzeStructure(3, ≥0.96 自动应用)", () => {
     expect(r.reveals).toHaveLength(1);
     const raw = readFileSync(join(root, "structure", "reveal", r.reveals[0] + ".md"), "utf8");
     const { data } = parseFrontmatter(raw);
+    expect(data.status).toBe("draft"); // N31: ≥0.96 结构项(含 reveal)落 draft 待采用; 升格走 adopt 审批门
     expect(validateFrontmatter("reveal", data as never)).toEqual([]); // N23: reveal 必填齐备(target_type/target_id/secret_summary)
   });
   it("不合规 reveal 项(缺 target_type/target_id/secret_summary)→ 拒写且不产生文件(N23)", async () => {

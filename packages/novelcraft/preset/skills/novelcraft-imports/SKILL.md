@@ -24,7 +24,7 @@ whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重�
    narrative_tag imported→draft(截断 32)。
 2. **世界(2a/2b)**: 候选落 world/pending/*.md(entity_key 去重, 同名同型
    canonical ≥0.88 复用); 别名只附着不建新对象; 关系 create-or-merge。
-3. **结构(3)**: 同 workflow 且置信 ≥0.96 才自动应用, 落 structure/ 目录;
+3. **结构(3)**: 同 workflow 且置信 ≥0.96 落 structure/ 目录（status=draft, N31）；升格 canonical 走 novelcraft_store_adopt 审批门;
    低置信仅计数报告。
 4. **去重(L0–L3)**: 报告一次确认(§6.1 形态); applyDedup 需 approval;
    候选态合并可逆(source 置 merged + merged_into, 证据并入 target)。
