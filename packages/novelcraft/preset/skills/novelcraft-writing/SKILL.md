@@ -12,6 +12,20 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
   (ingestChapter, 幂等: 同 hash 跳过)。
 - 每次同步 = 一个新版本(git commit); content_hash 变化 → 相关信号自动过期(§8)。
 
+## 文本入库协议(Track 1, D9a)
+
+- 作者给手稿文件(拖入会话产生路径/直接发路径) → **先用 read 工具预览前 ~100 行**
+  确认章节标题结构(第X章/Chapter N/序章), 再调
+  `novelcraft_ingest_file {root, file_path, start_chapter?, force?}`。
+- 入库是确定性的: imports/<slug>.md 原文停靠 + chapters/NNN.md(默认接现有最大章之后;
+  同号章内容冲突默认跳过, 作者确认后 force 覆盖)+ imports/import-log.jsonl
+  (同文件重复导入自动跳过)。
+- 粘贴流: 作者粘贴正文 → 用 write 工具落 imports/ 下临时 .md → 同走 novelcraft_ingest_file。
+- v1 只收 .txt/.md(其他格式请作者另存为纯文本); 乱码(非 UTF-8)会被拒绝并提示转码;
+  >50MB 请拆分。
+- 入库后用作者语言报告(章数/跳过/冲突), 并建议下一步跑深度导入(novelcraft_deep_import);
+  摄入雷达会自动把「章待增量导入」对账进收件箱。
+
 ## 闭环(全部确定性函数, @novelcraft/writing)
 
 1. reviewChapter: 语义审查 → findings 落 .assistant/reviews/(N4), 失败不写。
