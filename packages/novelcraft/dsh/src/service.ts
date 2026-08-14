@@ -139,4 +139,14 @@ export class NovelCraftService extends Service {
   ): Promise<imports.DeepImportResult> {
     return deepImport(this, agent, root, opts);
   }
+
+  /** 便捷: 计划台续写提案(内容手直连 ctx.llm, 落 .assistant/proposals/)。 */
+  proposeNextChapter(root: string, chapterIndex: number): Promise<writing.ProposeResult> {
+    return writing.proposeNextChapter(this.llmProvider, root, chapterIndex);
+  }
+
+  /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */
+  scanHealth(root: string): assistant.HealthScanResult {
+    return assistant.scanHealthSignals(root);
+  }
 }

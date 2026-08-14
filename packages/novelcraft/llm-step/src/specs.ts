@@ -150,6 +150,40 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
     degradationNote: "失败保持结构资产不动(catalog §1.8 降级)。",
     contractVersion: "v1",
   },
+  {
+    // 写作前计划台(§17.4/§17.5.3): 轻量「下一步提案」, 非整章正文(writing_generate)。
+    // 无契约 JSON → 内联放宽(additionalProperties)。
+    specRef: "next_chapter_proposal",
+    description: "写作前计划台: 基于总纲/剧情线/上一章结尾, 给出下一章 2–3 条续写方向(各带依据/成本/风险)。",
+    inputNotes: "总纲 + 剧情线/篇章纲/伏笔摘要 + 上一章正文结尾。",
+    outputSchema: {
+      type: "object",
+      required: ["proposals"],
+      properties: {
+        proposals: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["title", "premise"],
+            properties: {
+              title: { type: "string" },
+              premise: { type: "string" },
+              basis: { type: "array", items: { type: "string" } },
+              cost: { type: "string" },
+              risk: { type: "string" },
+            },
+            additionalProperties: true,
+          },
+        },
+      },
+      additionalProperties: true,
+    },
+    budgetTokens: 0,
+    temperature: 0.7,
+    timeoutMs: 1_800_000,
+    degradationNote: "提案只进 .assistant/proposals/ 临时预览, 不写正文; 失败不落盘。",
+    contractVersion: "v1",
+  },
 ];
 
 const registry = new Map(BUILTIN_SPECS.map((s) => [s.specRef, s]));

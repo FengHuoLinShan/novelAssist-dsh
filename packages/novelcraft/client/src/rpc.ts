@@ -9,9 +9,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
-import { act, inboxView, type InboxAction, type Signal } from '@novelcraft/assistant';
+import { act, inboxView, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
 import { resolvePolicy } from '@novelcraft/llm-step';
 import { rebuildIndex, storyMap } from '@novelcraft/store';
+import { latestProposal } from '@novelcraft/writing';
 import type {
   InboxActPayload,
   InboxActValue,
@@ -216,11 +217,14 @@ export function createNovelcraftHandlers(ctx: Context) {
     async writingDesk(payload: WritingDeskPayload): Promise<RpcResult<WritingDeskValue>> {
       const binding = await resolveRoot(novelcraft, payload);
       if (!binding) {
-        return rpcOk({ bound: null, book: '', chapters: [], threads: [], arcs: [], signals: [], objects: [], reviews: [] });
+        return rpcOk({ bound: null, book: '', chapters: [], threads: [], arcs: [], signals: [], objects: [], reviews: [], proposals: null });
       }
       try {
+        // 打开写作台即刷新结构健康信号(确定性 + 幂等, §20.6)。
+        scanHealthSignals(binding.root);
         const m = storyMap(binding.root);
         const index = rebuildIndex(binding.root);
+        const proposal = latestProposal(binding.root);
         return rpcOk({
           bound: { book: binding.book, root: binding.root },
           book: m.book,
@@ -230,6 +234,15 @@ export function createNovelcraftHandlers(ctx: Context) {
           signals: inboxView(binding.root).map(card),
           objects: index.objects.map((o) => ({ slug: o.slug, name: o.name, kind: o.kind, status: o.status })),
           reviews: readReviewCards(binding.root),
+          proposals: proposal
+            ? {
+                run_id: proposal.run_id,
+                chapter_index: proposal.chapter_index,
+                next_chapter: proposal.next_chapter,
+                generated_at: proposal.generated_at,
+                proposals: proposal.proposals,
+              }
+            : null,
         });
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));

@@ -243,10 +243,13 @@ describe('novelcraft RPC 处理器', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.bound?.book).toBe('测试书');
-      expect(result.value.signals).toHaveLength(1);
+      // 手工信号 + 健康扫描器落盘的结构 unassigned 信号(§20.6, 打开写作台即刷新)。
+      expect(result.value.signals).toHaveLength(2);
+      expect(result.value.signals.some((s) => s.radar === 'writing')).toBe(true);
       expect(result.value.threads).toHaveLength(1);
       expect(result.value.objects).toHaveLength(1);
       expect(result.value.reviews[0]).toMatchObject({ chapter_index: 1, finding_count: 1 });
+      expect(result.value.proposals).toBeNull();
     }
     env.cleanup();
   });

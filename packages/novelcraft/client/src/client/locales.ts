@@ -48,6 +48,11 @@ export type NovelcraftKey =
   | 'desk.objects'
   | 'desk.reviews'
   | 'desk.reviews.empty'
+  | 'desk.proposals'
+  | 'desk.proposals.empty'
+  | 'desk.proposals.basis'
+  | 'desk.proposals.cost'
+  | 'desk.proposals.risk'
 
 export const zh: Record<NovelcraftKey, string> = {
   'pet.silent': '静默',
@@ -96,6 +101,11 @@ export const zh: Record<NovelcraftKey, string> = {
   'desk.objects': '世界对象',
   'desk.reviews': '语义审查',
   'desk.reviews.empty': '还没有语义审查记录。',
+  'desk.proposals': '下一步提案',
+  'desk.proposals.empty': '还没有续写提案: 在助手侧说「续写下一章」生成。',
+  'desk.proposals.basis': '依据',
+  'desk.proposals.cost': '成本',
+  'desk.proposals.risk': '风险',
 }
 
 export const en: Record<NovelcraftKey, string> = {
@@ -145,4 +155,9 @@ export const en: Record<NovelcraftKey, string> = {
   'desk.objects': 'World objects',
   'desk.reviews': 'Semantic reviews',
   'desk.reviews.empty': 'No semantic reviews yet.',
+  'desk.proposals': 'Next-chapter proposals',
+  'desk.proposals.empty': 'No proposals yet — ask the assistant to propose the next chapter.',
+  'desk.proposals.basis': 'Basis',
+  'desk.proposals.cost': 'Cost',
+  'desk.proposals.risk': 'Risk',
 }

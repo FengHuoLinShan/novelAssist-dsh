@@ -53,9 +53,9 @@ describe("validator(自实现 JSON Schema 子集)", () => {
 });
 
 describe("specs(内置注册表, catalog 转写)", () => {
-  it("4 个内置 spec 且 outputSchema 可校验", () => {
+  it("5 个内置 spec 且 outputSchema 可校验", () => {
     expect(listSpecRefs().sort()).toEqual(
-      ["dedup_judge", "entity_extraction", "semantic_review", "structure_analysis"].sort(),
+      ["dedup_judge", "entity_extraction", "next_chapter_proposal", "semantic_review", "structure_analysis"].sort(),
     );
     for (const ref of listSpecRefs()) {
       const spec = loadSpec(ref)!;

@@ -127,6 +127,20 @@ export interface ObjectCard {
   status: string;
 }
 
+export interface ProposalCard {
+  run_id: string;
+  chapter_index: number;
+  next_chapter: number;
+  generated_at: string;
+  proposals: Array<{
+    title: string;
+    premise: string;
+    basis?: string[];
+    cost?: string;
+    risk?: string;
+  }>;
+}
+
 export interface WritingDeskValue {
   bound: { book: string; root: string } | null;
   book: string;
@@ -139,4 +153,6 @@ export interface WritingDeskValue {
   objects: ObjectCard[];
   /** 评审台: 各章最新语义审查 */
   reviews: ReviewCard[];
+  /** 计划台: 最新一条续写提案(无则 null) */
+  proposals: ProposalCard | null;
 }

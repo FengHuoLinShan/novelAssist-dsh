@@ -44,6 +44,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
   const arcs = data?.arcs ?? []
   const objects = data?.objects ?? []
   const reviews = data?.reviews ?? []
+  const proposals = data?.proposals ?? null
 
   const tab = (m: Mode, key: NovelcraftKey): JSX.Element => (
     <ModeTab label={t(key)} active={mode === m} onClick={() => setMode(m)} />
@@ -100,6 +101,25 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
                 {threads.map((x) => <div key={x.slug} className={css.itemLine}>{x.name}{x.thread_type ? ' · ' + x.thread_type : ''}</div>)}
                 <div className={css.sectionTitle}>{t('story.arcs')}</div>
                 {arcs.map((x) => <div key={x.slug} className={css.itemLine}>{x.name}</div>)}
+                <div className={css.sectionTitle}>{t('desk.proposals')}</div>
+                {proposals == null || proposals.proposals.length === 0 ? (
+                  <div className={css.empty}>{t('desk.proposals.empty')}</div>
+                ) : (
+                  <div>
+                    <div className={css.itemLine}>{t('desk.chapters')} {proposals.next_chapter}</div>
+                    {proposals.proposals.map((prop) => (
+                      <article key={prop.title} className={css.card}>
+                        <header className={css.cardHeader}>
+                          <span className={css.cardTitle}>{prop.title}</span>
+                        </header>
+                        <p className={css.proposed}>{prop.premise}</p>
+                        {prop.basis != null && prop.basis.length > 0 ? <p className={css.proposed}>{t('desk.proposals.basis')}: {prop.basis.join(' / ')}</p> : null}
+                        {prop.cost ? <p className={css.proposed}>{t('desk.proposals.cost')}: {prop.cost}</p> : null}
+                        {prop.risk ? <p className={css.proposed}>{t('desk.proposals.risk')}: {prop.risk}</p> : null}
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : mode === 'review' ? (
               reviews.length === 0 ? (

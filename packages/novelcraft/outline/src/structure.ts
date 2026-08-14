@@ -2,7 +2,7 @@
 // 依据: specs/assets/outline.md + store-rules + N1(六键健康词汇表)+ N12(目录化)。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths, slugify } from "@novelcraft/vault";
-import { computeSceneHealth, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+import { computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
 
 export interface SceneLite {
   slug: string;
@@ -32,16 +32,23 @@ export function listScenes(root: string): SceneLite[] {
     });
 }
 
-/** Scene 四键健康信号(N1): 委托 store 确定性推导。 */
-export function sceneHealthSignals(scenes: SceneLite[]): Array<{ slug: string; keys: string[] }> {
+/** Scene 四键健康信号(N1): 委托 store 确定性推导; 带 title 与证据明细。 */
+export function sceneHealthSignals(
+  scenes: SceneLite[],
+): Array<{ slug: string; title: string; keys: string[]; details: ReturnType<typeof computeSceneHealthDetail> }> {
   return scenes
-    .map((s) => ({ slug: s.slug, keys: computeSceneHealth(s.fm as never) }))
+    .map((s) => {
+      const details = computeSceneHealthDetail(s.fm as never);
+      return { slug: s.slug, title: s.title, keys: details.map((d) => d.key), details };
+    })
     .filter((x) => x.keys.length > 0);
 }
 
 /** 结构资产级信号(N1 后两键): threads/arcs 等目录里的 needs_review/unassigned。 */
-export function structureHealthSignals(root: string): Array<{ kind: string; slug: string; keys: string[] }> {
-  const out: Array<{ kind: string; slug: string; keys: string[] }> = [];
+export function structureHealthSignals(
+  root: string,
+): Array<{ kind: string; slug: string; title: string; keys: string[] }> {
+  const out: Array<{ kind: string; slug: string; title: string; keys: string[] }> = [];
   const p = paths(root).structure;
   const dirs: Array<[string, string]> = [
     ["thread", p.threads],
@@ -57,7 +64,14 @@ export function structureHealthSignals(root: string): Array<{ kind: string; slug
       if (data.needs_review === true) keys.push("structure_needs_review");
       const related = Array.isArray(data.related_thread_ids) ? data.related_thread_ids : [];
       if (data.unassigned === true || (related.length === 0 && kind === "thread")) keys.push("structure_unassigned");
-      if (keys.length) out.push({ kind, slug: f.replace(/\.md$/, ""), keys });
+      if (keys.length) {
+        out.push({
+          kind,
+          slug: f.replace(/\.md$/, ""),
+          title: typeof data.title === "string" ? data.title : String(data.name ?? ""),
+          keys,
+        });
+      }
     }
   }
   return out;

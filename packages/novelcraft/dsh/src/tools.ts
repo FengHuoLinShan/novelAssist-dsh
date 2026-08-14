@@ -99,6 +99,9 @@ interface DeepImportArgs extends RootArgs {
   start_chapter: number;
   end_chapter: number;
 }
+interface ProposeNextChapterArgs extends RootArgs {
+  chapter: number;
+}
 
 function buildTools(service: NovelCraftService): ToolDefinition[] {
   return [
@@ -448,6 +451,83 @@ function buildTools(service: NovelCraftService): ToolDefinition[] {
         } catch (err) {
           return { ok: false, workflow_id: '', adopted: 0, committed: 0, skipped: 0, conflicts: 0, rejected: false, trace_file: '', message: errMessage(err) };
         }
+      },
+    }),
+
+    // ---- 8. 续写提案(计划台; 内容手直连 ctx.llm, 落 .assistant/proposals/) ----
+    defineTool({
+      name: 'novelcraft_propose_next_chapter',
+      description:
+        '计划台续写提案: 基于总纲/剧情线/上一章结尾, 生成下一章 2–3 条续写方向(各带依据/成本/风险)。' +
+        '结果落 .assistant/proposals/(临时预览, 不写正文); 选定一条后再按需走 writing_generate。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        chapter: { type: 'integer', required: true, description: '当前最后一章序号(1 起); 提案其下一章' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          next_chapter: { type: 'integer' },
+          proposals: { type: 'array' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      timeoutMs: 300_000,
+      async execute(rawArgs) {
+        const args = rawArgs as unknown as ProposeNextChapterArgs;
+        try {
+          const r = await service.proposeNextChapter(args.root, args.chapter);
+          if (!r.ok || !r.proposal) {
+            return { ok: false, next_chapter: 0, proposals: [], message: r.error?.message ?? '提案失败' };
+          }
+          return {
+            ok: true,
+            next_chapter: r.proposal.next_chapter,
+            proposals: r.proposal.proposals.map((p) => ({
+              title: p.title,
+              premise: p.premise,
+              basis: p.basis ?? [],
+              cost: p.cost ?? '',
+              risk: p.risk ?? '',
+            })),
+            message: `已生成 ${r.proposal.proposals.length} 条下一章方案(选定后可按需 writing_generate 出正文候选)。`,
+          };
+        } catch (err) {
+          return { ok: false, next_chapter: 0, proposals: [], message: errMessage(err) };
+        }
+      },
+    }),
+
+    // ---- 9. 结构健康信号扫描(确定性, 幂等落盘收件箱) ----
+    defineTool({
+      name: 'novelcraft_health_scan',
+      description:
+        '结构健康信号扫描: 确定性扫描 Scene 四键 + 结构资产两键, 把命中写成收件箱信号' +
+        '(radar=writing)。幂等: 同一命中已存在即跳过; 不复活作者已处理的信号。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          created: { type: 'integer' },
+          skipped: { type: 'integer' },
+          total: { type: 'integer' },
+          },
+        },
+        render,
+      },
+      async execute(rawArgs) {
+        const { root } = rawArgs as unknown as RootArgs;
+        const r = service.scanHealth(root);
+        return { created: r.created, skipped: r.skipped, total: r.total };
       },
     }),
   ];

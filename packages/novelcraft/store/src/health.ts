@@ -31,22 +31,40 @@ function fieldStatus(fm: Frontmatter, field: string): string | undefined {
   return nested ?? top;
 }
 
-function hasMissingSetup(fm: Frontmatter): boolean {
+/**
+ * 缺设定字段明细: goal 为空, 或 core_conflict/must_happen/must_not_happen
+ * 存在「present 无值 / not_applicable 有值 / uncertain / 无状态且无值」。
+ * 返回命中的字段名(作者语言映射在收件箱层做)。
+ */
+export function missingSetupFields(fm: Frontmatter): string[] {
+  const out: string[] = [];
   const goal = fm.goal;
-  if (typeof goal !== 'string' || goal.trim() === '') return true;
+  if (typeof goal !== 'string' || goal.trim() === '') out.push('goal');
   for (const field of ['core_conflict', 'must_happen', 'must_not_happen']) {
     const st = fieldStatus(fm, field);
     const val = fm[field];
     const hasVal = typeof val === 'string' && val.trim() !== '';
-    if (st === 'uncertain') return true;
-    if (st === 'present' && !hasVal) return true;
-    if (st === 'not_applicable' && hasVal) return true;
-    if (!st && !hasVal) return true;
+    if (st === 'uncertain') {
+      out.push(field);
+      continue;
+    }
+    if (st === 'present' && !hasVal) {
+      out.push(field);
+      continue;
+    }
+    if (st === 'not_applicable' && hasVal) {
+      out.push(field);
+      continue;
+    }
+    if (!st && !hasVal) {
+      out.push(field);
+      continue;
+    }
   }
-  return false;
+  return out;
 }
 
-function organizeReasons(fm: Frontmatter): string[] {
+export function organizeReasons(fm: Frontmatter): string[] {
   const reasons: string[] = [];
   const chapterIds = Array.isArray(fm.chapter_ids) ? fm.chapter_ids.map((x) => String(x)) : [];
   if (new Set(chapterIds).size !== chapterIds.length) reasons.push('duplicate_chapter');
@@ -64,12 +82,21 @@ function organizeReasons(fm: Frontmatter): string[] {
   return reasons;
 }
 
+/** Scene 健康命中明细(键 + 证据: 缺字段 / 整理 reason)。 */
+export interface SceneHealthDetail {
+  key: string;
+  /** 缺设定命中字段名(仅 scene_missing_setup) */
+  missing?: string[];
+  /** 整理类 reason 码(仅 scene_needs_organize) */
+  reasons?: string[];
+}
+
 /**
  * Scene 健康信号(确定性, 纯字段推导, 不依赖 LLM; outline.md 结构健康信号)。
- * 返回 HEALTH_KEYS 命中的信号键。
+ * 返回带证据的命中明细; 键统一走 N1 六键词汇表。
  */
-export function computeSceneHealth(fm: Frontmatter): string[] {
-  const signals: string[] = [];
+export function computeSceneHealthDetail(fm: Frontmatter): SceneHealthDetail[] {
+  const details: SceneHealthDetail[] = [];
   const source = typeof fm.source === 'string' ? fm.source : '';
   const status = typeof fm.status === 'string' ? fm.status : '';
 
@@ -78,17 +105,26 @@ export function computeSceneHealth(fm: Frontmatter): string[] {
     (['deep_import', 'ai_generated'].includes(source) &&
       ['draft', 'candidate'].includes(status) &&
       metaField(fm, 'reviewed_at') === undefined);
-  if (needsReview) signals.push('scene_unreviewed');
+  if (needsReview) details.push({ key: 'scene_unreviewed' });
 
   const chapterIds = Array.isArray(fm.chapter_ids) ? fm.chapter_ids : [];
   const planningState = metaField(fm, 'planning_state');
-  if (chapterIds.length === 0 && planningState !== 'planned') signals.push('scene_unassigned_chapter');
+  if (chapterIds.length === 0 && planningState !== 'planned') {
+    details.push({ key: 'scene_unassigned_chapter' });
+  }
 
-  if (hasMissingSetup(fm)) signals.push('scene_missing_setup');
+  const missing = missingSetupFields(fm);
+  if (missing.length > 0) details.push({ key: 'scene_missing_setup', missing });
 
-  if (organizeReasons(fm).length > 0) signals.push('scene_needs_organize');
+  const reasons = organizeReasons(fm);
+  if (reasons.length > 0) details.push({ key: 'scene_needs_organize', reasons });
 
-  return signals;
+  return details;
+}
+
+/** Scene 健康信号键列表(向后兼容; 明细经 computeSceneHealthDetail)。 */
+export function computeSceneHealth(fm: Frontmatter): string[] {
+  return computeSceneHealthDetail(fm).map((d) => d.key);
 }
 
 /** 结构资产列表默认排除 deprecated(R20)。 */

@@ -86,9 +86,11 @@ describe('NovelCraftService 端到端', () => {
     expect(env.service.facades.assistant).toBeDefined();
     expect(env.tools.map((t) => t.name).sort()).toEqual([
       'novelcraft_deep_import',
+      'novelcraft_health_scan',
       'novelcraft_inbox_act',
       'novelcraft_inbox_view',
       'novelcraft_llm_step',
+      'novelcraft_propose_next_chapter',
       'novelcraft_signal_push',
       'novelcraft_store_adopt',
       'novelcraft_store_index',

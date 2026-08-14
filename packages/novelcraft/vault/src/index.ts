@@ -131,6 +131,9 @@ export interface VaultPaths {
     /** 派生审查/回执目录(adjudication #4)。 */
     reviews: string;
     reviewFile: (name: string) => string;
+    /** 续写提案落点(下一步提案中心 §17.5.3)。 */
+    proposals: string;
+    proposalFile: (name: string) => string;
     /** merge_records 落点(adjudication #5)。 */
     mergeLog: string;
   };
@@ -155,6 +158,7 @@ export function paths(root: string): VaultPaths {
   const assistantDir = path.join(r, '.assistant');
   const signalsDir = path.join(assistantDir, 'signals');
   const reviewsDir = path.join(assistantDir, 'reviews');
+  const proposalsDir = path.join(assistantDir, 'proposals');
 
   return {
     root: r,
@@ -209,6 +213,8 @@ export function paths(root: string): VaultPaths {
       llm: path.join(assistantDir, 'llm.yml'),
       reviews: reviewsDir,
       reviewFile: (name) => path.join(reviewsDir, `${name}.json`),
+      proposals: proposalsDir,
+      proposalFile: (name) => path.join(proposalsDir, `${name}.json`),
       mergeLog: path.join(assistantDir, 'merge-log.jsonl'),
     },
   };
@@ -238,6 +244,7 @@ const VAULT_DIRS: readonly string[] = [
   '.assistant',
   '.assistant/signals',
   '.assistant/reviews',
+  '.assistant/proposals',
 ];
 
 /**

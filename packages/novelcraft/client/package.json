@@ -41,7 +41,8 @@
   "dependencies": {
     "@novelcraft/assistant": "*",
     "@novelcraft/llm-step": "*",
-    "@novelcraft/store": "*"
+    "@novelcraft/store": "*",
+    "@novelcraft/writing": "*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

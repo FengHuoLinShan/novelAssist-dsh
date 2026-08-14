@@ -30,6 +30,10 @@ describe("sceneHealthSignals(N1 四键)", () => {
     const signals = sceneHealthSignals(listScenes(root));
     expect(signals[0].keys).toContain("scene_unreviewed");
     expect(signals[0].keys).toContain("scene_unassigned_chapter");
+    // N1 富化: 带 title + 证据明细(缺设定 → goal)。
+    expect(signals[0].title).toBe("S1");
+    const missing = signals[0].details.find((d) => d.key === "scene_missing_setup");
+    expect(missing?.missing).toContain("goal");
   });
 });
 

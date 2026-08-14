@@ -225,6 +225,16 @@ M4 落点: `@novelcraft/writing` 插件(§22.3), 停靠舱 + 修订中心。
 - **调用点**: `writing/semantic_review.py`(step `writing.targeted_revision.generate`)。
 - **M4 落点**: `llm_step(spec=targeted_revision)` 由 `@novelcraft/writing` 修订中心调用。
 
+### 3.5 next_chapter_proposal(下一步提案, 计划台)
+
+- **用途一句话**: 写作前计划台基于总纲/剧情线/上一章结尾, 给出下一章 2–3 条续写方向(轻量, 非整章正文; 各带依据/成本/风险), 供作者选或拒。
+- **输入**: 总纲 outline.md + 剧情线/篇章纲/伏笔摘要(storyMap)+ 上一章正文结尾。
+- **输出 Schema**: `proposals: [{ title, premise, basis[], cost, risk }]`(无契约 JSON → 内联放宽)。
+- **预算/温度/超时/重试**: temp `0.7`、timeout `1800s`(与 writing_generate 同档)。
+- **降级**: 提案只进 `.assistant/proposals/` 临时预览, 不写正文; 失败不落盘; 选定后再按需走 writing_generate 出正文候选。
+- **调用点**: `@novelcraft/writing` `proposeNextChapter`(微工作流「续写提案」阶段函数, D7)。
+- **M4 落点**: `llm_step(spec=next_chapter_proposal)` 由 `@novelcraft/writing` 计划台调用(§17.4/§17.5.3)。
+
 > 注: 另有 `writing/conflict_ai.py`(step `writing.conflict_check.ai_review.structured` temp 0.2 / `ai_suggestion.structured` temp 0.3)为确定性冲突检查的 AI 辅助面, docs/prompts 无契约条目, 见结尾对照表。
 
 ---
@@ -410,6 +420,7 @@ M4 落点: `@novelcraft/preset`(companion preset)+ DSH 会话(§20.11); interact
 | pov_generation | ✅(§5 单角色 POV) | `writing/pov_generation.py`(复用 generate step) | 无 | ⚠️ |
 | semantic_review | ✅ `writing/semantic_review.py` 内联 | step `writing.semantic_review.chunk_N` | 无 | ⚠️ |
 | targeted_revision | ✅ 同上 | step `writing.targeted_revision.generate` | 无 | ⚠️ |
+| next_chapter_proposal | ➕(M4 新增, §3.5) | `@novelcraft/writing` `proposeNextChapter`(llm_step) | 无 | ⚠️ |
 | world_creation_chat | ✅ 内联 | operation `world.generation.chat` | 无 | ⚠️ |
 | world_convergence | ✅ 内联 | operation `world.generation.convergence` | 无 | ⚠️ |
 | world_exploration | ✅ 内联 | operation `world.generation.exploration` | 无 | ⚠️ |

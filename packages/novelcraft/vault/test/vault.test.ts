@@ -62,6 +62,7 @@ describe('initVault(§22.2 目录树 + .git init)', () => {
       '.assistant',
       '.assistant/signals',
       '.assistant/reviews', // adjudication #4 派生审查/回执
+      '.assistant/proposals', // 下一步提案中心(§17.5.3)
     ];
     for (const dir of expectedDirs) {
       expect(existsSync(path.join(root, dir)), `missing dir: ${dir}`).toBe(true);
@@ -236,6 +237,10 @@ describe('paths(§22.2 全表 + adjudications #1–#5)', () => {
     expect(p.assistant.reviews).toBe(j(root, '.assistant', 'reviews'));
     expect(p.assistant.reviewFile('conflict')).toBe(
       j(root, '.assistant', 'reviews', 'conflict.json'),
+    );
+    expect(p.assistant.proposals).toBe(j(root, '.assistant', 'proposals'));
+    expect(p.assistant.proposalFile('next-002')).toBe(
+      j(root, '.assistant', 'proposals', 'next-002.json'),
     );
     expect(p.assistant.mergeLog).toBe(j(root, '.assistant', 'merge-log.jsonl'));
   });
