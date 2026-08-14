@@ -55,7 +55,7 @@
 | world_ask | 0.0 | 同上 | `llm.steps.world_ask.temperature` |
 | world_bible_synopsis | 0.2 | 同上 | `llm.steps.world_bible_synopsis.temperature` |
 | map_atlas_plan | 规划 0 / 图片 Prompt 0.2(图片非 llm_step) | 图片走 Image API | `llm.steps.map_atlas_plan.temperature` / `map.image_prompt.temperature` |
-| rag_reranker | 0.1 | llm.yml / policy.yml / 默认 | `llm.steps.rag_reranker.temperature` |
+| rag_rerank | 0.1 | llm.yml / policy.yml / 默认 | `llm.steps.rag_rerank.temperature` |
 | interaction_story | 0.8(profile 可覆盖) | preset profile / llm.yml / 默认 | `llm.steps.interaction_story.temperature` |
 | interaction_summary | 0.2 | 同上 | `llm.steps.interaction_summary.temperature` |
 
@@ -87,7 +87,7 @@
 | world_*(chat/convergence/...)超时 | 1800 | `WORLD_GENERATION_TIMEOUT_SECONDS` | `llm.steps.world.*.timeout_seconds` |
 | world_bible_synopsis 超时 | 1800 | `WORLD_BIBLE_SYNOPSIS_TIMEOUT_SECONDS` | `llm.steps.world_bible_synopsis.timeout_seconds` |
 | world_ask 超时 | 1800 | `WORLD_ASK_TIMEOUT_SECONDS`【待定: 精确 env 名未在 catalog 列全】 | `llm.steps.world_ask.timeout_seconds` |
-| rag_reranker 超时 | 1800 | `RERANKER_TOTAL_TIMEOUT_SECONDS` | `llm.steps.rag_reranker.timeout_seconds` |
+| rag_rerank 超时 | 1800 | `RERANKER_TOTAL_TIMEOUT_SECONDS` | `llm.steps.rag_rerank.timeout_seconds` |
 | 用户可设 timeout 上界 | 1–3600 | `settings.timeout`(llm.yml) | `llm.yml.timeout` |
 
 ---

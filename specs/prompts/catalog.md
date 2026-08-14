@@ -367,7 +367,7 @@ M4 落点: `@novelcraft/world` 插件(§22.3); 五模式从「并列 UI」变「
 
 ## 5. rag 检索重排序
 
-### 5.1 rag_reranker(RAG 证据重排序)
+### 5.1 rag_rerank(RAG 证据重排序，M6 简化契约)
 
 - **用途一句话**: 只在确定性混合检索 + embedding 去重之后, 对 `2*top_k` 候选池判断证据价值并排序/弃权(不回答案/不创作/不裁决事实)。
 - **输入**: `retrieval_mode(search|context|extraction)` + 可选下游 purpose + 原始召回分 + 完整候选 chunk 正文(不裁剪)。
@@ -375,7 +375,7 @@ M4 落点: `@novelcraft/world` 插件(§22.3); 五模式从「并列 UI」变「
 - **预算/温度/超时/重试**: temp `0.1`、timeout `1800s`(RERANKER_TOTAL_TIMEOUT_SECONDS)、unsupported 弃权置信度 0.8、topical 最低分 0.2。来源: `rag/reranker.py:22-30,245`。step `rag.reranker.generate`。默认关闭(`RERANKER_ENABLED`)。
 - **降级**: 高置信 `unsupported` 返回空结果(真正 abstention); `uncertain`/低置信/provider/schema 失败保留原排序并告警; `extraction` 不采用仅主题相关片段(P体系 §5「RAG 证据重排序类」)。
 - **调用点**: `modules/rag/reranker.py`(step `rag.reranker.generate`), 由 `search/context/extraction` 在候选数 > top_k 时调用。
-- **M4 落点**: `llm_step(spec=rag_reranker)` 由 `@novelcraft/rag` 作为 `@novelcraft/context` 供给原语时调用(§20.7)。
+- **M4 落点**: `llm_step(spec=rag_rerank)` 由 `@novelcraft/rag` 在召回候选数 >1 时调用（N21，默认开启，失败回退召回原序）。M6 实现为简化契约（输出 ranked_ids 数组）；本节完整 RerankerOutput（support_status/证据角色/弃权语义）为旧引擎完整版，M4 暂缓（裁定 N25）。
 
 ---
 
@@ -443,7 +443,7 @@ M4 落点: `@novelcraft/preset`(companion preset)+ DSH 会话(§20.11); interact
 | world_ask | ✅ `ask_world_service.py` 内联 | step `world.ask` | 无 | ⚠️ |
 | world_bible_synopsis | ✅ 内联 | step `world.world_bible.synopsis.structured` | `world_bible_synopsis.json` | ✅ |
 | map_atlas_plan | ✅ `map_atlas_workflow.py` 内联 | step `world.map_atlas.plan.structured`(+ Image API) | 无 | ⚠️ |
-| rag_reranker | ✅ `rag_reranker.md` | step `rag.reranker.generate` | `rag_reranker.json` | ✅ |
+| rag_rerank | ✅ `rag_reranker.md` | step `rag.reranker.generate` | `rag_reranker.json` | ✅ |
 | interaction_story | ✅ `interaction/prompts.py` | `interaction-story-v2` | 无 | ⚠️ |
 | interaction_summary | ✅ `interaction/prompts.py` | `interaction-summary-v1` / `-output-v1` | 无 | ⚠️ |
 | (generation_prompt_template_service) | ✅(§2 模板, 非 LLM step) | 模板渲染, 非 llm_step | 无 | ➕(不是 prompt, 是作者模板运行时 validator) |

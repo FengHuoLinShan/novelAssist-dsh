@@ -12,8 +12,8 @@
 
 | 目录 | 内容 |
 |---|---|
-| `packages/novelcraft/` | 15 个纯 TS 包: vault/store/llm-step/writing/imports/world/outline/memory/context/rag/assistant(13 核心)+ dsh(唯一 DSH 接触面)+ client(双面包 UI)+ trace(trace contract 框架)+ preset |
-| `specs/` | R0 规格: assets(资产 schema)/ prompts(catalog 32 spec)/ rules(store-rules R1–R64 + policy-defaults)/ adjudications(两批裁定) |
+| `packages/novelcraft/` | 16 个纯 TS 包: vault/store/llm-step/writing/imports/world/outline/memory/context/rag/rag-bge(可选 BGE 嵌入后端, N22)/assistant(13 核心)+ dsh(唯一 DSH 接触面)+ client(双面包 UI)+ trace(trace contract 框架)+ preset |
+| `specs/` | R0 规格: assets(资产 schema)/ prompts(catalog 34 spec)/ rules(store-rules R1–R64 + policy-defaults)/ adjudications(五批裁定, N1–N25) |
 | `docs/adr/` | ADR-0016(M4 重写)/ 0017(仓库形态 + 挂载)/ 0018(DSH 共享层政策) |
 | `docs/agent/dsh-rebuild/` | M4 交接/设计/验收文档(单一事实入口: 跨会话交接.md; 总进度: STATUS-M4.md) |
 | `starter/` | 一键安装 starter |
@@ -32,7 +32,7 @@
 
 ```sh
 npm install
-npm test            # 304 测试全绿
+npm test            # 440 测试全绿
 npm run typecheck   # 零错误
 npm run build --workspaces   # 全部分包构建(注意: 需按拓扑序, 见 docs/agent/dsh-rebuild/跨会话交接.md)
 ```
