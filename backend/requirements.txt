@@ -12,7 +12,7 @@ uvicorn[standard]>=0.52.1
 sqlalchemy[asyncio]>=2.0.51
 asyncpg>=0.29.0
 psycopg2-binary>=2.9.9
-alembic>=1.19.0
+alembic>=1.19.1
 pgvector>=0.3.0
 
 # --- Schema & 配置 ---
