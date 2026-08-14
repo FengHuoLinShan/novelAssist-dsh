@@ -12,6 +12,8 @@
   "dependencies": {
     "@novelcraft/vault": "*",
     "@novelcraft/llm-step": "*",
-    "@novelcraft/outline": "*"
+    "@novelcraft/outline": "*",
+    "@novelcraft/store": "*",
+    "@novelcraft/world": "*"
   }
 }
