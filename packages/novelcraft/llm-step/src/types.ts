@@ -28,8 +28,10 @@ export interface StepRequest {
   specRef: string;
   /** 内容输入(原文/上下文; D14 无隐私模式, 原文直通) */
   input: string;
-  /** 覆盖 spec 默认(如按项目设置) */
+  /** 覆盖 spec 默认(如按项目设置/预设卡, N20) */
   overrides?: {
+    /** DSH provider 路由(如 'deepseek'); 缺省由 Provider 实现侧默认承接 */
+    provider?: string;
     model?: string;
     temperature?: number;
     maxTokens?: number;
@@ -83,6 +85,8 @@ export interface StepResult {
 /** Provider 注入接口(真 DSH ctx.llm 适配留挂载阶段, 见 packages/novelcraft/README.md seam 契约) */
 export interface ProviderRequest {
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  /** DSH provider 路由覆盖(加法, N20 预设卡); 缺省由实现侧默认承接 */
+  provider?: string;
   model?: string;
   temperature?: number;
   maxTokens?: number;

@@ -15,6 +15,8 @@ export interface ResolvedPolicy {
   repair: { max_rounds: number };
   // provider 级(llm.yml 可覆盖; 默认空 = 由调用方/spec 决定)
   llm: {
+    /** 内容手预设卡名(N20; llm.yml 只存预设名与参数, Key 永不进文件, N5) */
+    preset?: string;
     model?: string;
     temperature?: number;
     top_p?: number;
@@ -100,6 +102,7 @@ export function resolvePolicy(root: string): ResolvedPolicy {
   base.repair.max_rounds = num(policyYml["repair.max_rounds"], base.repair.max_rounds);
 
   const llmYml = read(p.assistant.llm);
+  base.llm.preset = str(llmYml.preset);
   base.llm.model = str(llmYml.model);
   base.llm.temperature = llmYml.temperature === undefined ? undefined : num(llmYml.temperature, NaN);
   base.llm.top_p = llmYml.top_p === undefined ? undefined : num(llmYml.top_p, NaN);

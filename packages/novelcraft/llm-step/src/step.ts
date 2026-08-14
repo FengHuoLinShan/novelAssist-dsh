@@ -62,6 +62,7 @@ export async function runStep(provider: Provider, req: StepRequest): Promise<Ste
   const timeoutMs = overrides.timeoutMs ?? spec.timeoutMs;
   const temperature = overrides.temperature ?? spec.temperature;
   const model = overrides.model;
+  const providerRoute = overrides.provider;
   const fixAttempts = req.fixAttempts ?? 1;
 
   const journal: StepResult["journal"] = [];
@@ -99,6 +100,7 @@ export async function runStep(provider: Provider, req: StepRequest): Promise<Ste
       }
       const resp = await provider.complete({
         messages,
+        ...(providerRoute !== undefined ? { provider: providerRoute } : {}),
         model,
         temperature,
         maxTokens: maxTokens || undefined,
