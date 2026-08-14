@@ -1,8 +1,8 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { TARGET_LENGTHS, CURRENT_STAGES } from '@novelcraft/vault';
-import { StoreError } from './errors';
-import { sha256Hex } from './hash';
-import type { AssetKind, Frontmatter, ValidationIssue } from './types';
+import { StoreError } from './errors.js';
+import { sha256Hex } from './hash.js';
+import type { AssetKind, Frontmatter, ValidationIssue } from './types.js';
 
 // ============================================================================
 // YAML frontmatter 解析/序列化(自实现极简子集 → 引入轻量 yaml 依赖, 见 package.json)

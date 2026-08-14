@@ -1,3 +1,4 @@
-// @novelcraft/writing — R3 写作垂直切片核心(停靠/审查/修订/采用)。
-// 当前阶段: 停靠(ingest)先行; review/revise 待 @novelcraft/llm-step 就绪后实现。
-export * from "./ingest";
+// @novelcraft/writing — R3 写作垂直切片核心(停靠/审查/返修/采用)。
+export * from "./ingest.js";
+export * from "./review.js";
+export * from "./revise.js";

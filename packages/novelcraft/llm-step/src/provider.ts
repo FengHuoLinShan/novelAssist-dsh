@@ -1,6 +1,6 @@
 // Provider 接口实现: MockProvider(测试/验收用)。
 // 真 DSH ctx.llm 适配器留挂载阶段(seam 契约, packages/novelcraft/README.md)。
-import type { Provider, ProviderRequest, ProviderResponse } from "./types";
+import type { Provider, ProviderRequest, ProviderResponse } from "./types.js";
 
 export interface MockResponse {
   /** 成功响应文本(与 throwError 二选一) */

@@ -1,10 +1,10 @@
 // runStep 主流程(R2 核心): spec 解析 → 预算守卫 → provider 调用(超时/重试分类)
 // → 输出 schema 校验(修复重试)→ journal 组装。
 // 依据: 设计文档 §12(llm_step 原语契约: 必须带 output_schema/预算/超时/journal)。
-import { checkBudget, estimateTokens } from "./budget";
-import { loadSpec } from "./specs";
-import type { LlmStepSpec, Provider, StepErrorKind, StepRequest, StepResult } from "./types";
-import { validateSchema } from "./validator";
+import { checkBudget, estimateTokens } from "./budget.js";
+import { loadSpec } from "./specs.js";
+import type { LlmStepSpec, Provider, StepErrorKind, StepRequest, StepResult } from "./types.js";
+import { validateSchema } from "./validator.js";
 
 function systemPromptFor(spec: LlmStepSpec): string {
   return [

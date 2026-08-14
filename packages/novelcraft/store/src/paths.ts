@@ -11,8 +11,8 @@ import {
   TARGET_LENGTHS,
   CURRENT_STAGES,
 } from '@novelcraft/vault';
-import { StoreError } from './errors';
-import type { AssetKind } from './types';
+import { StoreError } from './errors.js';
+import type { AssetKind } from './types.js';
 
 // 直接依赖 workspace 包 @novelcraft/vault(工程约定: 插件之间只经 seam 互连, 但
 // vault/store 同为 R1 内核, store 复用 vault 的路径规范与读写门禁)。

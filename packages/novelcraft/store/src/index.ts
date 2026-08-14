@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { paths, slugFromFilename, assetKindFromPath } from './paths';
-import { parseFrontmatter, normalizeAliases, normalizeAliasKey } from './frontmatter';
-import { readText, listFilesRecursive, exists } from './fs';
+import { paths, slugFromFilename, assetKindFromPath } from './paths.js';
+import { parseFrontmatter, normalizeAliases, normalizeAliasKey } from './frontmatter.js';
+import { readText, listFilesRecursive, exists } from './fs.js';
 
 // ============================================================================
 // 索引重建(R12): 文件是唯一真相, 索引是纯派生, 任何时刻可全量重建且幂等。
@@ -194,13 +194,13 @@ export function rebuildIndex(root: string): VaultIndex {
 // 包入口(barrel)
 // ============================================================================
 
-export * from './types';
-export * from './errors';
-export * from './hash';
-export * from './paths';
-export * from './frontmatter';
-export * from './git';
-export * from './adopt';
-export * from './merge';
-export * from './dedup';
-export * from './health';
+export * from './types.js';
+export * from './errors.js';
+export * from './hash.js';
+export * from './paths.js';
+export * from './frontmatter.js';
+export * from './git.js';
+export * from './adopt.js';
+export * from './merge.js';
+export * from './dedup.js';
+export * from './health.js';

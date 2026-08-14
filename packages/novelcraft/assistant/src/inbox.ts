@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "@novelcraft/vault";
-import { createSignal, isStale, sortInbox, type Signal, type SignalStatus } from "./signals";
+import { createSignal, isStale, sortInbox, type Signal, type SignalStatus } from "./signals.js";
 
 export type InboxAction = "accept" | "reject" | "modify" | "defer";
 

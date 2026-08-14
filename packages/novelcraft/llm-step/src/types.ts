@@ -1,5 +1,5 @@
 // llm-step 类型(R2 核心契约, 依据设计文档 §4/§12/§22.5 + specs/prompts/catalog.md)
-import type { ValidatorSchema } from "./validator";
+import type { ValidatorSchema } from "./validator.js";
 
 export interface LlmStepSpec {
   /** 全局唯一, llm_step(spec=) 引用 */

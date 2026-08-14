@@ -1,6 +1,6 @@
 // 内置 spec 注册表(R2 首期 4 个, 转写自 specs/prompts/catalog.md)。
 // 未定字段标【待定】并放宽(additionalProperties 允许)。
-import type { LlmStepSpec } from "./types";
+import type { LlmStepSpec } from "./types.js";
 
 export const BUILTIN_SPECS: LlmStepSpec[] = [
   {

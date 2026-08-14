@@ -1,5 +1,5 @@
-import { entityKey } from './frontmatter';
-import type { Frontmatter } from './types';
+import { entityKey } from './frontmatter.js';
+import type { Frontmatter } from './types.js';
 
 export interface EntityCandidate {
   kind: string;

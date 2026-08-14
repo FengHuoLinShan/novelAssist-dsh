@@ -75,11 +75,13 @@ describe('adopt(R17 工作区脏拒绝 + R3 状态机)', () => {
 });
 
 describe('copy-on-adopt(R34)', () => {
-  it('adopting a candidate chapter creates a new draft, deprecates the candidate', () => {
+  it('adopting a candidate chapter overwrites same chapter (M4: 版本=git), deprecates candidate', () => {
     const r = fixture();
     const body = '候选正文内容';
+    writeAsset(r, 'chapters/003.md', { chapter_index: 3, status: 'draft', content_hash: contentHash('旧正文') }, '旧正文');
     writeAsset(r, 'chapters/pending/cand_foo.md', {
       id: 'cand_foo',
+      chapter_index: 3,
       status: 'candidate',
       source: 'writing_generate',
       content_hash: contentHash(body),
@@ -87,22 +89,21 @@ describe('copy-on-adopt(R34)', () => {
     commitAll(r);
     const res = adopt(r, 'chapter_candidate', 'cand_foo');
     expect(res.toStatus).toBe('draft');
-    expect(res.targetRelPath).toBe('chapters/001.md');
-    // 新 draft 内容与候选一致(R34)
-    expect(readBody(r, 'chapters/001.md')).toBe(body);
-    expect(readFrontmatter(r, 'chapters/001.md').status).toBe('draft');
-    expect(readFrontmatter(r, 'chapters/001.md').content_hash).toBe(contentHash(body));
+    expect(res.targetRelPath).toBe('chapters/003.md');
+    // 覆盖同章(R34 M4 语义: 旧版由 git 历史保留)
+    expect(readBody(r, 'chapters/003.md')).toBe(body);
+    expect(readFrontmatter(r, 'chapters/003.md').status).toBe('draft');
+    expect(readFrontmatter(r, 'chapters/003.md').content_hash).toBe(contentHash(body));
     // 原 candidate 转 deprecated(R34)
     expect(readFrontmatter(r, 'chapters/pending/cand_foo.md').status).toBe('deprecated');
   });
 
-  it('rejects editing a candidate through non-adopt transitions (R19)', () => {
+  it('rejects candidate without chapter_index (M4 语义: 必须指向目标章)', () => {
     const r = fixture();
     const body = '候选正文内容';
     writeAsset(r, 'chapters/pending/cand_foo.md', { id: 'cand_foo', status: 'candidate', source: 'writing_generate', content_hash: contentHash(body) }, body);
     commitAll(r);
-    // 非法: 对 candidate 直接 publish(不是 adopt) → 被状态机拒绝。
-    expect(() => adopt(r, 'chapter_candidate', 'cand_foo', { expectedContentHash: contentHash(body) })).not.toThrow();
+    expect(() => adopt(r, 'chapter_candidate', 'cand_foo')).toThrow(/chapter_index/);
   });
 });
 

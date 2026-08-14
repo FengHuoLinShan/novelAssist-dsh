@@ -1,4 +1,4 @@
-import type { Frontmatter } from './types';
+import type { Frontmatter } from './types.js';
 
 /**
  * 6 键健康词汇表(N1 / R62): 按域前缀统一 Scene 四健康键 + 结构资产两级过滤键。

@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Frontmatter } from './types';
-import { StoreError } from './errors';
-import { paths, resolveAsset, resolveWithin } from './paths';
+import type { Frontmatter } from './types.js';
+import { StoreError } from './errors.js';
+import { paths, resolveAsset, resolveWithin } from './paths.js';
 import {
   parseFrontmatter,
   serializeFrontmatter,
   normalizeAliases,
   normalizeAliasKey,
   isPlaceholderWord,
-} from './frontmatter';
-import { gitAdd, gitCommit } from './git';
-import { readText, writeText } from './fs';
+} from './frontmatter.js';
+import { gitAdd, gitCommit } from './git.js';
+import { readText, writeText } from './fs.js';
 
 export interface MergeOptions {
   /** R37: source 为 canonical 时需二次确认(allow_canonical_merge)。 */

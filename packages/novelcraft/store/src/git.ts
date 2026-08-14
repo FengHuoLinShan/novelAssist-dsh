@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import { StoreError } from './errors';
+import { StoreError } from './errors.js';
 
 /**
  * node:child_process 调 git CLI 的薄封装(R17/R14: adopt = 一次原子 commit;

@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AssetKind, Frontmatter } from './types';
-import { StoreError } from './errors';
-import { contentHash, normalizeContentHash } from './hash';
-import { resolveAsset, resolveWithin, slugFromFilename } from './paths';
-import { parseFrontmatter, serializeFrontmatter, canTransition } from './frontmatter';
-import { isGitRepo, hasUncommittedChanges, gitAdd, gitCommit } from './git';
-import { readText, writeText, listFilesRecursive } from './fs';
+import type { AssetKind, Frontmatter } from './types.js';
+import { StoreError } from './errors.js';
+import { contentHash, normalizeContentHash } from './hash.js';
+import { resolveAsset, resolveWithin, slugFromFilename } from './paths.js';
+import { parseFrontmatter, serializeFrontmatter, canTransition } from './frontmatter.js';
+import { isGitRepo, hasUncommittedChanges, gitAdd, gitCommit } from './git.js';
+import { readText, writeText, listFilesRecursive } from './fs.js';
 
 export type AdoptableKind =
   | 'object'
@@ -109,8 +109,11 @@ export function adopt(root: string, kind: AdoptableKind, ref: string, opts: Adop
   const now = new Date().toISOString();
 
   if (kind === 'chapter_candidate') {
-    // copy-on-adopt(R34): 新建最高编号 draft, 原 candidate 置 deprecated。
-    const idx = nextChapterIndex(root);
+    // copy-on-adopt(R34, M4 语义): 覆盖同名章节文件(版本历史 = git), 原 candidate 置 deprecated。
+    const idx = Number(fm.chapter_index ?? src.slug);
+    if (!Number.isInteger(idx) || idx < 1) {
+      throw new StoreError('BAD_CANDIDATE', `候选缺少合法 chapter_index: ${src.slug}`);
+    }
     const targetRel = `chapters/${pad3(idx)}.md`;
     const draftFm: Frontmatter = { ...fm, status: 'draft', content_hash: hash };
     draftFm.provenance = {
