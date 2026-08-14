@@ -93,6 +93,19 @@ export interface VaultPaths {
     pending: string;
     objectFile: (slug: string) => string;
     pendingFile: (slug: string) => string;
+    /** 世界地图册文件模型(map-atlas 实施计划 §2; N28/N29)。 */
+    atlas: {
+      dir: string;
+      nodes: string;
+      pages: string;
+      pendingNodes: string;
+      pendingPages: string;
+      images: string;
+      nodeFile: (slug: string) => string;
+      pageFile: (slug: string) => string;
+      pendingNodeFile: (slug: string) => string;
+      pendingPageFile: (slug: string) => string;
+    };
   };
   structure: {
     dir: string;
@@ -137,6 +150,14 @@ export interface VaultPaths {
     proposalFile: (name: string) => string;
     /** merge_records 落点(adjudication #5)。 */
     mergeLog: string;
+    /** 世界地图册工作产物目录(map-atlas 实施计划 §2.3; runs 提交, queue/decisions 只记录)。 */
+    atlas: {
+      dir: string;
+      runs: string;
+      annotationQueue: string;
+      decisions: string;
+      runFile: (runId: string) => string;
+    };
   };
 }
 
@@ -148,6 +169,13 @@ export function paths(root: string): VaultPaths {
   const worldDir = path.join(r, 'world');
   const worldObjectsDir = path.join(worldDir, 'objects');
   const worldPendingDir = path.join(worldDir, 'pending');
+  const worldAtlasDir = path.join(worldDir, 'atlas');
+  const worldAtlasNodesDir = path.join(worldAtlasDir, 'nodes');
+  const worldAtlasPagesDir = path.join(worldAtlasDir, 'pages');
+  const worldAtlasPendingDir = path.join(worldAtlasDir, 'pending');
+  const worldAtlasPendingNodesDir = path.join(worldAtlasPendingDir, 'nodes');
+  const worldAtlasPendingPagesDir = path.join(worldAtlasPendingDir, 'pages');
+  const worldAtlasImagesDir = path.join(worldAtlasDir, 'images');
   const structureDir = path.join(r, 'structure');
   const threadsDir = path.join(structureDir, 'threads');
   const arcsDir = path.join(structureDir, 'arcs');
@@ -160,6 +188,10 @@ export function paths(root: string): VaultPaths {
   const signalsDir = path.join(assistantDir, 'signals');
   const reviewsDir = path.join(assistantDir, 'reviews');
   const proposalsDir = path.join(assistantDir, 'proposals');
+  const assistantAtlasDir = path.join(assistantDir, 'atlas');
+  const assistantAtlasRunsDir = path.join(assistantAtlasDir, 'runs');
+  const assistantAtlasAnnotationQueueDir = path.join(assistantAtlasDir, 'annotation-queue');
+  const assistantAtlasDecisionsDir = path.join(assistantAtlasDir, 'decisions');
 
   return {
     root: r,
@@ -179,6 +211,18 @@ export function paths(root: string): VaultPaths {
       pending: worldPendingDir,
       objectFile: (slug) => path.join(worldObjectsDir, `${slug}.md`),
       pendingFile: (slug) => path.join(worldPendingDir, `${slug}.md`),
+      atlas: {
+        dir: worldAtlasDir,
+        nodes: worldAtlasNodesDir,
+        pages: worldAtlasPagesDir,
+        pendingNodes: worldAtlasPendingNodesDir,
+        pendingPages: worldAtlasPendingPagesDir,
+        images: worldAtlasImagesDir,
+        nodeFile: (slug) => path.join(worldAtlasNodesDir, `${slug}.md`),
+        pageFile: (slug) => path.join(worldAtlasPagesDir, `${slug}.md`),
+        pendingNodeFile: (slug) => path.join(worldAtlasPendingNodesDir, `${slug}.md`),
+        pendingPageFile: (slug) => path.join(worldAtlasPendingPagesDir, `${slug}.md`),
+      },
     },
     structure: {
       dir: structureDir,
@@ -217,6 +261,13 @@ export function paths(root: string): VaultPaths {
       proposals: proposalsDir,
       proposalFile: (name) => path.join(proposalsDir, `${name}.json`),
       mergeLog: path.join(assistantDir, 'merge-log.jsonl'),
+      atlas: {
+        dir: assistantAtlasDir,
+        runs: assistantAtlasRunsDir,
+        annotationQueue: assistantAtlasAnnotationQueueDir,
+        decisions: assistantAtlasDecisionsDir,
+        runFile: (runId) => path.join(assistantAtlasRunsDir, `${runId}.json`),
+      },
     },
   };
 }
@@ -246,6 +297,18 @@ const VAULT_DIRS: readonly string[] = [
   '.assistant/signals',
   '.assistant/reviews',
   '.assistant/proposals',
+  // map-atlas 文件模型(map-atlas 实施计划 §2; N28/N29): 目录化节点/页面/图片 + 工作产物。
+  'world/atlas',
+  'world/atlas/nodes',
+  'world/atlas/pages',
+  'world/atlas/pending',
+  'world/atlas/pending/nodes',
+  'world/atlas/pending/pages',
+  'world/atlas/images',
+  '.assistant/atlas',
+  '.assistant/atlas/runs',
+  '.assistant/atlas/annotation-queue',
+  '.assistant/atlas/decisions',
 ];
 
 /**
@@ -253,38 +316,40 @@ const VAULT_DIRS: readonly string[] = [
  *
  * - 幂等: book.yml 已存在则原样返回(resolveVaultRoot 同款判据), 不重写、不抛错。
  * - 确定性: 同一 rootPath + bookMeta 产出相同目录与 book.yml 字节。
+ * - 迁移: 旧 vault(无 atlas 目录/无图片 gitignore 行)再次调用时补齐目录与
+ *   gitignore 行(幂等, 不重写 book.yml、不重复 git init)。
  */
 export function initVault(rootPath: string, bookMeta: BookMeta): VaultPaths {
   const root = path.resolve(rootPath);
   const bookYml = path.join(root, BOOK_FILENAME);
 
-  if (existsSync(bookYml)) {
-    return paths(root);
-  }
-
-  const title = validateTitle(bookMeta.title);
-  const reveal = validateRevealPolicy(
-    bookMeta.default_reveal_policy ?? DEFAULT_REVEAL_POLICY,
-  );
-  if (bookMeta.target_length !== undefined) {
-    validateEnum(bookMeta.target_length, TARGET_LENGTHS, 'target_length');
-  }
-  if (bookMeta.current_stage !== undefined) {
-    validateEnum(bookMeta.current_stage, CURRENT_STAGES, 'current_stage');
-  }
-
+  // 目录骨架 + gitignore 行始终幂等补齐(旧 vault 迁移: 无 atlas 目录也能补齐)。
   mkdirSync(root, { recursive: true });
   for (const dir of VAULT_DIRS) {
     mkdirSync(path.join(root, dir), { recursive: true });
   }
 
-  writeFileSync(bookYml, serializeBookYaml(bookMeta, title, reveal), 'utf-8');
+  if (!existsSync(bookYml)) {
+    const title = validateTitle(bookMeta.title);
+    const reveal = validateRevealPolicy(
+      bookMeta.default_reveal_policy ?? DEFAULT_REVEAL_POLICY,
+    );
+    if (bookMeta.target_length !== undefined) {
+      validateEnum(bookMeta.target_length, TARGET_LENGTHS, 'target_length');
+    }
+    if (bookMeta.current_stage !== undefined) {
+      validateEnum(bookMeta.current_stage, CURRENT_STAGES, 'current_stage');
+    }
 
-  // README 约定: git 操作用 node:child_process 调 git CLI(§22.2「.git init」)。
-  execFileSync('git', ['init'], { cwd: root, stdio: 'pipe' });
+    writeFileSync(bookYml, serializeBookYaml(bookMeta, title, reveal), 'utf-8');
+
+    // README 约定: git 操作用 node:child_process 调 git CLI(§22.2「.git init」)。
+    execFileSync('git', ['init'], { cwd: root, stdio: 'pipe' });
+  }
 
   // M6 Track A1: 派生索引不提交 git(.assistant/rag-index.json; 可随时全量重建)。
-  ensureVaultGitignore(root, ['.assistant/rag-index.json']);
+  // N29: world/atlas/images/ 图片字节不进入 git(本地保留, gitignore)。
+  ensureVaultGitignore(root, ['.assistant/rag-index.json', 'world/atlas/images/']);
 
   return paths(root);
 }

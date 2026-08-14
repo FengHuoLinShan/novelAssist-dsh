@@ -2,3 +2,6 @@
 export * from "./specs-world.js";
 export * from "./objects.js";
 export * from "./generation.js";
+export * from "./map-atlas/types.js";
+export * from "./map-atlas/read.js";
+export * from "./map-atlas/write.js";
