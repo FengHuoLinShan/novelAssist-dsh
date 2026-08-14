@@ -1,0 +1,4 @@
+// @novelcraft/world — 世界对象/待处理/生成中心五模式(R5 确定性核心 + 内容步编排)。
+export * from "./specs-world.js";
+export * from "./objects.js";
+export * from "./generation.js";
