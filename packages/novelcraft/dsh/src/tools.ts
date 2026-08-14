@@ -103,6 +103,11 @@ interface DeepImportArgs extends RootArgs {
 interface ProposeNextChapterArgs extends RootArgs {
   chapter: number;
 }
+interface GenerateNextChapterArgs extends RootArgs {
+  chapter: number;
+  proposal_title: string;
+  premise?: string;
+}
 
 function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   return [
@@ -506,12 +511,13 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       },
     }),
 
-    // ---- 9. 结构健康信号扫描(确定性, 幂等落盘收件箱) ----
+    // ---- 9. 结构健康信号扫描(确定性, 幂等落盘收件箱 + 自动结算) ----
     defineTool({
       name: 'novelcraft_health_scan',
       description:
         '结构健康信号扫描: 确定性扫描 Scene 四键 + 结构资产两键, 把命中写成收件箱信号' +
-        '(radar=writing)。幂等: 同一命中已存在即跳过; 不复活作者已处理的信号。',
+        '(radar=writing)。幂等 + 双向对账: 已存在不重复; 条件消失的 open 信号自动结算为' +
+        'resolved; 问题回来重新 open; 作者已裁决(accept/reject/defer)不复活。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
       },
@@ -522,6 +528,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           properties: {
           created: { type: 'integer' },
           skipped: { type: 'integer' },
+          resolved: { type: 'integer' },
+          reopened: { type: 'integer' },
           total: { type: 'integer' },
           },
         },
@@ -531,7 +539,51 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const { root } = rawArgs as unknown as RootArgs;
         const r = service.scanHealth(root);
         pushSignalsChanged(ctx, { root });
-        return { created: r.created, skipped: r.skipped, total: r.total };
+        return { created: r.created, skipped: r.skipped, resolved: r.resolved, reopened: r.reopened, total: r.total };
+      },
+    }),
+
+    // ---- 10. 续写提案第二阶段(选定方向 → writing_generate 正文候选) ----
+    defineTool({
+      name: 'novelcraft_generate_next_chapter',
+      description:
+        '续写提案第二阶段: 按选定方向生成下一章正文候选(writing_generate, 续写模式)。' +
+        '候选写 chapters/pending/{NNN}.md(status=candidate, 只读); 采用另走 novelcraft_store_adopt(必经审批)。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        chapter: { type: 'integer', required: true, description: '当前最后一章序号(1 起); 生成其下一章' },
+        proposal_title: { type: 'string', required: true, description: '选定提案标题(作者语言方向)' },
+        premise: { type: 'string', description: '选定提案前提(可空)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          file: { type: 'string' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      timeoutMs: 300_000,
+      async execute(rawArgs) {
+        const args = rawArgs as unknown as GenerateNextChapterArgs;
+        try {
+          const r = await service.generateNextChapter(args.root, args.chapter, {
+            proposalTitle: args.proposal_title,
+            ...(args.premise ? { premise: args.premise } : {}),
+          });
+          if (!r.ok) return { ok: false, file: '', message: r.error?.message ?? '生成失败' };
+          return {
+            ok: true,
+            file: r.file ?? '',
+            message: `已生成第 ${args.chapter + 1} 章候选(chapters/pending); 采用请走 novelcraft_store_adopt。`,
+          };
+        } catch (err) {
+          return { ok: false, file: '', message: errMessage(err) };
+        }
       },
     }),
   ];
