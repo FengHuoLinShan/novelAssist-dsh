@@ -1,46 +1,33 @@
 ---
 name: novelcraft-world
-description: NovelCraft 世界设定领域: 世界对象/别名/关系与待处理建议、世界书页面与草稿、生成中心共创、作者问答 world.ask、实体融合与手动补抽、世界书简介。世界类任务先读本 skill。
-whenToUse: 作者要整理世界对象、审核待处理建议、共创设定、查问世界事实、维护世界书时。
+description: NovelCraft 世界对象/别名/关系/世界书(M4 文件夹形态)+ 生成中心五模式。世界类任务先读本 skill。
+whenToUse: 操作世界对象、复核待处理建议、生成中心对话/收束/探索/检修、世界书提案时。
 ---
 
-# NovelCraft 世界设定
+# NovelCraft 世界(M4)
 
-## 事实模型(简明)
+## 资产与落点
 
-- 对象根表 core_entities; 高频类型有 1:1 profile(species/faction/location/
-  rule/item/secret); 别名内联在 content_json.aliases, 不建重复对象。
-- 关系 entity_relations(canonical 边幂等); 人物 characters + 人物知识
-  character_knowledge(稀疏覆盖)。
-- 待处理: creation_suggestion_queue(创设建议)、conflict_check_queue(冲突)。
-- 世界书: world_bible_pages(已采用组织页) + page_drafts(可丢弃工作稿) +
-  page_revisions(发布即 revision); 简介 synopsis 是已采用派生资产
-  (editable=false, rollback=true), 只服务作者。
+- 已采用对象: world/objects/*.md(canonical; aliases/tags/relations 在 frontmatter,
+  N11/N13); 待处理建议: world/pending/*.md(队列即目录)。
+- 别名不建新对象(R1); 已采用不硬删(git); 关系同向同型 create-or-merge。
+- 世界书: bible/*.md(frontmatter status draft/canonical); 发布走 adopt+commit;
+  页面建议是整页提案, apply 前重验 baseline。
+- 确定性操作经 @novelcraft/world 的 CRUD 面; 合并/拆分经 @novelcraft/store
+  (已采用合并需二次确认 R37)。
 
-## 工作流
+## 生成中心五模式(§19: 不再是并列 UI, 是编排脑按意图调用的内容手步骤)
 
-1. **待处理建议**: GET /api/world/suggestions; 处理动作 confirm /
-   edit-confirm / merge / resolve-as-alias / reject(全部等作者决定)。
-   低置信或有未决项时提示「请核对」。
-2. **生成中心**(作者共创, 不写库): chat(自由共创, 只返回 reply)、
-   convergence(收束, 只读)、exploration(相邻缺口, 最多 3)、
-   semantic-inspection(当前页检修); 结构化建议走
-   /generation-center/suggestions/task(待处理队列)。世界核心收束产生
-   world_core_checkpoint(不可采用)与 world_adoption_package(作者显式保存)。
-3. **world.ask**: POST /api/world/ask-world, 只据当前项目作者可见证据回答
-   (citation_key 引用); 无证据拒答(no_answer=true); 回答可另存为建议,
-   不自动写设定。
-4. **实体融合建议**: POST /entities/fusion-suggestions;应用需 confirmed=true
-   (canonical 合并需 allow_canonical_merge/alias)。
-5. **手动别名/关系补抽**: POST /alias-relations/extract, 必须先有新鲜的
-   context_confirmation_id;结果 candidate + needs_review, 不自动覆盖。
-6. **世界书简介**: /bible/synopsis/refresh(异步), 修订可 restore;
-   自动维护开关单独控制。
+| 作者意图 | 调用 |
+|---|---|
+| 自由共创对话 | llm_step(spec=world_creation_chat), 不写资产 |
+| 「把这几页设定收束一下」 | llm_step(spec=world_convergence) 只读汇聚 |
+| 「还有什么可挖的」 | llm_step(spec=world_exploration) ≤3 个一跳缺口 |
+| 「检修这一页」 | llm_step(spec=world_semantic_inspection) findings 供复核 |
+| 对象建议 | llm_step(spec=world_core_entity) → world/pending(不自动采用) |
+| 页面提案 | llm_step(spec=world_bible_page / world_bible_new_page) → bible draft |
 
-## agent 纪律
+## 复核纪律
 
-- 世界事实的唯一权威是已采用资产; 生成中心的对话/收束内容不是事实,
-  除非作者显式保存/采用。
-- 问答只引用服务端给的来源, 不凭模型记忆补设定; 无证据就明确说「证据不足」。
-- 待处理建议: 解释每个建议的来源/影响/冲突点, 批量确认前逐项征得同意。
-- 别名只挂已有对象; 不创建重复实体。
+- 待处理建议 → 收件箱信号卡(四动词: 采纳/打回/改一改/先放着); 采纳必过 approval。
+- 打回必带理由(进 calibration.md); 低置信/冲突保持待处理。

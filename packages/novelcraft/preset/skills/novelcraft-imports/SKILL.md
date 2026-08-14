@@ -1,39 +1,37 @@
 ---
 name: novelcraft-imports
-description: NovelCraft 深度导入流水线: 上传限制、三阶段(Scene 切分→世界对象/别名关系→剧情结构)、授权快照、恢复/放弃、待处理复核。导入类任务先读本 skill。
-whenToUse: 作者要导入作品、跑深度导入、复核导入结果、恢复中断的导入时。
+description: NovelCraft 深度导入(M4 六阶段): 文本停靠、计划授权、Scene 切分/补全/融合、实体/别名关系、结构分析、去重 L0–L4 与恢复。导入类任务先读本 skill。
+whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重报告、恢复中断的导入时。
 ---
 
-# NovelCraft 深度导入
+# NovelCraft 深度导入(M4)
 
 ## 入口与限制
 
-- 上传: POST /api/imports/upload; 仅 .txt/.epub/.html/.htm/.mobi/.azw3,
-  ≤50MB; import_records 只存元数据不存原文。
-- 深度导入: POST /api/imports/deep(三阶段流水线)或分阶段
-  /stages/scenes | world-objects | plot-structure。
-- 恢复: POST /api/imports/deep/resume;放弃: /deep/abandon(返回清理摘要)。
+- 拖文件(DSH 网页原生接收)或粘贴 → 统一转 .txt/.md 停靠到 imports/(D9a,
+  不保留原格式); 文件夹守望 v1 不做。
+- 六阶段由 @novelcraft/imports 的确定性函数执行: planImport(授权快照,
+  authorization_confirmed 强制)→ sliceChapterBatch(1a)→ enrichSceneBatch(1b)
+  → fuseSceneBatch(1c)→ commitScenes(provenance_key 幂等)→ extractEntityBatch(2a)
+  → aliasRelationBatch(2b)→ analyzeStructure(3)→ dedupReport/applyDedup(L0–L3)。
+- 编排真相 = .assistant/checkpoint.json; 重跑幂等(provenance_key/entity_key 跳过),
+  resumeImport 给续跑说明; 每步资产变更 = git commit。
 
-## 三阶段(与结果语义)
+## 阶段语义(M4 落点)
 
-1. **Phase1 Scene 切分/深化/融合**: 1a 主窗口切分 + anchor repair +
-   continuous-gap recovery; 1b 语义补全; 1c 边界审查与综合。结果 = Scene
-   candidate/draft(source=deep_import, 带 auto_ingested/workflow/证据/回滚元数据)。
-2. **Phase2 世界对象/别名关系**: 2a 对象抽取(scene_entity_extraction.md,
-   每 Scene 并发 25); 2b 别名与关系(alias_relation_extraction.md,
-   只输出本 Scene 增量)。结果 = candidate + needs_review, 不自动覆盖已采用。
-3. **Phase3 剧情结构**: 结构资产带 workflow 溯源。
+1. **地图(1a–1c)**: 候选只在内存/checkpoint; commitScenes 落 scenes/*.md
+   (status=draft, provenance_key sha256 与来源顺序无关); 锚点冲突 fail-closed;
+   narrative_tag imported→draft(截断 32)。
+2. **世界(2a/2b)**: 候选落 world/pending/*.md(entity_key 去重, 同名同型
+   canonical ≥0.88 复用); 别名只附着不建新对象; 关系 create-or-merge。
+3. **结构(3)**: 同 workflow 且置信 ≥0.96 才自动应用, 落 structure/ 目录;
+   低置信仅计数报告。
+4. **去重(L0–L3)**: 报告一次确认(§6.1 形态); applyDedup 需 approval;
+   候选态合并可逆(source 置 merged + merged_into, 证据并入 target)。
 
 ## 授权与复核纪律(agent 必守)
 
-- 首次启动需持久化授权快照(user_authorized_pipeline + authorization_confirmed);
-  授权范围在任务保存后不可变。
-- 规则明确且可回滚的结果可自动采用; 冲突/低置信/无法消歧 → 待处理。
-- 导入后的待处理项(对象/别名/关系/Scene)必须作者逐项或分批确认;
-  agent 复核时给出来源 Scene 与证据, 不替作者决定采用/忽略。
-- 失败降级: Phase1b provider 失败 → 空语义进复核; Phase2b 失败只降级不丢对象;
-  Phase1a 重叠 → 整章 fallback, 不部分采用。
-
-## 与 dsh-rebuild 的关系
-
-- Phase2a 抽取 step 已接入 dsh-sdk 通道并验收(见功能对照清单 §6)。
+- planImport 未 confirmed 抛错; 授权范围写入 checkpoint 后不可变。
+- 降级条款(policy.yml): 1b 失败空语义进复核; 2b 失败只降级不丢对象;
+  1a 重叠整章 fallback 不部分采用。
+- 低置信/冲突/无法消歧 → 收件箱信号, 不替作者决定。

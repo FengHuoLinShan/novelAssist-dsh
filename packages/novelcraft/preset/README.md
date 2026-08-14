@@ -15,5 +15,5 @@ NovelCraft 的 **profile bundle 入口**(ADR-0016 §22.3): skills 家族 + agent
 
 - preset 只携带「知识与人设」, 不携带实现;
 - 实现逻辑在其余 12 个 `@novelcraft/*` 包(纯 TS 确定性核心, 见 monorepo README);
-- skills 中的端点/路径描述已按 M4 工作区语义改写(文件夹真相), 与旧 dsh-plugin 的
-  HTTP 端点描述不同——M4 落地后逐册校对(当前为平移稿)。
+- skills 已逐册校对为 M4 语义(工作区路径/确定性函数引用/git 与 approval 纪律,
+  不再出现 HTTP 端点或 async_tasks 描述; 2026-08-14 校对完成, 9/9)。
