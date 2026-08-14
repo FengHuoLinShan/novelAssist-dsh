@@ -1,22 +1,51 @@
-# @novelcraft/client(R7 · 未实现)
+# @novelcraft/client — DSH web client-module(阶段 B 已实现)
 
-DSH web client-module 插件: 宠物 / 收件箱 / 写作台四模式 / 剧情地图(设计文档 §9/§17)。
+宠物(四态)/ 收件箱(卡片 + 四动词 + 键盘流)的 DSH web 客户端插件(设计文档 §9/§17)。
+双面包: node 半身 = `/novelcraft` loopback RPC 通道; 浏览器半身 = 会话头宠物动作 +
+收件箱面板。写作台四模式/剧情地图留后续迭代。
 
-## 阻塞依赖(事实, 勿当作已解决)
+## 数据与动作路径(安全边界)
 
-- client-modules 构建链需 **DSH 源码 checkout**(dsh-rebuild 最终报告 §2.3 缺口 3
-  已记录此依赖); 实现期需实测 `clientModules` seam 的插件装载与 `window.__DSH_BOOT__`
-  注入约定(上游文档: docs/agent/dsh-upstream/docs/subsystems/client-modules.md)。
+- **读**: 浏览器 → `connection.rpc.call('/novelcraft', ...)` → 宿主处理器 →
+  `@novelcraft/assistant` 确定性函数(读 `.assistant/signals/*.json`, 文件真相)。
+- **四动词**: `inbox/act` 只执行 `assistant.act`(记录决定); **adopt 类资产写入
+  不在此通道** —— 采纳决定后由助手 agent 经 DSH approval 执行(§9 fail-closed)。
+- 通道 authority = `loopback`(单用户本机); 载荷校验在处理器内, 未绑定工作区 →
+  capability 缺省, 不炸通道。
 
-## 规划(设计文档 §17/§9)
+## 端点契约(src/wire.ts 为唯一 wire 权威)
 
-- 宠物四态: 静默 / 微光(有新信号) / 忙碌 / 待确认角标
-- 收件箱: 卡片 + 四动词(采纳/打回/改一改/先放着)+ 键盘流(j/k, 1/2/3/4, u)
-- 写作台四模式: 计划台 / 参照台(半屏, D10) / 评审台 / 守望
-- 数据面: 读 `.assistant/signals/*.json` 与 `.assistant/reviews/*.json`(N4);
-  动作回调走 assistant 核心包的确定性函数(act 等), 不直写资产
+| 端点 | 载荷 → 值 |
+|---|---|
+| `watch/state` | {sessionId?, workspacePath?} → {bound, open, attention, threshold, radarRunning}(宠物四态) |
+| `inbox/list` | 同上 → {bound, signals[], threshold}(卡片 = 作者语言字段) |
+| `inbox/act` | + {signalId, action, reason?, ...} → {ok, kind: adopt/microflow/record, microflow?, message} |
 
-## 当前状态
+四态判定: 待确认(open ≥ threshold, N3=5)> 忙碌(novelcraft-radar job 运行中)>
+微光(0 < open < threshold)> 静默。键盘流: j/k 选择、1/2/3/4 四动词、u 刷新、Esc 关闭。
 
-- 核心逻辑已全部就绪(assistant 包: 信号/收件箱/校准/微工作流, 15 测试);
-- UI 本体待 DSH client-modules 构建链实测后实现。
+## 构建(D21 锁 rc.6)
+
+- 宿主半身: `npm run build:host`(tsc → dist/index.js, 供 Loader 装载);
+- 浏览器半身: `npm run build:client`(tsdown + vendor 的 DSH 共享预设
+  `build/tsdown.client.ts` → dist/client.js, closure-factory + 纯度门禁;
+  externals = platform 模块表: react / ui-primitives / ui-slots / …);
+- 装载: profile patch 加一行 `{ name: "@novelcraft/client" }`; client-modules
+  扫描要求 package.json 带 `dsh.client` 声明 **且 exports 暴露 `./package.json`**
+  (否则 `require.resolve('<pkg>/package.json')` 失败 → 不进 boot 清单, 实现期实测发现)。
+
+## 验证
+
+- 宿主半身: `npm test`(8 条 RPC 处理器行为契约: 未绑定缺省 / 阈值触发 /
+  workspacePath 回退 / 四动词 / 微工作流路由 / 作者语言错误)。
+- E2E(已验): `--profile web --patch` 注入两行(dsh + client)→ dump-config 合成 →
+  全树 boot 零错误 → 真实 web 服务 boot 清单含 `@novelcraft/client`(inject 边齐全)
+  → `/plugins/@novelcraft/client/client.js` 200 → headless Chrome 渲染无控制台错误。
+
+## 阶段状态
+
+- [x] 宠物四态 + 收件箱(四动词 + 键盘流 + 中英文案)
+- [x] /novelcraft RPC 通道(loopback, 宿主处理器 + 浏览器 hooks)
+- [x] 构建链(vendor 预设)+ E2E 挂载验证
+- [ ] 写作台四模式 / 剧情地图(后续迭代)
+- [ ] 信号变化主动推送(现为 5s 轮询; 可接 connection mux 事件)

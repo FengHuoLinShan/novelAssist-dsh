@@ -1,0 +1,162 @@
+// @novelcraft/client · node 半身: /novelcraft loopback RPC 通道处理器。
+// 依据: 设计文档 §9/§17(宠物/收件箱读 .assistant/signals; 动作回调走核心包
+// 确定性函数); §22.3(client seam = client-modules)。
+// 数据路径: 浏览器 → ctx.connection.rpc.call('/novelcraft', endpoint, payload)
+// → 本处理器(宿主) → @novelcraft/assistant 确定性函数(文件真相)。
+// 采用类资产写入不在此通道 —— UI 的四动词只记录决定(assistant.act),
+// adopt 由助手 agent 经 DSH approval 执行(§9 fail-closed)。
+import type { Context } from '@deepseek-ai/cordis';
+import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
+import { act, inboxView, type InboxAction, type Signal } from '@novelcraft/assistant';
+import { resolvePolicy } from '@novelcraft/llm-step';
+import type {
+  InboxActPayload,
+  InboxActValue,
+  InboxListPayload,
+  InboxListValue,
+  SignalCard,
+  WatchStatePayload,
+  WatchStateValue,
+} from './wire.js';
+import { ENDPOINTS } from './wire.js';
+
+/** 宿主侧的 novelcraft 服务结构面(运行时 ctx.get('novelcraft'), 不硬依赖 @novelcraft/dsh)。 */
+export interface NovelcraftHostService {
+  vaults: {
+    /** 会话 → vault 绑定(D17); 未绑定 undefined。 */
+    resolve(sessionId: string): Promise<{ book: string; root: string } | undefined>;
+    /** 任意路径 → 最近 vault 根; 未找到 undefined。 */
+    resolveFromPath(startPath: string): { book: string; root: string } | undefined;
+  };
+}
+
+interface JobsHostService {
+  list(): Array<{ kind?: string; status?: string }>;
+}
+
+/** 统一错误包装(RpcError code 用 internal; 消息作者语言)。 */
+export function rpcFail<T>(message: string): RpcResult<T> {
+  return { ok: false, error: { code: 'internal', message, details: {} } };
+}
+
+export function rpcOk<T>(value: T): RpcResult<T> {
+  return { ok: true, value };
+}
+
+function card(signal: Signal): SignalCard {
+  return {
+    id: signal.id,
+    radar: signal.radar,
+    severity: signal.severity,
+    title: signal.title,
+    evidence: signal.evidence,
+    proposed_action: signal.proposed_action,
+    reversibility: signal.reversibility,
+    status: signal.status,
+    observed_at: signal.observed_at,
+  };
+}
+
+/** 解析 vault 根: sessionId 优先, 其次 workspacePath 向上找; 都不可用 → undefined。 */
+async function resolveRoot(
+  svc: NovelcraftHostService | undefined,
+  payload: { sessionId?: string; workspacePath?: string },
+): Promise<{ book: string; root: string } | undefined> {
+  if (!svc) return undefined;
+  if (payload.sessionId) {
+    const binding = await svc.vaults.resolve(payload.sessionId);
+    if (binding) return binding;
+  }
+  if (payload.workspacePath) {
+    return svc.vaults.resolveFromPath(payload.workspacePath);
+  }
+  return undefined;
+}
+
+/** 构造端点处理器(测试可直接调用, 不经 HTTP)。 */
+export function createNovelcraftHandlers(ctx: Context) {
+  const novelcraft = ctx.get('novelcraft') as NovelcraftHostService | undefined;
+
+  return {
+    async watchState(payload: WatchStatePayload): Promise<RpcResult<WatchStateValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcOk({ bound: null, open: 0, attention: false, threshold: 5, radarRunning: false });
+      }
+      const policy = resolvePolicy(binding.root);
+      const open = inboxView(binding.root).length;
+      const threshold = policy.watch.notify_threshold;
+      let radarRunning = false;
+      try {
+        const jobs = ctx.get('jobs') as JobsHostService | undefined;
+        radarRunning = (jobs?.list() ?? []).some(
+          (j) => j.kind === 'novelcraft-radar' && (j.status === 'running' || j.status === 'stopping'),
+        );
+      } catch {
+        radarRunning = false;
+      }
+      return rpcOk({
+        bound: { book: binding.book, root: binding.root },
+        open,
+        attention: open >= threshold,
+        threshold,
+        radarRunning,
+      });
+    },
+
+    async inboxList(payload: InboxListPayload): Promise<RpcResult<InboxListValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcOk({ bound: null, signals: [], threshold: 5 });
+      }
+      const policy = resolvePolicy(binding.root);
+      const signals = inboxView(binding.root);
+      return rpcOk({
+        bound: { book: binding.book, root: binding.root },
+        signals: signals.map(card),
+        threshold: policy.watch.notify_threshold,
+      });
+    },
+
+    async inboxAct(payload: InboxActPayload): Promise<RpcResult<InboxActValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcFail('未绑定工作区: 请先在助手侧打开这本书的会话(每书一会话, D17)。');
+      }
+      try {
+        const descriptor = act(binding.root, {
+          signalId: payload.signalId,
+          action: payload.action as InboxAction,
+          ...(payload.reason ? { reason: payload.reason } : {}),
+          ...(payload.action === 'modify'
+            ? {
+                modified: {
+                  ...(payload.modifiedTitle ? { title: payload.modifiedTitle } : {}),
+                  ...(payload.modifiedProposedAction
+                    ? { proposed_action: payload.modifiedProposedAction }
+                    : {}),
+                },
+              }
+            : {}),
+        });
+        const guide =
+          descriptor.kind === 'adopt'
+            ? '已记录采纳决定。资产采用请让助手执行(必经审批, §9)。'
+            : descriptor.kind === 'microflow'
+              ? `已路由微工作流「${descriptor.microflow ?? ''}」(由助手执行)。`
+              : '已记录决定。';
+        return rpcOk({
+          ok: true,
+          action: descriptor.action,
+          kind: descriptor.kind,
+          ...(descriptor.microflow ? { microflow: descriptor.microflow } : {}),
+          message: guide,
+        });
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  };
+}
+
+export { ENDPOINTS };

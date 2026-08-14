@@ -28,7 +28,11 @@
 - [x] **挂载阶段 A(ADR-0017)**: `@novelcraft/dsh` 适配包 31 测试全绿 +
   `scripts/m5-mount-demo.mjs` 集成 demo + CLI 端到端(dump-config 合成 +
   `--profile web --patch` 真实 boot 零错误)。全仓 **223 测试全绿, typecheck 零错误**。
-- [ ] client 阶段(B): 宠物/收件箱/写作台 client-module(需 web 构建链; 参考 checkout 已就位)
+- [x] **client 阶段(B) v1**: `@novelcraft/client` 双面包(宠物四态 + 收件箱四动词/
+  键盘流 + `/novelcraft` loopback RPC)8 测试全绿 + tsdown 构建链 + 真实 web 端到端
+  (boot 清单/bundle 200/playwright 浏览器零错误); 验收快照见
+  docs/agent/dsh-rebuild/客户端阶段-验收.md。全仓 **231 测试全绿**。
+- [ ] client 后续迭代: 写作台四模式 / 剧情地图 / 信号主动推送(轮询→mux 事件)
 - [ ] trace contract 测试框架(C): 纯仓库工作, 设计文档 §15
 - [ ] 仓库迁出: 分支 → 独立 fork deepseek-harness 新仓库(ADR-0017 §1, 时机待定)
 - [ ] 旧引擎退役仪式(ai-writing-assist main, 时机另行裁决)

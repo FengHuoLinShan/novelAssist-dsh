@@ -1,0 +1,71 @@
+{
+  "name": "@novelcraft/client",
+  "version": "0.0.1",
+  "description": "NovelCraft M4 client UI (phase B): pet (four states), inbox (cards + four verbs + keyboard flow), reading .assistant/signals via a loopback RPC channel; actions call core deterministic functions on the host",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm run build:host && npm run build:client",
+    "build:host": "tsc -p tsconfig.build.json",
+    "build:client": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@novelcraft/assistant": "*",
+    "@novelcraft/llm-step": "*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-apiproxy": "^0.1.0-rc.6",
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-apiproxy": "^0.1.0-rc.6",
+    "react": "^18.2.0",
+    "@types/react": "~18.3.1",
+    "tsdown": "^0.22.2",
+    "lightningcss": "^1.32.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6"
+  }
+}

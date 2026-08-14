@@ -26,7 +26,8 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | R1–R5 核心包 | ✅ 11 包 192 测试全绿 | vault/store/llm-step/writing/imports/world/outline/memory/context/rag/assistant |
 | R6 assistant | ✅ 核心(信号/收件箱/校准/微工作流 6 条) | radar 调度面 = 挂载阶段 |
 | 挂载阶段(A, ADR-0017) | ✅ `@novelcraft/dsh` 适配包 31 测试全绿 + `scripts/m5-mount-demo.mjs` 全链 | 见 `dsh/README.md` seam 适配矩阵 |
-| R7 client + 发布 | 📋 preset 已平移 + starter 已备; client UI 待 client 阶段(B) | client/README.md、starter/README.md |
+| R7 client(B v1) | ✅ `@novelcraft/client` 双面包: 宠物四态 + 收件箱(四动词/键盘流)+ loopback RPC, 8 测试 + tsdown 构建链 + 真实 web 端到端 | client/README.md; 写作台四模式留后续迭代 |
+| 发布 | 📋 preset 已平移 + starter 已备 | starter/README.md |
 
 ## DSH 挂载阶段 seam 契约
 
