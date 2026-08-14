@@ -15,6 +15,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { ensureVaultGitignore } from './gitignore.js';
 
 /** 书根标记文件(§22.2; small-modules §1.1)。 */
 export const BOOK_FILENAME = 'book.yml';
@@ -282,6 +283,9 @@ export function initVault(rootPath: string, bookMeta: BookMeta): VaultPaths {
   // README 约定: git 操作用 node:child_process 调 git CLI(§22.2「.git init」)。
   execFileSync('git', ['init'], { cwd: root, stdio: 'pipe' });
 
+  // M6 Track A1: 派生索引不提交 git(.assistant/rag-index.json; 可随时全量重建)。
+  ensureVaultGitignore(root, ['.assistant/rag-index.json']);
+
   return paths(root);
 }
 
@@ -464,3 +468,6 @@ function yamlQuote(value: string): string {
   }
   return out + '"';
 }
+
+export * from './gitignore.js';
+

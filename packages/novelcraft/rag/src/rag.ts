@@ -26,6 +26,10 @@ export interface RagChunk {
   index_version: string;
   embedding_status: (typeof RAG_EMBEDDING_STATUSES)[number];
   embedding_error?: string;
+  /** 嵌入向量(L1 起由嵌入后端填充; 未嵌入时为 undefined)。 */
+  vector?: number[];
+  /** 生成 vector 所用的嵌入模型名(与 embedding_status 联动)。 */
+  embedding_model?: string;
 }
 
 /** 嵌入后端注入接口(D16): provider 嵌入 API 或本地模型。 */
@@ -81,6 +85,8 @@ export function chunkChapterText(
 export interface RagIndexFile {
   rebuilt_at: string;
   chunks: RagChunk[];
+  /** 全库向量所用的嵌入模型(L1; 未嵌入时省略)。 */
+  embedding_model?: string;
 }
 
 export function rebuildRagIndex(root: string, chunks: RagChunk[], now: Date = new Date()): RagIndexFile {
