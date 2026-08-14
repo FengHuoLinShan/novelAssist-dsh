@@ -1,6 +1,6 @@
-// store · 剧情地图聚合(storyMap): 纯读结构资产 + Scene/章节覆盖 + 跨类关系边, 供剧情地图 UI 消费。
-// 跨类边(P1/N14)已进 VaultIndex.relations(sourceKind 标注源 kind); 本函数补充
-// related_*_ids 兼容投影(N17: 展开为等价有向边, 与显式 relations 边并集去重)。
+// store · 剧情地图聚合(storyMap): 纯读结构资产 + Scene/章节覆盖 + 关系边, 供剧情地图 UI 消费。
+// 显式 relations 边(N11/N14)已进 VaultIndex.relations(对象缺省 sourceKind=对象, 跨类带 sourceKind);
+// 本函数补充 related_*_ids 兼容投影(N17: 展开为等价有向边, 与显式 relations 边并集去重)。
 // 依据: 设计文档 §17.5(剧情地图)、ADR-0019(附录 A type 枚举 + N14/N16/N17)、N12(目录化)。
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -42,7 +42,7 @@ export interface StoryMap {
   arcs: StoryMapAsset[];
   foreshadowing: StoryMapAsset[];
   reveals: StoryMapAsset[];
-  /** 跨类关系边(显式 relations + related_*_ids 兼容投影并集去重, N17)。 */
+  /** 关系边(显式 relations: 对象缺省 sourceKind=对象 + 跨类带 sourceKind; 并 related_*_ids 兼容投影并集去重, N17)。 */
   edges: RelationEntry[];
 }
 
@@ -148,8 +148,9 @@ export function storyMap(root: string): StoryMap {
     return { slug: s.slug, status: s.status, chapters: s.chapters, title };
   });
 
-  // 跨类边 = 显式 relations 边(P1, 带 sourceKind)∪ related_*_ids 兼容投影(N17), 去重。
-  const explicit = index.relations.filter((e) => e.sourceKind !== undefined);
+  // 关系边 = 显式 relations 边(N11/N14: 对象缺省 sourceKind=对象 + 跨类带 sourceKind)
+  //           ∪ related_*_ids 兼容投影(N17), 去重。
+  const explicit = index.relations;
   const edges: RelationEntry[] = [...explicit];
   const seen = new Set<string>();
   for (const e of explicit) {

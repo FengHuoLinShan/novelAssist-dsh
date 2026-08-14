@@ -20,6 +20,8 @@ export type EventSource = (typeof EVENT_SOURCES)[number];
 export interface MemoryEvent {
   id: string;
   chapter_index: number;
+  /** Scene slug 弱绑定(无 FK, 对齐 writing.md:136); 与 scene_sequence 构成第二幂等键(N26) */
+  scene_id?: string;
   scene_index?: number;
   scene_sequence?: number;
   dimension?: Dimension;
@@ -41,6 +43,8 @@ export interface AppendEventInput {
   snapshot_after: unknown;
   snapshot_before?: unknown;
   dimension?: Dimension;
+  /** Scene slug 弱绑定(无 FK); 与 scene_sequence 同在时启用第二幂等键(N26) */
+  scene_id?: string;
   scene_index?: number;
   scene_sequence?: number;
   entity_id?: string;
@@ -78,6 +82,13 @@ function validate(input: AppendEventInput): void {
   if (!Number.isInteger(input.sequence) || input.sequence < 0) {
     throw new Error("sequence 必须 ≥0 整数");
   }
+  // N26: scene_id 在场须非空字符串(Scene slug 弱绑定); scene_sequence 在场须 ≥0 整数
+  if (input.scene_id !== undefined && (typeof input.scene_id !== "string" || input.scene_id.length === 0)) {
+    throw new Error("scene_id 必须非空字符串");
+  }
+  if (input.scene_sequence !== undefined && (!Number.isInteger(input.scene_sequence) || input.scene_sequence < 0)) {
+    throw new Error("scene_sequence 必须 ≥0 整数");
+  }
   if (!EVENT_TYPES.includes(input.event_type)) throw new Error(`event_type 非法: ${input.event_type}`);
   if (input.dimension !== undefined && !DIMENSIONS.includes(input.dimension)) {
     throw new Error(`dimension 非法: ${input.dimension}`);
@@ -95,6 +106,17 @@ export function appendEvent(root: string, input: AppendEventInput, now: Date = n
   if (dup) {
     throw new Error(`事件已存在(幂等拒绝): chapter=${input.chapter_index} seq=${input.sequence}`);
   }
+  // N26: scene_id + scene_sequence 同在时启用第二幂等键(small-modules.md:140)
+  if (input.scene_id !== undefined && input.scene_sequence !== undefined) {
+    const sceneDup = events.find(
+      (e) => e.scene_id === input.scene_id && e.scene_sequence === input.scene_sequence,
+    );
+    if (sceneDup) {
+      throw new Error(
+        `事件已存在(幂等拒绝): scene=${input.scene_id} scene_seq=${input.scene_sequence}`,
+      );
+    }
+  }
   const event: MemoryEvent = {
     id: eventId(input.chapter_index, input.sequence),
     chapter_index: input.chapter_index,
@@ -103,6 +125,7 @@ export function appendEvent(root: string, input: AppendEventInput, now: Date = n
     snapshot_after: input.snapshot_after,
     snapshot_before: input.snapshot_before,
     dimension: input.dimension,
+    scene_id: input.scene_id,
     scene_index: input.scene_index,
     scene_sequence: input.scene_sequence,
     entity_id: input.entity_id,

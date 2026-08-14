@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { ingestChapter } from "@novelcraft/writing";
 import { commitScenes, enrichSceneBatch, fuseSceneBatch, normalizeNarrativeTag, planImport, provenanceKey, readCheckpoint, sliceChapterBatch } from "../src/index";
 import type { SceneCandidate } from "../src/index";
@@ -130,6 +130,15 @@ describe("commitScenes(幂等/冲突/归一)", () => {
     const raw = readFileSync(join(root, "scenes", "s001.md"), "utf8");
     expect(raw).toContain('narrative_tag: "draft"');
     expect(raw).toContain("provenance_key:");
+  });
+  it("scene 必填齐备: scene_index/source 落盘且过 schema(frontmatter.ts:436)", () => {
+    const root = makeRoot();
+    commitScenes(root, [candidate(1, "A1")], { workflowId: "w1" });
+    const raw = readFileSync(join(root, "scenes", "s001.md"), "utf8");
+    expect(raw).toContain("scene_index: 1"); // 序贯整数, 与 id(slug 数字)同源
+    expect(raw).toContain('source: "deep_import"'); // 深度导入写点语义
+    const { data } = parseFrontmatter(raw);
+    expect(validateFrontmatter("scene", data as never)).toEqual([]);
   });
   it("同 provenance_key 重放 → skip(幂等)", () => {
     const root = makeRoot();

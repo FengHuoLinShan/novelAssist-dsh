@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { analyzeOutline, generateOutlineItem, generateStoryOutline, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
 
 const dirs: string[] = [];
@@ -115,5 +115,122 @@ describe("结构创作编排(catalog §2)", () => {
     const r = await sceneFusionDraft(provider, "两卡");
     expect(r.ok).toBe(true);
     expect((r.result as { title: string }).title).toBe("合成场景");
+  });
+});
+
+describe("写端 schema 必填补齐(B3)", () => {
+  function readFm(root: string, rel: string): Record<string, unknown> {
+    return parseFrontmatter(readFileSync(join(root, rel), "utf8")).data as Record<string, unknown>;
+  }
+
+  it("writeStructureAsset thread: id/name/thread_type 齐备且过 schema(frontmatter.ts:492)", () => {
+    const root = makeRoot();
+    const slug = writeStructureAsset(root, "thread", { title: "主线", summary: "s" });
+    const fm = readFm(root, `structure/threads/${slug}.md`);
+    expect(fm.id).toBe(slug); // id = slug(B3)
+    expect(fm.name).toBe("主线"); // name 默认取 title(B3)
+    expect(fm.thread_type).toBe("main");
+    expect(validateFrontmatter("thread", fm as never)).toEqual([]);
+  });
+
+  it("writeStructureAsset arc: id 齐备且过 schema(frontmatter.ts:497)", () => {
+    const root = makeRoot();
+    const slug = writeStructureAsset(root, "arc", { title: "第一卷" });
+    const fm = readFm(root, `structure/arcs/${slug}.md`);
+    expect(fm.id).toBe(slug);
+    expect(validateFrontmatter("arc", fm as never)).toEqual([]);
+  });
+
+  it("writeStructureAsset foreshadowing: name 齐备且过 schema(frontmatter.ts:502)", () => {
+    const root = makeRoot();
+    const slug = writeStructureAsset(root, "foreshadowing", { title: "怀表伏笔" });
+    const fm = readFm(root, `structure/foreshadowing/${slug}.md`);
+    expect(fm.id).toBe(slug);
+    expect(fm.name).toBe("怀表伏笔"); // name 默认取 title(B3)
+    expect(validateFrontmatter("foreshadowing", fm as never)).toEqual([]);
+  });
+
+  it("writeStructureAsset reveal: 缺 target 三件套 fail-closed 拒写, 文件不落盘(frontmatter.ts:508)", () => {
+    const root = makeRoot();
+    expect(() => writeStructureAsset(root, "reveal", { title: "秘密" })).toThrowError(/reveal 必填缺失/);
+    expect(readdirSync(join(root, "structure", "reveal"))).toEqual([]);
+  });
+
+  it("writeStructureAsset reveal: target_type/target_id/secret_summary 齐备落盘且过 schema", () => {
+    const root = makeRoot();
+    const slug = writeStructureAsset(root, "reveal", {
+      title: "秘密",
+      target_type: "world_entity",
+      target_id: "霜华剑",
+      secret_summary: "剑是赝品",
+    });
+    const fm = readFm(root, `structure/reveal/${slug}.md`);
+    expect(fm.target_type).toBe("world_entity");
+    expect(fm.target_id).toBe("霜华剑");
+    expect(fm.secret_summary).toBe("剑是赝品");
+    expect(validateFrontmatter("reveal", fm as never)).toEqual([]);
+  });
+
+  it("writeOutline: creative_core/major_storylines/macro_movements/open_decisions 缺省补齐(frontmatter.ts:513)", () => {
+    const root = makeRoot();
+    writeOutline(root, { title: "总纲", outline_markdown: "# 卷一" });
+    const o = readOutline(root)!;
+    expect(o.creative_core).toEqual({});
+    expect(o.major_storylines).toEqual([]);
+    expect(o.macro_movements).toEqual([]);
+    expect(o.open_decisions).toEqual([]);
+  });
+
+  it("generateStoryOutline 持久化 major_storylines/macro_movements/open_decisions 到 outline.md", async () => {
+    const root = makeRoot();
+    const provider = new MockProvider({
+      responses: [{
+        text: JSON.stringify({
+          title: "总纲",
+          outline_markdown: "卷一",
+          major_storylines: [{ name: "主线", narrative_function: "backbone" }],
+          macro_movements: [{ name: "启幕", story_state_change: "平静→动乱" }],
+          open_decisions: [{ question: "结局走向?" }],
+        }),
+      }],
+    });
+    const r = await generateStoryOutline(provider, root, "写总纲");
+    expect(r.ok).toBe(true);
+    const o = readOutline(root)!;
+    expect((o.major_storylines as Array<{ name: string }>)[0].name).toBe("主线");
+    expect((o.macro_movements as Array<{ name: string }>)[0].name).toBe("启幕");
+    expect((o.open_decisions as Array<{ question: string }>)[0].question).toBe("结局走向?");
+  });
+
+  it("generateOutlineItem: content 透传 name/thread_type; reveal 三件套进 fm", async () => {
+    const root = makeRoot();
+    const provider = new MockProvider({
+      responses: [{
+        text: JSON.stringify({
+          target: "plot_thread",
+          content: {
+            title: "主线",
+            name: "主角成长线",
+            thread_type: "character",
+            target_type: "character",
+            target_id: "obj-klein",
+            secret_summary: "克莱恩是穿越者",
+            summary: "s",
+            confidence: 0.9,
+          },
+        }),
+      }],
+    });
+    const r = await generateOutlineItem(provider, root, "plot_thread", "生成主线");
+    expect(r.ok).toBe(true);
+    const fm = readFm(root, `structure/threads/${r.slug}.md`);
+    expect(fm.id).toBe(r.slug);
+    expect(fm.name).toBe("主角成长线");
+    expect(fm.thread_type).toBe("character");
+    // reveal 必填三件套经 content 透传(frontmatter.ts:508)
+    expect(fm.target_type).toBe("character");
+    expect(fm.target_id).toBe("obj-klein");
+    expect(fm.secret_summary).toBe("克莱恩是穿越者");
+    expect(validateFrontmatter("thread", fm as never)).toEqual([]);
   });
 });

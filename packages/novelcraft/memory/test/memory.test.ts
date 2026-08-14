@@ -41,6 +41,53 @@ describe("appendEvent(事件溯源)", () => {
     ).toThrow(/幂等拒绝/);
   });
 
+  // N26: 第二幂等键 (scene_id, scene_sequence) — small-modules.md:140/142
+  it("幂等: 同 scene_id + scene_sequence 拒绝(第二幂等键)", () => {
+    const root = makeRoot();
+    appendEvent(root, {
+      chapter_index: 1, sequence: 0, event_type: "entity_created",
+      snapshot_after: {}, scene_id: "scene-cn-001", scene_sequence: 0,
+    });
+    // 同 scene 同 scene_sequence、不同章 sequence → 仍拒绝(N26 双键)
+    expect(() =>
+      appendEvent(root, {
+        chapter_index: 1, sequence: 1, event_type: "entity_updated",
+        snapshot_after: {}, scene_id: "scene-cn-001", scene_sequence: 0,
+      }),
+    ).toThrow(/幂等拒绝/);
+  });
+
+  it("幂等: 同 scene_id 不同 scene_sequence 放行(第二幂等键)", () => {
+    const root = makeRoot();
+    appendEvent(root, {
+      chapter_index: 1, sequence: 0, event_type: "entity_created",
+      snapshot_after: {}, scene_id: "scene-cn-001", scene_sequence: 0,
+    });
+    const ev = appendEvent(root, {
+      chapter_index: 1, sequence: 1, event_type: "entity_updated",
+      snapshot_after: {}, scene_id: "scene-cn-001", scene_sequence: 1,
+    });
+    expect(ev.scene_id).toBe("scene-cn-001");
+    expect(ev.scene_sequence).toBe(1);
+    const { events } = readEvents(root);
+    expect(events).toHaveLength(2);
+  });
+
+  it("无 scene_id 事件行为不变(旧主键幂等仍生效, 第二键不触发)", () => {
+    const root = makeRoot();
+    appendEvent(root, { chapter_index: 1, sequence: 0, event_type: "entity_created", snapshot_after: {} });
+    // 旧主键 chapter+sequence 仍拒绝
+    expect(() =>
+      appendEvent(root, { chapter_index: 1, sequence: 0, event_type: "entity_updated", snapshot_after: {} }),
+    ).toThrow(/幂等拒绝/);
+    // 仅 scene_sequence 无 scene_id → 第二键不触发, 放行
+    const ev = appendEvent(root, {
+      chapter_index: 2, sequence: 0, event_type: "entity_created",
+      snapshot_after: {}, scene_sequence: 5,
+    });
+    expect(ev.scene_sequence).toBe(5);
+  });
+
   it("非法 event_type/dimension/snapshot_after 缺失拒绝", () => {
     const root = makeRoot();
     expect(() =>
@@ -52,6 +99,17 @@ describe("appendEvent(事件溯源)", () => {
     expect(() =>
       appendEvent(root, { chapter_index: 1, sequence: 0, event_type: "entity_created", snapshot_after: undefined as never }),
     ).toThrow(/snapshot_after/);
+  });
+
+  // N26: scene_id/scene_sequence 在场校验(small-modules.md:112 锚点, writing.md:136 弱绑定)
+  it("scene_id 空串 / scene_sequence 负数拒绝", () => {
+    const root = makeRoot();
+    expect(() =>
+      appendEvent(root, { chapter_index: 1, sequence: 0, event_type: "entity_created", snapshot_after: {}, scene_id: "" }),
+    ).toThrow(/scene_id/);
+    expect(() =>
+      appendEvent(root, { chapter_index: 1, sequence: 0, event_type: "entity_created", snapshot_after: {}, scene_sequence: -1 }),
+    ).toThrow(/scene_sequence/);
   });
 });
 

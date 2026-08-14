@@ -95,4 +95,18 @@ describe("storyMap(剧情地图聚合)", () => {
     // 身份锚不产边
     expect(m.edges.some((e) => e.source === "身世" && e.target === "苏婉")).toBe(false);
   });
+
+  it("对象 relations(list 形态)边进 storyMap.edges(对象缺省 sourceKind, N11/N14)", () => {
+    const root = makeRoot();
+    writeMd(path.join(root, "world", "objects", "obj-a.md"), {
+      id: "obj-a", kind: "character", name: "苏婉", status: "canonical",
+      relations: [{ target: "obj-b", type: "associate", status: "candidate" }],
+    });
+    writeMd(path.join(root, "world", "objects", "obj-b.md"), {
+      id: "obj-b", kind: "character", name: "克莱恩", status: "canonical",
+    });
+    const m = storyMap(root);
+    // 对象边 = 宿主对象 → 裸 slug 目标, sourceKind 缺省即对象(存量兼容)。
+    expect(m.edges).toContainEqual({ source: "obj-a", target: "obj-b", type: "associate", status: "candidate" });
+  });
 });

@@ -1,5 +1,6 @@
-// imports · Phase 2b 别名/关系增量(imports.md「别名候选/关系候选」+ catalog §1.7 + N11)。
-// 别名只附着已有对象不建新对象(R1 精神); 关系写目标对象 frontmatter relations: []。
+// imports · Phase 2b 别名/关系增量(imports.md「别名候选/关系候选」+ catalog §1.7 + N11/N14)。
+// 别名只附着已有对象不建新对象(R1 精神); 关系写宿主对象 frontmatter relations: [] 为源(N11/N14),
+// 有向对由 store 索引派生(N14: store/index.ts collectRelations 只索引 Array 形态 → 本文件写 list 形态)。
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
@@ -16,19 +17,20 @@ export interface AliasRelationResult {
   uncertain: number;
 }
 
-interface RelRow {
-  source: string;
+/** 对象 relations 有向对(N14 list 形态; source=宿主对象文件本身, 不落 source 字段)。 */
+interface RelationRow {
   target: string;
   type: string;
+  status?: string;
   description?: string;
 }
 
-/** 关系 create-or-merge(imports.md: 同向同型去重, 已采用边不自动覆盖)。 */
-function upsertRelations(existing: RelRow[], next: RelRow[]): { rows: RelRow[]; added: number } {
+/** 关系 create-or-merge(imports.md: 同向同型去重, 已采用边不自动覆盖; N14 去重键 (target,type))。 */
+function upsertRelations(existing: RelationRow[], next: RelationRow[]): { rows: RelationRow[]; added: number } {
   const rows = [...existing];
   let added = 0;
   for (const n of next) {
-    const dup = rows.some((r) => r.source === n.source && r.target === n.target && r.type === n.type);
+    const dup = rows.some((r) => r.target === n.target && r.type === n.type);
     if (!dup) {
       rows.push(n);
       added += 1;
@@ -37,23 +39,29 @@ function upsertRelations(existing: RelRow[], next: RelRow[]): { rows: RelRow[]; 
   return { rows, added };
 }
 
-function relLines(rows: RelRow[]): string {
-  return rows.map((r) => `${r.source} -> ${r.target} (${r.type})${r.description ? `: ${r.description}` : ""}`).join("\n");
-}
-
-function readRelations(fm: Record<string, unknown>): RelRow[] {
-  const raw = typeof fm.relations === "string" ? fm.relations : "";
-  return relLinesParse(raw);
-}
-
-function relLinesParse(text: string): RelRow[] {
-  const out: RelRow[] = [];
-  for (const line of text.split("\n")) {
-    const m = line.match(/^(.+?) -> (.+?) \((.+?)\)(?:: (.*))?$/);
-    if (!m) continue;
-    out.push({ source: m[1].trim(), target: m[2].trim(), type: m[3].trim(), description: m[4]?.trim() });
+/** 读对象 relations: list 形态为主(N14); legacy 字符串形态(旧 vault "source -> target (type): desc")解析兜底。 */
+function readRelations(fm: Record<string, unknown>): RelationRow[] {
+  if (Array.isArray(fm.relations)) {
+    return (fm.relations as unknown[])
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x))
+      .map((r) => ({
+        target: String(r.target ?? ""),
+        type: String(r.type ?? ""),
+        ...(typeof r.status === "string" ? { status: r.status } : {}),
+        ...(typeof r.description === "string" ? { description: r.description } : {}),
+      }))
+      .filter((r) => r.target !== "" && r.type !== "");
   }
-  return out;
+  if (typeof fm.relations === "string") {
+    const out: RelationRow[] = [];
+    for (const line of fm.relations.split("\n")) {
+      const m = line.match(/^(.+?) -> (.+?) \((.+?)\)(?:: (.*))?$/);
+      if (!m) continue;
+      out.push({ target: m[2].trim(), type: m[3].trim(), ...(m[4]?.trim() ? { description: m[4].trim() } : {}) });
+    }
+    return out;
+  }
+  return [];
 }
 
 /** Phase 2b: 别名附着(canonical 目标才落; 否则 skipped 进待复核)+ 关系 create-or-merge。 */
@@ -109,13 +117,19 @@ export async function aliasRelationBatch(
       if (!source || !target || !type) continue;
       const file = paths(root).world.objectFile(source);
       const { data: srcFm, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      // 铁律5: LLM 产出默认候选(status: candidate), 作者显式确认后才 canonical。
       const { rows, added } = upsertRelations(readRelations(srcFm), [
-        { source, target, type, description: typeof rel.description === "string" ? rel.description : undefined },
+        {
+          target,
+          type,
+          status: "candidate",
+          ...(typeof rel.description === "string" ? { description: rel.description } : {}),
+        },
       ]);
       if (added > 0) {
         writeFileSync(
           file,
-          serializeFrontmatter({ ...srcFm, relations: relLines(rows) }, body),
+          serializeFrontmatter({ ...srcFm, relations: rows }, body),
           "utf8",
         );
         result.relations_written += added;

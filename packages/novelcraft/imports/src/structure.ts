@@ -49,14 +49,24 @@ function writeStructFile(root: string, dir: string, title: string, item: StructI
   }
   const lines = [
     "---",
+    `id: ${JSON.stringify(slug)}`,
     `title: ${JSON.stringify(title)}`,
-    "status: canonical", // ≥0.96 自动应用(imports.md 结构去重)
+    "status: canonical", // ≥0.96 自动应用(imports.md 结构去重); 审批门 Phase F 另行收口
     `confidence: ${item.confidence ?? 0}`,
     `workflow: ${JSON.stringify(workflowId)}`,
   ];
+  // B3 必填补齐(frontmatter.ts:491-511): thread=name/thread_type, foreshadowing=name;
+  // name 默认取 title, thread_type 自由字符串常见 main(specs/assets/outline.md:148)。
+  if (kind === "threads" || kind === "foreshadowing") {
+    lines.push(`name: ${JSON.stringify(typeof item.name === "string" && item.name ? item.name : title)}`);
+  }
+  if (kind === "threads") {
+    lines.push(`thread_type: ${JSON.stringify(typeof item.thread_type === "string" && item.thread_type ? item.thread_type : "main")}`);
+  }
   if (item.summary) lines.push(`summary: ${JSON.stringify(item.summary)}`);
   // ADR-0019 P3: relations 有向对透传(新工作流写 relations, 不散写 related_*_ids)。
-  const extra = Object.entries(item).filter(([k]) => !["title", "summary", "confidence"].includes(k));
+  // name/thread_type 已显式落列(见上), 其余(reveal 的 target_type/target_id/secret_summary 等)原样透传。
+  const extra = Object.entries(item).filter(([k]) => !["title", "summary", "confidence", "name", "thread_type"].includes(k));
   for (const [k, v] of extra) {
     lines.push(`${k}: ${JSON.stringify(v)}`);
   }

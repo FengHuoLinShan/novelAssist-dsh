@@ -266,6 +266,20 @@ describe("scanRiskRadar(§7 风险雷达)", () => {
     expect(sig?.title).toBe("关系边悬空: a → ghost");
     expect(sig?.proposed_action).toBe("修正或删除该关系");
   });
+  it("对象 relations(list 形态)边对 radar 可见: 指向已存在对象不误报悬空(N11/N14)", () => {
+    const root = makeRoot();
+    seedObject(root, "a", {
+      name: "苏婉",
+      entity_type: "character",
+      status: "canonical",
+      relations: [{ target: "b", type: "associate", status: "candidate" }], // 铁律5: LLM 产出默认候选
+    });
+    seedObject(root, "b", { name: "克莱恩", entity_type: "character", status: "canonical" });
+    const r = scanRiskRadar(root);
+    // 对象边已进 index.relations 且 target 可解析 → 不产悬空 risk。
+    expect(r.created).toBe(0);
+    expect(loadSignal(root, "risk-dangling-a-b")).toBeUndefined();
+  });
 });
 
 describe("plotSummaryLine / scanPlotRadar(§7 剧情雷达)", () => {

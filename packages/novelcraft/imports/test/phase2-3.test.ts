@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { ingestChapter } from "@novelcraft/writing";
 import {
   aliasRelationBatch, analyzeStructure, applyDedup, dedupReport, extractEntityBatch,
@@ -53,13 +53,16 @@ describe("extractEntityBatch(2a)", () => {
     const r = await extractEntityBatch(provider, root, ["s001"]);
     expect(r.created).toHaveLength(2); // 苏婉 去重后 1 + 克莱恩 1
     expect(existsSync(join(root, "world", "pending", r.created[0] + ".md"))).toBe(true);
+    const raw = readFileSync(join(root, "world", "pending", r.created[0] + ".md"), "utf8");
+    expect(raw).toContain('kind: "character"'); // B1: 候选落盘写 kind, 不再写 entity_type
+    expect(raw).not.toContain("entity_type:");
   });
-  it("同名同型 canonical 且置信≥0.88 → 复用不建新对象(R23)", async () => {
+  it("同名同型 canonical 且置信≥0.88 → 复用不建新对象(R23); 旧 entity_type 文件仍可读(B1 legacy)", async () => {
     const root = makeRoot();
     makeScene(root);
       writeFileSync(
       join(root, "world", "objects", "obj-suwan.md"),
-      "---\nname: \"苏婉\"\nentity_type: \"character\"\nstatus: canonical\n---\n",
+      "---\nname: \"苏婉\"\nentity_type: \"character\"\nstatus: canonical\n---\n", // B1: 只含 entity_type 的旧对象文件, 走 listCanonicalObjects 双 fallback
     );
     gitAdd(root); gitCommit(root, "adopt obj-suwan");
     const provider = new MockProvider({
@@ -94,10 +97,41 @@ describe("aliasRelationBatch(2b)", () => {
     expect(r.relations_written).toBe(1);
     const fm = parseFrontmatter(readFileSync(join(root, "world", "objects", "obj-suwan.md"), "utf8")).data;
     expect((fm.aliases as string[])).toContain("红衣女子");
-    // 幂等: 重跑同 relation 不再增加
+    // N14: 关系写宿主对象 frontmatter relations: [] 为源(不落 source 字段), list 形态 + 铁律5 默认候选。
+    const srcFm = parseFrontmatter(readFileSync(join(root, "world", "objects", "obj-klein.md"), "utf8")).data;
+    expect(srcFm.relations).toEqual([{ target: "obj-suwan", type: "associate", status: "candidate" }]);
+    // 幂等: 重跑同 relation 不再增加(去重键 (target,type), N14)
     provider.responses.push({ text: JSON.stringify({ aliases: [], relations: [{ source_ref: "克莱恩", target_ref: "苏婉", relation_type: "associate", confidence: 0.8 }], uncertain_items: [] }) });
     const r2 = await aliasRelationBatch(provider, root, ["s001"]);
     expect(r2.relations_written).toBe(0);
+  });
+  it("legacy 字符串 relations 可读并合并(list 形态兜底, 旧 vault 兼容)", async () => {
+    const root = makeRoot();
+    makeScene(root);
+    writeFileSync(join(root, "world", "objects", "obj-suwan.md"), '---\nname: "苏婉"\nentity_type: "character"\nstatus: canonical\n---\n');
+    // 旧 vault: 宿主对象用字符串写面 "source -> target (type): desc"。
+    writeFileSync(
+      join(root, "world", "objects", "obj-klein.md"),
+      '---\nname: "克莱恩"\nentity_type: "character"\nstatus: canonical\nrelations: "obj-klein -> obj-suwan (associate): 旧描述"\n---\n',
+    );
+    gitAdd(root); gitCommit(root, "objects");
+    const provider = new MockProvider({
+      responses: [{
+        text: JSON.stringify({
+          aliases: [],
+          relations: [{ source_ref: "克莱恩", target_ref: "苏婉", relation_type: "ally", confidence: 0.8 }],
+          uncertain_items: [],
+        }),
+      }],
+    });
+    const r = await aliasRelationBatch(provider, root, ["s001"]);
+    expect(r.relations_written).toBe(1);
+    const fm = parseFrontmatter(readFileSync(join(root, "world", "objects", "obj-klein.md"), "utf8")).data;
+    // 旧字符串边解析为 list 行 + 新边(candidate)合并写回 list 形态(N14)。
+    expect(fm.relations).toEqual([
+      { target: "obj-suwan", type: "associate", description: "旧描述" },
+      { target: "obj-suwan", type: "ally", status: "candidate" },
+    ]);
   });
 });
 
@@ -120,6 +154,13 @@ describe("analyzeStructure(3, ≥0.96 自动应用)", () => {
     expect(r.threads).toHaveLength(1);
     expect(r.low_confidence).toBe(1);
     expect(existsSync(join(root, "structure", "threads", r.threads[0] + ".md"))).toBe(true);
+    // B3 必填补齐: thread 落盘文件 id/name/thread_type 齐备且过 schema(frontmatter.ts:492)
+    const raw = readFileSync(join(root, "structure", "threads", r.threads[0] + ".md"), "utf8");
+    const { data } = parseFrontmatter(raw);
+    expect(data.id).toBe(r.threads[0]);
+    expect(data.name).toBe("主线");
+    expect(data.thread_type).toBe("main");
+    expect(validateFrontmatter("thread", data as never)).toEqual([]);
   });
 });
 

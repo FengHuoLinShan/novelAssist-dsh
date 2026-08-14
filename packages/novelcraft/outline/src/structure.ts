@@ -92,7 +92,16 @@ export function writeOutline(
 ): void {
   const file = paths(root).structure.outline;
   const { outline_markdown: body, ...meta } = content as { outline_markdown?: string } & Record<string, unknown>;
-  const fm: Record<string, unknown> = { status: "draft", ...meta };
+  // B3 必填补齐(frontmatter.ts:513): outline required 含 title/creative_core/outline_markdown/
+  // major_storylines/macro_movements/open_decisions; 缺省给中性占位(不虚构语义), 显式值覆盖。
+  const fm: Record<string, unknown> = {
+    status: "draft",
+    creative_core: content.creative_core ?? {},
+    major_storylines: content.major_storylines ?? [],
+    macro_movements: content.macro_movements ?? [],
+    open_decisions: content.open_decisions ?? [],
+    ...meta,
+  };
   if (opts.workflowId) fm.workflow = opts.workflowId;
   writeFileSync(file, serializeFrontmatter(fm, String(body ?? "")), "utf8");
   gitAdd(root);
@@ -114,7 +123,26 @@ export function writeStructureAsset(
     kind === "foreshadowing" ? paths(root).structure.foreshadowing :
     paths(root).structure.reveal;
   const { summary: body, ...meta } = content as { summary?: string } & Record<string, unknown>;
-  const fm: Record<string, unknown> = { status: "draft", title, ...meta };
+  const fm: Record<string, unknown> = { status: "draft", id: slug, title, ...meta };
+  // B3 必填补齐(store/src/frontmatter.ts:491-511):
+  // thread=id/status/name/thread_type; arc=id/status/title; foreshadowing=id/status/name;
+  // reveal=id/status/target_type/target_id/secret_summary。
+  if (kind === "thread" || kind === "foreshadowing") {
+    // name 默认取 title(B3); thread_type 自由字符串, 常见 main(specs/assets/outline.md:148)。
+    if (typeof fm.name !== "string" || fm.name === "") fm.name = title;
+  }
+  if (kind === "thread" && (typeof fm.thread_type !== "string" || fm.thread_type === "")) {
+    fm.thread_type = "main";
+  }
+  if (kind === "reveal") {
+    // 语义字段不可虚构: 缺 target_type/target_id/secret_summary → fail-closed 拒写。
+    const missing = (["target_type", "target_id", "secret_summary"] as const).filter(
+      (k) => typeof fm[k] !== "string" || fm[k] === "",
+    );
+    if (missing.length > 0) {
+      throw new Error(`reveal 必填缺失(frontmatter.ts:508): ${missing.join(", ")}`);
+    }
+  }
   if (opts.workflowId) fm.workflow = opts.workflowId;
   // ADR-0019 P3(用户裁定): relations 写前硬错校验(自环/悬空/type 白名单/端点 kind)。
   if (Array.isArray(fm.relations)) {

@@ -4,6 +4,14 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths, slugify } from "@novelcraft/vault";
 import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
 
+/** 对象 relations 有向对(N11/N14): source=宿主对象文件本身, 不落 source 字段。 */
+export interface ObjectRelation {
+  target: string;
+  type: string;
+  status?: string;
+  description?: string;
+}
+
 export interface WorldObject {
   slug: string;
   name: string;
@@ -11,7 +19,8 @@ export interface WorldObject {
   status: string;
   aliases: string[];
   tags: string[];
-  relations?: string;
+  /** N14 list 形态 → 结构化对象数组; legacy 字符串形态(旧 vault)原样保留。 */
+  relations?: ObjectRelation[] | string;
   confidence?: number;
   evidence: string[];
   file: string;
@@ -35,11 +44,24 @@ function toWorldObject(slug: string, data: Record<string, unknown>, file: string
   return {
     slug,
     name: String(data.name ?? ""),
-    entity_type: String(data.entity_type ?? data.kind ?? ""),
+    // B1(用户裁定): 写面统一 kind; 读面 kind 优先, entity_type 仅作存量兼容 fallback。
+    entity_type: String(data.kind ?? data.entity_type ?? ""),
     status: String(data.status ?? ""),
     aliases: Array.isArray(data.aliases) ? data.aliases.map(String) : [],
     tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
-    relations: typeof data.relations === "string" ? data.relations : undefined,
+    // B2/N14: relations list → 结构化对象数组; legacy 字符串形态(旧 vault)保留 fallback。
+    relations: Array.isArray(data.relations)
+      ? (data.relations as unknown[])
+          .filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x))
+          .map((r) => ({
+            target: String(r.target ?? ""),
+            type: String(r.type ?? ""),
+            ...(typeof r.status === "string" ? { status: r.status } : {}),
+            ...(typeof r.description === "string" ? { description: r.description } : {}),
+          }))
+      : typeof data.relations === "string"
+        ? data.relations
+        : undefined,
     confidence: typeof data.confidence === "number" ? data.confidence : undefined,
     evidence: Array.isArray(data.evidence) ? data.evidence.map(String) : [],
     file,
@@ -88,7 +110,7 @@ export function createObject(
   const lines = [
     "---",
     `name: ${JSON.stringify(input.name.trim())}`,
-    `entity_type: ${JSON.stringify(input.entityType || "object")}`,
+    `kind: ${JSON.stringify(input.entityType || "object")}`, // B1(用户裁定): 字段表用 kind(specs/assets/world.md)
     "status: canonical",
   ];
   if (input.aliases?.length) lines.push(`aliases: [${input.aliases.map((a) => JSON.stringify(a)).join(", ")}]`);

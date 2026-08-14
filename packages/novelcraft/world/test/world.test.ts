@@ -1,5 +1,5 @@
 // world 行为契约(specs/assets/world.md + §19 映射)
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,11 +19,15 @@ afterEach(() => {
 });
 
 describe("objects CRUD(薄封装)", () => {
-  it("创建/读取/列表/标签派生(N13)", () => {
+  it("创建/读取/列表/标签派生(N13); 写面统一 kind(B1 裁定)", () => {
     const root = makeRoot();
     const slug = createObject(root, { name: "苏婉", entityType: "character", aliases: ["红衣女子"], tags: ["主角团"] });
+    const raw = readFileSync(join(root, "world", "objects", slug + ".md"), "utf8");
+    expect(raw).toContain('kind: "character"'); // B1: 写端用 kind(specs/assets/world.md 字段表)
+    expect(raw).not.toContain("entity_type:");
     const obj = readObject(root, slug);
     expect(obj.name).toBe("苏婉");
+    expect(obj.entity_type).toBe("character"); // 读面 kind 优先
     expect(obj.aliases).toContain("红衣女子");
     expect(obj.status).toBe("canonical");
     expect(listObjects(root)).toHaveLength(1);
@@ -35,6 +39,48 @@ describe("objects CRUD(薄封装)", () => {
     expect(() => createObject(root, { name: "克莱恩", entityType: "character" })).toThrow(/已存在/);
     updateObject(root, slug, { tags: ["主角"] });
     expect(readObject(root, slug).tags).toEqual(["主角"]);
+  });
+  it("legacy 兼容: 只含 entity_type 的旧对象文件仍可读(B1 fallback)", () => {
+    const root = makeRoot();
+    writeFileSync(
+      join(root, "world", "objects", "obj-legacy.md"),
+      ["---", 'name: "旧人"', 'entity_type: "character"', "status: canonical", "---", ""].join("\n"),
+      "utf8",
+    );
+    const obj = readObject(root, "obj-legacy");
+    expect(obj.entity_type).toBe("character"); // kind 缺失 → entity_type fallback(B1)
+  });
+  it("relations: list 形态 → 结构化对象数组; legacy 字符串形态保留(N14)", () => {
+    const root = makeRoot();
+    // 旧 vault 字符串形态: 原样保留给读面。
+    writeFileSync(
+      join(root, "world", "objects", "obj-legacy.md"),
+      ["---", 'name: "旧人"', 'kind: "character"', "status: canonical", 'relations: "obj-legacy -> obj-old (associate): 旧描述"', "---", ""].join("\n"),
+      "utf8",
+    );
+    const obj = readObject(root, "obj-legacy");
+    expect(obj.relations).toBe("obj-legacy -> obj-old (associate): 旧描述");
+
+    // N14 list 形态 → ObjectRelation 数组。
+    writeFileSync(
+      join(root, "world", "objects", "obj-list.md"),
+      [
+        "---",
+        'name: "新人"',
+        'kind: "character"',
+        "status: canonical",
+        "relations:",
+        "  - target: obj-b",
+        "    type: associate",
+        "    status: candidate",
+        "---",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const obj2 = readObject(root, "obj-list");
+    expect(obj2.entity_type).toBe("character"); // kind 优先(B1)
+    expect(obj2.relations).toEqual([{ target: "obj-b", type: "associate", status: "candidate" }]);
   });
 });
 

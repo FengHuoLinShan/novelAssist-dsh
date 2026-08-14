@@ -71,6 +71,9 @@ function buildFrontmatter(c: SceneCandidate, index: number, workflowId: string, 
   const fields: Array<[string, unknown]> = [
     ["id", slugifyId(index)],
     ["status", "draft"],
+    // B3 必填补齐(frontmatter.ts:436): scene required=id/status/scene_index/narrative_tag/source。
+    ["scene_index", index], // 序贯整数, 与 id(slug 数字)同源
+    ["source", "deep_import"], // 深度导入写点语义(imports.md; source 枚举见 specs/assets/outline.md:586)
     ["chapter_ids", c.source_chapter_indices],
     ["title", c.payload.title],
     ["narrative_tag", normalizeNarrativeTag(c.payload.narrative_tag)],

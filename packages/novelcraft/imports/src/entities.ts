@@ -104,7 +104,7 @@ export async function extractEntityBatch(
     const fmLines = [
       "---",
       `name: ${JSON.stringify(d.name)}`,
-      `entity_type: ${JSON.stringify(d.entity_type)}`,
+      `kind: ${JSON.stringify(d.kind)}`, // B1(用户裁定): 写面统一 kind, 不再写 entity_type
       "status: candidate",
       `confidence: ${d.confidence}`,
       `evidence: [${d.evidence.map((x) => JSON.stringify(x)).join(", ")}]`,
