@@ -1,5 +1,6 @@
 // R3 · 语义审查(PLAN.md 步骤 2): 读章节正文 → llm_step(semantic_review)
 // → findings 落 .assistant/reviews/(N4 落点)。失败不写文件。
+// M7 N27: targeted_revision temp 0.4 / timeout 1800s 与 catalog §3.4 一致; catalog 无 max_tokens 行 → budgetTokens 0 保持, 无改动。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep, registerSpec } from "@novelcraft/llm-step";

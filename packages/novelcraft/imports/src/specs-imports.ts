@@ -1,4 +1,7 @@
 // imports Phase 1 spec 注册(catalog §1.1–1.5, 契约字段以 prompt-contracts 为准)。
+// M7 N27: 6 个 spec 的 temperature/timeout 与 catalog §1.x 转录核对一致; 已转录 budgetTokens 与 catalog
+// max_tokens 一致(§1.1/§1.3 8192, §1.2/§1.4 32768, timeout 900s/900s/900s/1200s); §1.5 scene_fusion(catalog
+// 无 max_tokens)与 §1.7 alias_relation(catalog 无 max_tokens, 输入=整场 Scene 正文+实体索引 → N27 输入主导豁免)保持 0, 无改动。
 import { loadSpec, registerSpec } from "@novelcraft/llm-step";
 import type { LlmStepSpec } from "@novelcraft/llm-step";
 

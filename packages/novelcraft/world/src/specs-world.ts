@@ -1,4 +1,6 @@
 // world 内容步 spec 注册(catalog §4; §19 映射)。
+// M7 N27: 7 个 spec 的 temperature/timeout 与 catalog §4.x 转录核对一致(§4.1 temp 0.8 / §4.2 0 / §4.3 0.2 /
+// §4.4 0 / §4.6-4.8 0.35, timeout 均 1800s); catalog 各节均无 max_tokens 行 → budgetTokens 0 保持, 无改动。
 import { loadSpec, registerSpec } from "@novelcraft/llm-step";
 import type { LlmStepSpec } from "@novelcraft/llm-step";
 

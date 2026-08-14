@@ -4,7 +4,10 @@ import type { LlmStepSpec } from "./types.js";
 
 export const BUILTIN_SPECS: LlmStepSpec[] = [
   {
-    // catalog §1.6: 0.88 阈值与同名同型复用属 store 层, 本 spec 只管抽取输出
+    // catalog §1.6: 0.88 阈值与同名同型复用属 store 层, 本 spec 只管抽取输出。
+    // M7 N27: temp 0.1→0.3、budgetTokens 0→32768(转录 catalog §1.6: temp 0.3 / max_tokens 32768);
+    // 输入=单 Scene 章正文(≤1 万 CJK 字 ≈6.5k token)≤ 32768, 转录安全; timeout 保持 600_000ms
+    // (catalog 为「项目 LLM timeout+60s」公式, 无字面秒数可转录)。
     specRef: "entity_extraction",
     description: "Phase 2a: 按 Scene 抽取长期创作资产(世界对象)。",
     inputNotes: "冻结 Scene 文本 + 已采用对象目录(供复用判断)。",
@@ -32,13 +35,14 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
       },
       additionalProperties: true,
     },
-    budgetTokens: 0,
-    temperature: 0.1,
+    budgetTokens: 32768,
+    temperature: 0.3,
     timeoutMs: 600_000,
     degradationNote: "provider 失败只降级不丢对象(catalog §1.6 降级)。",
     contractVersion: "v1",
   },
   {
+    // M7 N27 核对: temp 0.1 与 catalog §1.9 一致; catalog 无 max_tokens/timeout 行 → budgetTokens 0 / timeout 600_000ms 保持。
     // catalog §1.9: 无独立契约 JSON, 输出契约【待定】→ 放宽
     specRef: "dedup_judge",
     description: "去重 L1/L2: 判定候选组内同一/不同实体(带证据与置信度)。",
@@ -71,6 +75,7 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
     contractVersion: "v1",
   },
   {
+    // M7 N27 核对: temp 0.1 / timeout 1800s 与 catalog §3.3 一致; catalog 无 max_tokens 行 → budgetTokens 0 保持。
     // catalog §3.3: 无契约 JSON, 字段以 semantic_review.py 为准【待定】→ 放宽
     specRef: "semantic_review",
     description: "章完成语义近读: 分块独立审查, 产出 finding-bound 结果。",
@@ -104,7 +109,10 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
     contractVersion: "v1",
   },
   {
-    // catalog §1.8: 剧情线/篇章纲/伏笔; 结构去重置信 ≥0.96 自动应用属 store 层
+    // catalog §1.8: 剧情线/篇章纲/伏笔; 结构去重置信 ≥0.96 自动应用属 store 层。
+    // M7 N27: temp 0.3→0.2、timeoutMs 1800000→1200000(转录 catalog §1.8: temp 0.2 / timeout 1200s);
+    // budgetTokens 保持 0(catalog max_tokens 32768 不转录: 输入=确定性上下文编译+已确认 Scene 证据,
+    // 多章/整场拼接可能超过 32768 → N27 输入主导豁免, 输入上界由调用方控制)。
     specRef: "structure_analysis",
     description: "Phase 3: 剧情结构分析(剧情线/篇章纲/伏笔计划)。",
     inputNotes: "Scene 结构 + 对象目录 + 可选正文节选。",
@@ -145,12 +153,13 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
       additionalProperties: true,
     },
     budgetTokens: 0,
-    temperature: 0.3,
-    timeoutMs: 1_800_000,
+    temperature: 0.2,
+    timeoutMs: 1_200_000,
     degradationNote: "失败保持结构资产不动(catalog §1.8 降级)。",
     contractVersion: "v1",
   },
   {
+    // M7 N27 核对: temp 0.7 / timeout 1800s 与 catalog §3.5 一致; catalog 无 max_tokens 行 → budgetTokens 0 保持。
     // 写作前计划台(§17.4/§17.5.3): 轻量「下一步提案」, 非整章正文(writing_generate)。
     // 无契约 JSON → 内联放宽(additionalProperties)。
     specRef: "next_chapter_proposal",
@@ -185,6 +194,7 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
     contractVersion: "v1",
   },
   {
+    // M7 N27 核对: temp 0.7 / timeout 1800s 与 catalog §3.1 一致; catalog 无 max_tokens 行 → budgetTokens 0 保持。
     // catalog §3.1: 正文候选生成(续写模式追加)。outputFormat=text → result={text}。
     specRef: "writing_generate",
     description: "正文候选生成: 基于选定续写方向/上下文输出下一章正文候选(续写模式追加)。",
@@ -200,6 +210,8 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
   {
     // M6 N21: 检索精排(rag_rerank) — BM25 召回后的候选片段按与查询的相关性重排
     // M7 N24: 预算 2048→4096, 覆盖默认召回集(recall=20 × 200 字输入估算 ≈2625 token)。
+    // M7 N27: temp/timeout 与 catalog §3.6 一致(budget 2048/temp 0.1/timeout 120s);
+    // budgetTokens 不转录 2048(默认召回集输入估算 ≈2625 > 2048 → N27 输入主导豁免), 保持 N24 的 4096。
     specRef: "rag_rerank",
     description: "检索精排: 对召回候选片段按与查询的相关性重排, 返回按相关度降序的 chunk_id 列表。",
     inputNotes: "查询文本 + 编号候选片段(各截断约 200 字)。",
