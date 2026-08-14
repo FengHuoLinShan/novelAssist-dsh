@@ -74,7 +74,7 @@ describe("specs(内置注册表, catalog 转写)", () => {
     const spec = loadSpec("rag_rerank");
     expect(spec).toBeDefined();
     expect(spec!.outputSchema.required).toContain("ranked_ids");
-    expect(spec!.budgetTokens).toBe(2048);
+    expect(spec!.budgetTokens).toBe(4096); // M7 N24: 2048→4096, 覆盖默认召回集(recall=20 × 200 字)
     expect(spec!.timeoutMs).toBe(120_000);
     expect(spec!.degradationNote).toContain("BM25");
   });

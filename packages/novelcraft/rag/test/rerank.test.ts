@@ -1,4 +1,5 @@
-// rerankWithProvider + searchRag(L1 内容手精排)行为契约(M6 Track A1 收尾, N21 rag_rerank)。
+// rerankWithProvider + searchRag(L1 内容手精排)行为契约(M6 Track A1 收尾, N21 rag_rerank;
+// M7 N24: rag_rerank 预算 2048→4096 回归——默认召回集不再 budget_exceeded)。
 // 风格同 search.test.ts: mkdtemp + initVault + afterEach 清理。
 // MockProvider 复用 @novelcraft/llm-step 内置(经 dist 解析 workspace 依赖)。
 // runStep 默认 fixAttempts=1(共 2 次尝试): 非法输出用例需配 2 条响应, 否则队列耗尽走 provider_fatal。
@@ -8,7 +9,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { serializeFrontmatter } from "@novelcraft/store";
 import { initVault } from "@novelcraft/vault";
-import { MockProvider } from "@novelcraft/llm-step";
+import { MockProvider, checkBudget, estimateTokens } from "@novelcraft/llm-step";
 import { INDEX_VERSION_CN, rerankWithProvider, searchRag, syncRagIndex, type RagChunk } from "../src/index";
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
@@ -82,6 +83,23 @@ describe("rerankWithProvider(rag_rerank, N21)", () => {
   });
 });
 
+describe("rag_rerank 预算回归(M7 N24)", () => {
+  it("默认召回集(recall=20 × 200 字)在新预算 4096 内, 旧预算 2048 拒绝(N24)", () => {
+    // 与 rerank.ts buildRerankInput 相同格式组装: "查询: <query>" + 每候选一行 "[序号] [chunk_id] text前200字"。
+    const query = "诡秘之主在贝克兰德的真实身份";
+    const chunks = Array.from({ length: 20 }, (_, i) =>
+      mkChunk("ch" + (i + 1) + "-0", "诡秘之主在贝克兰德暗中行动筹备线索。".repeat(200).slice(0, 200)),
+    );
+    const lines = chunks.map((c, i) => i + 1 + ". [" + c.chunk_id + "] " + c.text.slice(0, 200));
+    const input = ["查询: " + query, "", "候选片段(各截断约 200 字, 按 chunk_id 引用):", ...lines].join("\n");
+
+    // 输入估算 ≈ 20×200 CJK /1.6 + 前缀拉丁 /4 ≈ 2600 token(N24 依据)。
+    expect(estimateTokens(input)).toBeLessThanOrEqual(4096);
+    expect(checkBudget(input, 4096).allowed).toBe(true); // N24: 新预算放行默认召回集。
+    expect(checkBudget(input, 2048).allowed).toBe(false); // N24 缺陷: 旧预算恒拒绝 → L1 恒降级回退 BM25。
+  });
+});
+
 describe("searchRag(L1 内容手精排)", () => {
   it("无 provider → ranking bm25, BM25 序", async () => {
     const root = makeRoot();
@@ -117,5 +135,22 @@ describe("searchRag(L1 内容手精排)", () => {
     expect(res.ranking).toBe("bm25");
     expect(res.degraded).toBe("rerank_failed");
     expect(res.hits.map((c) => c.chunk_id)).toEqual(["ch1-0", "ch2-0"]);
+  });
+
+  it("默认参数全召回集走通: recall=20 × 200 字, 不因预算降级, ranking=llm_rerank(N24)", async () => {
+    // N24 回归: 20 章 × 200 字正文 → 精排输入估算 ≈2600 token, 旧预算 2048 恒 budget_exceeded
+    // → 降级 rerank_failed; 新预算 4096 放行, L1 默认开(N21)。
+    const root = makeRoot();
+    const body200 = "诡秘之主在贝克兰德暗中行动筹备线索。".repeat(200).slice(0, 200);
+    for (let n = 1; n <= 20; n++) writeChapter(root, n, body200);
+    syncRagIndex(root, NOW);
+
+    const ids = Array.from({ length: 20 }, (_, i) => "ch" + (20 - i) + "-0"); // 逆序 ranked_ids(全部合法)。
+    const provider = new MockProvider({ responses: [{ text: JSON.stringify({ ranked_ids: ids }) }] });
+    const res = await searchRag(root, "诡秘", { provider }); // 默认 recall=20、topK=8(不传缩减)。
+    expect(res.ranking).toBe("llm_rerank");
+    expect(res.degraded).toBeUndefined();
+    expect(res.hits.length).toBe(8); // 默认 topK。
+    expect(res.hits[0].chunk_id).toBe("ch20-0"); // 精排逆序生效, 未回退 BM25 原序。
   });
 });
