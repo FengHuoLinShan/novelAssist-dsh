@@ -63,5 +63,5 @@
   host/remote-event 帧, client runtime 扇出到 ctx.remote.$on; 缺口是 allowlist 封闭(11 条),
   插件无法推送自定义事件(connection.rpc.call 仍是一元 request/response, 不是推送通道)。
 - 落地路径(ADR-0018): (a) 本包内事件触发短轮询/退避(已落地, 无跨层风险); (b) 给
-  @deepseek-ai/dsh-api-remotes 的 allowlist 加通用 client/push + 声明 Events, 单包 pnpm
-  patch —— 见 docs/agent/dsh-rebuild/信号推送-远程事件seam提案.md, 独立后续项。
+  @deepseek-ai/dsh-api-remotes 的 allowlist 加通用 client/push(scripts/apply-dsh-patches.mjs,
+  postinstall)—— 已落地; 上游 Discussion #1289 回应后去 fork 化。
