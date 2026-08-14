@@ -72,6 +72,7 @@ npm run build:client -w @novelcraft/client   # 浏览器 bundle(tsdown)
 ## 剩余
 
 - [x] 信号主动推送: ADR-0018 + 窄缝补丁已落地(client/push 真推送 + 短轮询兜底, 见 ③)。
-- [x] 剧情地图: foreshadowing↔reveal 配对(`reveals_foreshadowing` 边)、scene↔thread slug 引用边(`serves_thread`)、跨类关系索引(`VaultIndex.relations` 全资产有向图 + `storyMap().edges`; ADR-0019 Accepted, P0–P3 落地: validateRelations 写链硬错 + related_*_ids 兼容投影并集去重; 图/边 UI 增强留后)。
+- [x] 剧情地图: foreshadowing↔reveal 配对(`reveals_foreshadowing` 边)、scene↔thread slug 引用边(`serves_thread`)、跨类关系索引(`VaultIndex.relations` 全资产有向图 + `storyMap().edges`; ADR-0019 Accepted, P0–P3 落地: validateRelations 写链硬错 + related_*_ids 兼容投影并集去重; 图/边 UI 已完成: StoryMapAction「关系边」Section
+  (7 type 彩色徽章 + 删除线弱化 + 双语))。
 - [x] 写作台: 计划台续写提案(proposeNextChapter → writing.proposeNextChapter + novelcraft_propose_next_chapter 工具, 计划 tab 展示)、健康信号扫描器→pushSignal 落盘(assistant.scanHealthSignals, 幂等确定性 id)。
 - [ ] 旧引擎退役(ai-writing-assist main, 父仓库旧引擎保留, 时点待用户; novelAssist-dsh 侧已退役, 见 旧引擎退役-验收.md)。

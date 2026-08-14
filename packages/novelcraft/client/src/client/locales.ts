@@ -37,6 +37,15 @@ export type NovelcraftKey =
   | 'story.foreshadowing'
   | 'story.reveals'
   | 'story.scenes'
+  | 'story.edges'
+  | 'story.edge.other'
+  | 'story.edge.serves_thread'
+  | 'story.edge.belongs_to_arc'
+  | 'story.edge.reveals_foreshadowing'
+  | 'story.edge.pays_off_in_scene'
+  | 'story.edge.references_character'
+  | 'story.edge.references_entity'
+  | 'story.edge.references_memory'
   | 'story.chapters'
   | 'desk.title'
   | 'desk.empty'
@@ -91,6 +100,15 @@ export const zh: Record<NovelcraftKey, string> = {
   'story.foreshadowing': '伏笔',
   'story.reveals': '回收',
   'story.scenes': '场景',
+  'story.edges': '关系边',
+  'story.edge.other': '其他',
+  'story.edge.serves_thread': '服务剧情线',
+  'story.edge.belongs_to_arc': '归属篇章',
+  'story.edge.reveals_foreshadowing': '回收伏笔',
+  'story.edge.pays_off_in_scene': '落地场景',
+  'story.edge.references_character': '引用角色',
+  'story.edge.references_entity': '引用实体',
+  'story.edge.references_memory': '引用记忆',
   'story.chapters': '章节',
   'desk.title': '写作台',
   'desk.empty': '暂无内容。',
@@ -146,6 +164,15 @@ export const en: Record<NovelcraftKey, string> = {
   'story.foreshadowing': 'Foreshadowing',
   'story.reveals': 'Reveals',
   'story.scenes': 'Scenes',
+  'story.edges': 'Relation edges',
+  'story.edge.other': 'Other',
+  'story.edge.serves_thread': 'Serves thread',
+  'story.edge.belongs_to_arc': 'Belongs to arc',
+  'story.edge.reveals_foreshadowing': 'Reveals foreshadowing',
+  'story.edge.pays_off_in_scene': 'Pays off in scene',
+  'story.edge.references_character': 'References character',
+  'story.edge.references_entity': 'References entity',
+  'story.edge.references_memory': 'References memory',
   'story.chapters': 'Chapters',
   'desk.title': 'Writing Desk',
   'desk.empty': 'Nothing here yet.',

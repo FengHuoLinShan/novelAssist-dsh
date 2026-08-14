@@ -188,3 +188,53 @@
   background: var(--dsw-alias-fill-secondary);
   color: var(--dsw-alias-label-primary);
 }
+
+/* 关系边(ADR-0019 跨类关系): 分组小标题 + 行 + type 彩色小徽章(每 type 一类配色)。 */
+.edgeGroupTitle {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.edgeRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.edgeLink {
+  white-space: nowrap;
+}
+
+.edgeLinkDeprecated {
+  color: var(--dsw-alias-label-tertiary);
+  text-decoration: line-through;
+}
+
+.edgeBadge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.edgeBadgeDeprecated {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.edgeServesThread { color: var(--dsw-alias-accent, var(--dsw-alias-primary)); }
+.edgeBelongsToArc { color: var(--dsw-alias-state-success-primary); }
+.edgeRevealsForeshadowing { color: var(--dsw-alias-state-warn-primary); }
+.edgePaysOffInScene { color: var(--dsw-alias-state-business-primary); }
+.edgeReferencesCharacter { color: var(--dsw-alias-danger); }
+.edgeReferencesEntity { color: var(--dsw-alias-state-error-primary); }
+.edgeReferencesMemory { color: var(--dsw-alias-state-success-secondary); }
+.edgeOther { color: var(--dsw-alias-label-secondary); }

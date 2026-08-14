@@ -4,13 +4,45 @@ import { useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { NS } from './locales.ts'
+import { NS, type NovelcraftKey } from './locales.ts'
 import { useStoryMap } from './useWatch.ts'
 import css from './novelcraft.module.css'
 
 export type StoryMapActionProps =
   PropsRuntime<'conversation.session.header.actions'> &
   PropsLocale<typeof NS> & { connection: RpcCaller | undefined }
+
+/** 跨类关系边(ADR-0019: wire.storyMap.edges 投影; 显式 relations + related_*_ids 并集去重)。 */
+type StoryEdge = { source: string; target: string; type: string; status: string; sourceKind?: string }
+
+/** 关系边 type 的确定性分组顺序 + 显示名键(键名约定 story.edge.<type>)+ 每 type 一个徽章配色类。 */
+const EDGE_TYPES: Array<{ type: string; key: NovelcraftKey; className: string }> = [
+  { type: 'serves_thread', key: 'story.edge.serves_thread', className: css.edgeServesThread },
+  { type: 'belongs_to_arc', key: 'story.edge.belongs_to_arc', className: css.edgeBelongsToArc },
+  { type: 'reveals_foreshadowing', key: 'story.edge.reveals_foreshadowing', className: css.edgeRevealsForeshadowing },
+  { type: 'pays_off_in_scene', key: 'story.edge.pays_off_in_scene', className: css.edgePaysOffInScene },
+  { type: 'references_character', key: 'story.edge.references_character', className: css.edgeReferencesCharacter },
+  { type: 'references_entity', key: 'story.edge.references_entity', className: css.edgeReferencesEntity },
+  { type: 'references_memory', key: 'story.edge.references_memory', className: css.edgeReferencesMemory },
+]
+
+/** 按确定性顺序分组; 未识别 type 归入「其他」组(徽章显示名回退原 type 字符串)。 */
+function groupEdges(edges: StoryEdge[]): Array<{ type: string; edges: StoryEdge[] }> {
+  const groups: Array<{ type: string; edges: StoryEdge[] }> = []
+  for (const spec of EDGE_TYPES) {
+    const matches = edges.filter((e) => e.type === spec.type)
+    if (matches.length > 0) groups.push({ type: spec.type, edges: matches })
+  }
+  const known = new Set(EDGE_TYPES.map((s) => s.type))
+  const others = edges.filter((e) => !known.has(e.type))
+  if (others.length > 0) groups.push({ type: 'other', edges: others })
+  return groups
+}
+
+/** 徽章配色类: 已知 type 用专属配色, 未识别 type 用「其他」灰。 */
+function edgeBadgeClass(type: string): string {
+  return EDGE_TYPES.find((s) => s.type === type)?.className ?? css.edgeOther
+}
 
 function Section(props: { title: string; lines: string[] }): JSX.Element {
   if (props.lines.length === 0) return <></>
@@ -34,6 +66,8 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const arcs = data?.arcs ?? []
   const foreshadowing = data?.foreshadowing ?? []
   const reveals = data?.reveals ?? []
+  const edges = data?.edges ?? []
+  const edgeGroups = groupEdges(edges)
 
   return (
     <>
@@ -55,7 +89,7 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
       >
         {!bound ? (
           <div className={css.empty}>{t('story.unbound')}</div>
-        ) : chapters.length + scenes.length + threads.length + arcs.length + foreshadowing.length + reveals.length === 0 ? (
+        ) : chapters.length + scenes.length + threads.length + arcs.length + foreshadowing.length + reveals.length + edges.length === 0 ? (
           <div className={css.empty}>{t('story.empty')}</div>
         ) : (
           <div>
@@ -77,6 +111,31 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
               const ch = x.chapters?.length ? ' · ch' + x.chapters.join(',') : ''
               return `${x.title ?? x.slug}${ch}`
             })} />
+            {edgeGroups.length > 0 && (
+              <>
+                <div className={css.sectionTitle}>{t('story.edges')}</div>
+                {edgeGroups.map((group) => (
+                  <div key={group.type}>
+                    <div className={css.edgeGroupTitle}>{t(('story.edge.' + group.type) as NovelcraftKey)}</div>
+                    {group.edges.map((edge, i) => {
+                      const deprecated = edge.status === 'deprecated'
+                      const meta = EDGE_TYPES.find((s) => s.type === edge.type)
+                      const badgeText = meta ? t(meta.key) : edge.type
+                      return (
+                        <div key={i} className={css.edgeRow}>
+                          <span className={deprecated ? css.edgeLinkDeprecated : css.edgeLink}>
+                            {edge.source} → {edge.target}
+                          </span>
+                          <span className={css.edgeBadge + ' ' + (deprecated ? css.edgeBadgeDeprecated : edgeBadgeClass(edge.type))}>
+                            {badgeText}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
       </Modal>
