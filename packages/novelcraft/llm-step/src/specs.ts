@@ -116,10 +116,11 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
           type: "array",
           items: {
             type: "object",
-            required: ["name", "summary"],
+            required: ["title"],
             properties: {
-              name: { type: "string" },
+              title: { type: "string" },
               summary: { type: "string" },
+              confidence: { type: "number" },
               related_scenes: { type: "array", items: { type: "string" } },
             },
             additionalProperties: true,
@@ -129,11 +130,12 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
           type: "array",
           items: {
             type: "object",
-            required: ["title", "chapter_range"],
+            required: ["title"],
             properties: {
               title: { type: "string" },
-              chapter_range: { type: "array", items: { type: "number" } },
               summary: { type: "string" },
+              confidence: { type: "number" },
+              chapter_range: { type: "array", items: { type: "number" } },
             },
             additionalProperties: true,
           },

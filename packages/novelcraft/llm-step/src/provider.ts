@@ -20,7 +20,7 @@ export interface MockProviderOptions {
 }
 
 export class MockProvider implements Provider {
-  private responses: MockResponse[];
+  responses: MockResponse[];
   private retryable: boolean;
   calls: ProviderRequest[] = [];
 
