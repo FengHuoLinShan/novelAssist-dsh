@@ -4,7 +4,7 @@
 
 export type RadarKind = "ingest" | "dedup" | "suggest" | "plot" | "risk" | "writing";
 export type Severity = "hint" | "note" | "risk" | "conflict";
-export type SignalStatus = "open" | "accepted" | "rejected" | "deferred";
+export type SignalStatus = "open" | "accepted" | "rejected" | "deferred" | "resolved";
 
 export interface SignalTarget {
   novel?: string;

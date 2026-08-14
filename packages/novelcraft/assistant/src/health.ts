@@ -1,13 +1,17 @@
 // assistant · 健康信号扫描器(编排层, 确定性, 非 LLM)。
 // 把 @novelcraft/outline 的确定性健康命中(Scene 四键 + 结构资产两键)映射为
 // 收件箱信号, 经 pushSignal 落 .assistant/signals/*.json(§20.6 / outline.md §535)。
-// 幂等: 确定性 id `health-{key}-{ns}-{slug}`; 已存在(含已 accept/reject/defer)
-// 即跳过 —— 不复活作者已处理过的信号; v1 不自动清除条件消失的旧 open 信号。
+// 幂等 + 双向对账: 确定性 id `health-{key}-{ns}-{slug}`;
+//   正向: 无信号 → open; resolved → 重新 open(问题回来); 其余状态不复活;
+//   反向: 条件已消失的 open 健康信号 → resolved(自动结算, outline.md §566)。
 import { listScenes, sceneHealthSignals, structureHealthSignals } from "@novelcraft/outline";
-import { loadSignal, pushSignal } from "./inbox.js";
-import type { CreateSignalInput, Severity } from "./signals.js";
+import { listSignals, loadSignal, pushSignal, saveSignal } from "./inbox.js";
+import type { CreateSignalInput, Severity, Signal } from "./signals.js";
 
 const RADAR = "writing" as const;
+
+/** 健康信号确定性 id 前缀(扫描器对账时的归属判别)。 */
+const HEALTH_ID_PREFIX = "health-";
 
 /** 键 → 打扰分级(§11: 未复核/待复核静默堆积; 其余进角标)。 */
 const SEVERITY: Record<string, Severity> = {
@@ -113,46 +117,71 @@ function structureSignal(
 export interface HealthScanResult {
   /** 本次新建的信号数 */
   created: number;
-  /** 已存在而跳过的信号数(幂等) */
+  /** 已存在且状态未变的信号数(幂等) */
   skipped: number;
-  /** 命中总数(created + skipped) */
+  /** 本次自动结算(open → resolved)的信号数 */
+  resolved: number;
+  /** 本次重新开放(resolved → open)的信号数 */
+  reopened: number;
+  /** 当前命中总数(created + skipped + reopened) */
   total: number;
 }
 
 /**
- * 扫描全 vault 的结构健康信号并落盘收件箱(幂等, 确定性)。
- * Scene 四键经 sceneHealthSignals(listScenes), 结构资产两键经 structureHealthSignals。
+ * 扫描全 vault 的结构健康信号并落盘收件箱(幂等, 确定性, 双向对账)。
+ * 正向: Scene 四键经 sceneHealthSignals(listScenes), 结构资产两键经 structureHealthSignals;
+ * 反向: 不再命中的 open 健康信号(health- 前缀)自动置 resolved(outline.md §566)。
  */
-export function scanHealthSignals(root: string): HealthScanResult {
+export function scanHealthSignals(root: string, now: Date = new Date()): HealthScanResult {
   let created = 0;
   let skipped = 0;
+  let resolved = 0;
+  let reopened = 0;
   let total = 0;
+  const hitIds = new Set<string>();
 
-  for (const s of sceneHealthSignals(listScenes(root))) {
-    for (const d of s.details) {
-      total += 1;
-      const input = sceneSignal(s.slug, s.title, d);
-      if (loadSignal(root, input.id!)) {
-        skipped += 1;
-        continue;
-      }
+  const processHit = (input: CreateSignalInput): void => {
+    const id = input.id!;
+    hitIds.add(id);
+    total += 1;
+    const existing = loadSignal(root, id);
+    if (!existing) {
       pushSignal(root, input);
       created += 1;
+      return;
     }
+    if (existing.status === "resolved") {
+      // 问题回来了: 重新开放(刷新观察时间, 清除结算时间)。
+      saveSignal(root, {
+        ...existing,
+        status: "open",
+        observed_at: now.toISOString(),
+        decided_at: undefined,
+      });
+      reopened += 1;
+      return;
+    }
+    // open/accepted/rejected/deferred: 不复活、不覆盖。
+    skipped += 1;
+  };
+
+  for (const s of sceneHealthSignals(listScenes(root))) {
+    for (const d of s.details) processHit(sceneSignal(s.slug, s.title, d));
   }
 
   for (const st of structureHealthSignals(root)) {
-    for (const key of st.keys) {
-      total += 1;
-      const input = structureSignal(st.kind, st.slug, st.title, key);
-      if (loadSignal(root, input.id!)) {
-        skipped += 1;
-        continue;
-      }
-      pushSignal(root, input);
-      created += 1;
-    }
+    for (const key of st.keys) processHit(structureSignal(st.kind, st.slug, st.title, key));
   }
 
-  return { created, skipped, total };
+  // 反向对账: 条件已消失的 open 健康信号 → resolved。
+  for (const s of listSignals(root)) {
+    if (!s.id.startsWith(HEALTH_ID_PREFIX)) continue;
+    if (s.status !== "open") continue;
+    if (hitIds.has(s.id)) continue;
+    const next: Signal = { ...s, status: "resolved", decided_at: now.toISOString() };
+    saveSignal(root, next);
+    resolved += 1;
+  }
+
+  return { created, skipped, resolved, reopened, total };
 }

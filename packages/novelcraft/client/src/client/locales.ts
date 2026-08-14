@@ -23,6 +23,7 @@ export type NovelcraftKey =
   | 'inbox.status.accepted'
   | 'inbox.status.rejected'
   | 'inbox.status.deferred'
+  | 'inbox.status.resolved'
   | 'inbox.evidence'
   | 'inbox.action'
   | 'inbox.act.fail'
@@ -76,6 +77,7 @@ export const zh: Record<NovelcraftKey, string> = {
   'inbox.status.accepted': '已采纳',
   'inbox.status.rejected': '已打回',
   'inbox.status.deferred': '先放着',
+  'inbox.status.resolved': '已解决',
   'inbox.evidence': '证据',
   'inbox.action': '建议动作',
   'inbox.act.fail': '操作失败',
@@ -130,6 +132,7 @@ export const en: Record<NovelcraftKey, string> = {
   'inbox.status.accepted': 'Accepted',
   'inbox.status.rejected': 'Rejected',
   'inbox.status.deferred': 'Deferred',
+  'inbox.status.resolved': 'Resolved',
   'inbox.evidence': 'Evidence',
   'inbox.action': 'Proposed action',
   'inbox.act.fail': 'Action failed',
