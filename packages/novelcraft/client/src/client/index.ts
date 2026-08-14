@@ -12,6 +12,8 @@ import { StoryMapAction } from './StoryMapAction.tsx'
 import type { StoryMapActionProps } from './StoryMapAction.tsx'
 import { WritingDeskAction } from './WritingDeskAction.tsx'
 import type { WritingDeskActionProps } from './WritingDeskAction.tsx'
+import { ChapterDossier } from './ChapterDossier.tsx'
+import type { ChapterDossierProps } from './ChapterDossier.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -21,11 +23,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps }
+export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps }
 export { NS }
 export { PetAction } from './PetAction.tsx'
 export { StoryMapAction } from './StoryMapAction.tsx'
 export { WritingDeskAction } from './WritingDeskAction.tsx'
+export { ChapterDossier } from './ChapterDossier.tsx'
 
 /** 浏览器侧连接投影(结构面; 与 dsh-client-connection/client 的 ConnectionHandle 对齐)。 */
 export interface RpcCaller {

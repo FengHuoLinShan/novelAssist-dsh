@@ -253,5 +253,160 @@ describe('novelcraft RPC 处理器', () => {
     }
     env.cleanup();
   });
+
+  // ===========================================================================
+  // chapter/dossier(章节档案 §17.5.1): store.chapterDossier 资产面 + .assistant 读面
+  // (本章最新审查 / 本章 open 信号 / next_chapter==N 最新提案)合并; 逐层容错, 不炸通道。
+  // ===========================================================================
+
+  /** 写 fixture 的小工具: chapters/002 + 1 Scene + 人物/地点 + 审查 + 信号 + 提案。 */
+  async function writeDossierFixture(root: string): Promise<{ signalCh2: { id: string } }> {
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { serializeFrontmatter } = await import('@novelcraft/store');
+    const write = (abs: string, fm: Record<string, unknown>, body = '') => {
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, serializeFrontmatter(fm, body), 'utf8');
+    };
+    write(path.join(root, 'chapters', '001.md'), { chapter_index: 1, title: '第一章', status: 'draft' }, '一。');
+    write(path.join(root, 'chapters', '002.md'), { chapter_index: 2, title: '第二章', status: 'draft' }, '二二二。');
+    write(path.join(root, 'scenes', 's-a.md'), {
+      id: 's-a', status: 'draft', scene_index: 0, title: '图书馆夜访', narrative_tag: 'setup',
+      goal: '苏婉发现线索', core_conflict: '守卫逼近', must_happen: '拿到信件', must_not_happen: '被发现',
+      chapter_ids: [2], pov_character_id: 'char-a',
+      related_character_ids: ['char-a', 'char-b'], related_entity_ids: ['loc-1'],
+    });
+    write(path.join(root, 'world', 'objects', 'char-a.md'), { id: 'char-a', kind: 'character', name: '苏婉', status: 'canonical' });
+    write(path.join(root, 'world', 'objects', 'char-b.md'), { id: 'char-b', kind: 'character', name: '林一', status: 'canonical' });
+    write(path.join(root, 'world', 'objects', 'loc-1.md'), { id: 'loc-1', kind: 'location', name: '旧图书馆', status: 'canonical' });
+
+    // 读面: 审查(r1 属第1章, r2a/r2b 属第2章, r2b 最新)
+    mkdirSync(path.join(root, '.assistant', 'reviews'), { recursive: true });
+    writeFileSync(path.join(root, '.assistant', 'reviews', 'semantic-review-001-r1.json'), JSON.stringify({
+      review_id: 'r1', chapter_index: 1, verdict: '需修订', findings: [{}, {}], reviewed_at: '2026-08-14T00:00:00Z',
+    }), 'utf8');
+    writeFileSync(path.join(root, '.assistant', 'reviews', 'semantic-review-002-r2a.json'), JSON.stringify({
+      review_id: 'r2a', chapter_index: 2, verdict: '通过', findings: [{}], reviewed_at: '2026-08-14T01:00:00Z',
+    }), 'utf8');
+    writeFileSync(path.join(root, '.assistant', 'reviews', 'semantic-review-002-r2b.json'), JSON.stringify({
+      review_id: 'r2b', chapter_index: 2, verdict: '需修订', findings: [{}, {}, {}], reviewed_at: '2026-08-14T02:00:00Z',
+    }), 'utf8');
+
+    // 信号: 1 条 target 第2章(应出现); 1 条 target 第1章 + 1 条无 target(应排除)
+    const signalCh2 = pushSignal(root, {
+      radar: 'plot', severity: 'risk', title: '第2章伏笔未回收', evidence: ['第2章'],
+      proposed_action: '回收', reversibility: true, target: { chapter_index: 2 },
+    });
+    pushSignal(root, {
+      radar: 'writing', severity: 'note', title: '第1章节奏偏慢', evidence: ['第1章'],
+      proposed_action: '删冗余段', reversibility: true, target: { chapter_index: 1 },
+    });
+    pushSignal(root, {
+      radar: 'dedup', severity: 'hint', title: '无目标信号', evidence: ['第3章'],
+      proposed_action: '检查', reversibility: true,
+    });
+
+    // 提案: 两条 next_chapter==2(文件名序取最后 → p2-new), 一条 next_chapter==3(应排除)
+    mkdirSync(path.join(root, '.assistant', 'proposals'), { recursive: true });
+    writeFileSync(path.join(root, '.assistant', 'proposals', 'next-001-p1.json'), JSON.stringify({
+      run_id: 'p1-old', chapter_index: 1, next_chapter: 2, generated_at: '2026-08-14T00:00:00Z',
+      proposals: [{ title: '旧方向', premise: '旧', basis: ['b'], cost: '低', risk: '高' }],
+    }), 'utf8');
+    writeFileSync(path.join(root, '.assistant', 'proposals', 'next-001-p2.json'), JSON.stringify({
+      run_id: 'p2-new', chapter_index: 1, next_chapter: 2, generated_at: '2026-08-14T01:00:00Z',
+      proposals: [{ title: '新方向', premise: '新', basis: ['b2'], cost: '中', risk: '低' }],
+    }), 'utf8');
+    writeFileSync(path.join(root, '.assistant', 'proposals', 'next-002-p3.json'), JSON.stringify({
+      run_id: 'p3-other', chapter_index: 2, next_chapter: 3, generated_at: '2026-08-14T02:00:00Z',
+      proposals: [{ title: '第三章方向', premise: '…' }],
+    }), 'utf8');
+
+    return { signalCh2 };
+  }
+
+  it('chapter/dossier: 未绑定 → 缺省档案(review/signals/proposal 全空, 不炸通道)', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.chapterDossier({ sessionId: 'unknown', chapterIndex: 2 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound).toBeNull();
+      expect(result.value.dossier).toEqual({
+        chapter: null, scenes: [], characters: [], pov: [],
+        foreshadowing: { planted: [], activeThrough: [], duePayoff: [] },
+        reveals: [], referencedObjects: [],
+        rhythm: { wordCount: 0, sceneCount: 0, avgSceneLength: 0 },
+      });
+      expect(result.value.review).toBeNull();
+      expect(result.value.signals).toEqual([]);
+      expect(result.value.proposal).toBeNull();
+    }
+    env.cleanup();
+  });
+
+  it('chapter/dossier: 正常章组装(资产面 + 审查/信号/提案按章过滤合并)', async () => {
+    const env = setup();
+    const { signalCh2 } = await writeDossierFixture(env.root);
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.chapterDossier({ sessionId: 's1', chapterIndex: 2 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound).toEqual({ book: '测试书', root: env.root });
+      // 资产面: 章元 + Scene 分解 + 人物/POV + 节奏
+      expect(result.value.dossier.chapter).toMatchObject({ index: 2, title: '第二章', status: 'draft' });
+      expect(result.value.dossier.scenes[0]).toMatchObject({
+        slug: 's-a', title: '图书馆夜访', narrative_tag: 'setup',
+        goal: '苏婉发现线索', core_conflict: '守卫逼近',
+        must_happen: '拿到信件', must_not_happen: '被发现',
+      });
+      expect(result.value.dossier.characters).toEqual([
+        { slug: 'char-a', name: '苏婉' },
+        { slug: 'char-b', name: '林一' },
+      ]);
+      expect(result.value.dossier.pov).toEqual([{ scene: 's-a', character: '苏婉' }]);
+      expect(result.value.dossier.referencedObjects).toEqual([{ slug: 'loc-1', name: '旧图书馆', kind: 'location' }]);
+      expect(result.value.dossier.rhythm.sceneCount).toBe(1);
+      // 读面: 审查取本章最新(r2b, 不取第1章的 r1 / 更旧的 r2a)
+      expect(result.value.review).toMatchObject({ review_id: 'r2b', verdict: '需修订', finding_count: 3 });
+      // 读面: 信号只含 target.chapter_index==2 的 open 信号
+      expect(result.value.signals).toHaveLength(1);
+      expect(result.value.signals[0]).toMatchObject({ id: signalCh2.id, title: '第2章伏笔未回收' });
+      // 读面: 提案取 next_chapter==2 的最新一条(p2-new, 排除 next_chapter==3)
+      expect(result.value.proposal).toMatchObject({ run_id: 'p2-new', next_chapter: 2 });
+      expect(result.value.proposal!.proposals[0]).toMatchObject({ title: '新方向', premise: '新' });
+    }
+    env.cleanup();
+  });
+
+  it('chapter/dossier: 未导入章(文件不存在)→ chapter=null 兜底, 其余尽力组装不炸', async () => {
+    const env = setup();
+    await writeDossierFixture(env.root);
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.chapterDossier({ sessionId: 's1', chapterIndex: 9 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.dossier.chapter).toBeNull();
+      expect(result.value.dossier.scenes).toEqual([]);
+      expect(result.value.dossier.rhythm).toEqual({ wordCount: 0, sceneCount: 0, avgSceneLength: 0 });
+      expect(result.value.review).toBeNull();
+      expect(result.value.signals).toEqual([]);
+      expect(result.value.proposal).toBeNull();
+    }
+    env.cleanup();
+  });
+
+  it('chapter/dossier: 坏数据不炸(非有限 chapterIndex → 缺省兜底)', async () => {
+    const env = setup();
+    await writeDossierFixture(env.root);
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.chapterDossier({ sessionId: 's1', chapterIndex: Number.NaN });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.dossier.chapter).toBeNull();
+      expect(result.value.dossier.scenes).toEqual([]);
+      expect(result.value.signals).toEqual([]);
+      expect(result.value.proposal).toBeNull();
+    }
+    env.cleanup();
+  });
 });
 

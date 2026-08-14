@@ -6,6 +6,7 @@ import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { useStoryMap } from './useWatch.ts'
+import { ChapterDossier } from './ChapterDossier.tsx'
 import css from './novelcraft.module.css'
 
 export type StoryMapActionProps =
@@ -57,6 +58,8 @@ function Section(props: { title: string; lines: string[] }): JSX.Element {
 export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const { t, connection, sessionId } = props
   const [open, setOpen] = useState(false)
+  /** 钻取中章节(章节档案 §17.5.1); null = 列表视图。 */
+  const [chapter, setChapter] = useState<number | null>(null)
   const { data } = useStoryMap(connection, sessionId)
 
   const bound = data?.bound != null
@@ -89,10 +92,30 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
       >
         {!bound ? (
           <div className={css.empty}>{t('story.unbound')}</div>
+        ) : chapter != null ? (
+          <ChapterDossier
+            connection={connection}
+            sessionId={sessionId}
+            t={t}
+            chapterIndex={chapter}
+            onBack={() => setChapter(null)}
+          />
         ) : chapters.length + scenes.length + threads.length + arcs.length + foreshadowing.length + reveals.length + edges.length === 0 ? (
           <div className={css.empty}>{t('story.empty')}</div>
         ) : (
           <div>
+            <div className={css.sectionTitle}>{t('story.chapters')}</div>
+            {chapters.map((c) => (
+              <button
+                key={c.index}
+                type="button"
+                className={css.chapterRow}
+                onClick={() => setChapter(c.index)}
+              >
+                <span className={css.chapterRowIndex}>ch{c.index}</span>
+                <span>{c.title ?? ''}</span>
+              </button>
+            ))}
             <Section title={t('story.threads')} lines={threads.map((x) => {
               const range = x.start_chapter != null ? `ch${x.start_chapter}${x.end_chapter != null ? '-' + x.end_chapter : ''}` : ''
               return `${x.name}${x.thread_type ? ' · ' + x.thread_type : ''}${range ? ' · ' + range : ''}`

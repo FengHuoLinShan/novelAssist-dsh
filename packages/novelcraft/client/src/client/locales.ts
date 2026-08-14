@@ -64,6 +64,34 @@ export type NovelcraftKey =
   | 'desk.proposals.basis'
   | 'desk.proposals.cost'
   | 'desk.proposals.risk'
+  | 'dossier.title'
+  | 'dossier.back'
+  | 'dossier.unbound'
+  | 'dossier.missing'
+  | 'dossier.status'
+  | 'dossier.words'
+  | 'dossier.scenes'
+  | 'dossier.scene.goal'
+  | 'dossier.scene.conflict'
+  | 'dossier.scene.must'
+  | 'dossier.scene.mustNot'
+  | 'dossier.scene.tag'
+  | 'dossier.characters'
+  | 'dossier.pov'
+  | 'dossier.foreshadowing'
+  | 'dossier.foreshadowing.planted'
+  | 'dossier.foreshadowing.active'
+  | 'dossier.foreshadowing.due'
+  | 'dossier.reveals'
+  | 'dossier.objects'
+  | 'dossier.rhythm'
+  | 'dossier.rhythm.words'
+  | 'dossier.rhythm.scenes'
+  | 'dossier.rhythm.avg'
+  | 'dossier.review'
+  | 'dossier.signals'
+  | 'dossier.proposal'
+  | 'dossier.empty'
 
 export const zh: Record<NovelcraftKey, string> = {
   'pet.silent': '静默',
@@ -128,6 +156,34 @@ export const zh: Record<NovelcraftKey, string> = {
   'desk.proposals.basis': '依据',
   'desk.proposals.cost': '成本',
   'desk.proposals.risk': '风险',
+  'dossier.title': '章节档案',
+  'dossier.back': '返回列表',
+  'dossier.unbound': '这本书还没绑定工作区。',
+  'dossier.missing': '该章尚未导入, 档案为空。',
+  'dossier.status': '状态',
+  'dossier.words': '字',
+  'dossier.scenes': 'Scene 分解',
+  'dossier.scene.goal': '目标',
+  'dossier.scene.conflict': '核心冲突',
+  'dossier.scene.must': '必发生',
+  'dossier.scene.mustNot': '禁发生',
+  'dossier.scene.tag': '叙事标签',
+  'dossier.characters': '人物在场',
+  'dossier.pov': '视角 POV',
+  'dossier.foreshadowing': '伏笔对账',
+  'dossier.foreshadowing.planted': '种下',
+  'dossier.foreshadowing.active': '经过',
+  'dossier.foreshadowing.due': '应回收',
+  'dossier.reveals': '回收揭示',
+  'dossier.objects': '设定引用',
+  'dossier.rhythm': '节奏',
+  'dossier.rhythm.words': '字数',
+  'dossier.rhythm.scenes': 'Scene 数',
+  'dossier.rhythm.avg': '均长',
+  'dossier.review': '语义审查',
+  'dossier.signals': '相关信号',
+  'dossier.proposal': '续写提案',
+  'dossier.empty': '暂无',
 }
 
 export const en: Record<NovelcraftKey, string> = {
@@ -193,4 +249,32 @@ export const en: Record<NovelcraftKey, string> = {
   'desk.proposals.basis': 'Basis',
   'desk.proposals.cost': 'Cost',
   'desk.proposals.risk': 'Risk',
+  'dossier.title': 'Chapter Dossier',
+  'dossier.back': 'Back to list',
+  'dossier.unbound': 'No vault bound for this book.',
+  'dossier.missing': 'This chapter is not imported yet — dossier is empty.',
+  'dossier.status': 'Status',
+  'dossier.words': 'chars',
+  'dossier.scenes': 'Scene Breakdown',
+  'dossier.scene.goal': 'Goal',
+  'dossier.scene.conflict': 'Core conflict',
+  'dossier.scene.must': 'Must happen',
+  'dossier.scene.mustNot': 'Must not happen',
+  'dossier.scene.tag': 'Narrative tag',
+  'dossier.characters': 'Characters present',
+  'dossier.pov': 'POV',
+  'dossier.foreshadowing': 'Foreshadowing',
+  'dossier.foreshadowing.planted': 'Planted',
+  'dossier.foreshadowing.active': 'Active through',
+  'dossier.foreshadowing.due': 'Due payoff',
+  'dossier.reveals': 'Reveals',
+  'dossier.objects': 'Referenced objects',
+  'dossier.rhythm': 'Rhythm',
+  'dossier.rhythm.words': 'Word count',
+  'dossier.rhythm.scenes': 'Scenes',
+  'dossier.rhythm.avg': 'Avg length',
+  'dossier.review': 'Review',
+  'dossier.signals': 'Signals',
+  'dossier.proposal': 'Next-chapter proposal',
+  'dossier.empty': 'None',
 }

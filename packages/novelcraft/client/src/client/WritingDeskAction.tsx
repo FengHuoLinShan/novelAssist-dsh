@@ -7,6 +7,7 @@ import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { useWritingDesk } from './useWatch.ts'
+import { ChapterDossier } from './ChapterDossier.tsx'
 import css from './novelcraft.module.css'
 
 export type WritingDeskActionProps =
@@ -35,6 +36,8 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
   const { t, connection, sessionId } = props
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('watch')
+  /** 钻取中章节(章节档案 §17.5.1); null = tab 视图。 */
+  const [dossierChapter, setDossierChapter] = useState<number | null>(null)
   const { data } = useWritingDesk(connection, sessionId)
 
   const bound = data?.bound != null
@@ -70,6 +73,14 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
       >
         {!bound ? (
           <div className={css.empty}>{t('desk.unbound')}</div>
+        ) : dossierChapter != null ? (
+          <ChapterDossier
+            connection={connection}
+            sessionId={sessionId}
+            t={t}
+            chapterIndex={dossierChapter}
+            onBack={() => setDossierChapter(null)}
+          />
         ) : (
           <div>
             <div className={css.tabRow}>
@@ -96,7 +107,22 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
               )
             ) : mode === 'plan' ? (
               <div>
-                <div className={css.sectionTitle}>{t('desk.chapters')}: {chapters.length}</div>
+                <div className={css.sectionTitle}>{t('desk.chapters')}</div>
+                {chapters.length === 0 ? (
+                  <div className={css.empty}>{t('desk.empty')}</div>
+                ) : (
+                  chapters.map((c) => (
+                    <button
+                      key={c.index}
+                      type="button"
+                      className={css.chapterRow}
+                      onClick={() => setDossierChapter(c.index)}
+                    >
+                      <span className={css.chapterRowIndex}>ch{c.index}</span>
+                      <span>{c.title ?? ''}</span>
+                    </button>
+                  ))
+                )}
                 <div className={css.sectionTitle}>{t('story.threads')}</div>
                 {threads.map((x) => <div key={x.slug} className={css.itemLine}>{x.name}{x.thread_type ? ' · ' + x.thread_type : ''}</div>)}
                 <div className={css.sectionTitle}>{t('story.arcs')}</div>

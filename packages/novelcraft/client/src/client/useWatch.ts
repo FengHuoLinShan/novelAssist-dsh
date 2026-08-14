@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RpcResult } from '@deepseek-ai/dsh-client-connection/client'
 import type { RpcCaller } from './index.ts'
 import type {
+  ChapterDossierValue,
   InboxActPayload,
   InboxActValue,
   InboxListValue,
@@ -188,6 +189,30 @@ export function useWritingDesk(connection: RpcCaller | undefined, sessionId: str
     const value = await call<WritingDeskValue>(connection, ENDPOINTS.writingDesk, { sessionId })
     if (value) setData(value)
   }, [connection, sessionId])
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+  return { data, refresh }
+}
+
+/** 章节档案数据源(chapter/dossier; §17.5.1 每章一整页钻取; chapterIndex 变化重取, null 清空)。 */
+export function useChapterDossier(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  chapterIndex: number | null,
+) {
+  const [data, setData] = useState<ChapterDossierValue | null>(null)
+  const refresh = useCallback(async () => {
+    if (chapterIndex == null) {
+      setData(null)
+      return
+    }
+    const value = await call<ChapterDossierValue>(connection, ENDPOINTS.chapterDossier, {
+      sessionId,
+      chapterIndex,
+    })
+    if (value) setData(value)
+  }, [connection, sessionId, chapterIndex])
   useEffect(() => {
     void refresh()
   }, [refresh])

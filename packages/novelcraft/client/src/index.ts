@@ -15,6 +15,10 @@ export const inject = ['connection'];
 
 export { RPC_CHANNEL, ENDPOINTS };
 export type {
+  ChapterDossierAsset,
+  ChapterDossierPayload,
+  ChapterDossierValue,
+  DossierSceneCard,
   InboxActPayload,
   InboxActValue,
   InboxListPayload,
@@ -55,6 +59,8 @@ export function apply(ctx: Context): void {
         return handlers.storyMap(payload as never);
       case ENDPOINTS.writingDesk:
         return handlers.writingDesk(payload as never);
+      case ENDPOINTS.chapterDossier:
+        return handlers.chapterDossier(payload as never);
       default:
         return { ok: false, error: { code: 'internal', message: `unknown endpoint: ${endpoint}`, details: {} } };
     }

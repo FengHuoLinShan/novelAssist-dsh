@@ -11,9 +11,12 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
 import { act, inboxView, plotSummaryLine, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
 import { resolvePolicy } from '@novelcraft/llm-step';
-import { rebuildIndex, storyMap } from '@novelcraft/store';
-import { latestProposal } from '@novelcraft/writing';
+import { chapterDossier, rebuildIndex, storyMap } from '@novelcraft/store';
+import { latestProposal, type ProposalRecord } from '@novelcraft/writing';
 import type {
+  ChapterDossierAsset,
+  ChapterDossierPayload,
+  ChapterDossierValue,
   InboxActPayload,
   InboxActValue,
   InboxListPayload,
@@ -90,6 +93,34 @@ function readReviewCards(root: string): ReviewCard[] {
     }
   }
   return out.sort((a, b) => a.chapter_index - b.chapter_index || a.reviewed_at.localeCompare(b.reviewed_at));
+}
+
+/** 未绑定缺省档案(全空, 不炸通道)。 */
+const EMPTY_DOSSIER: ChapterDossierAsset = {
+  chapter: null,
+  scenes: [],
+  characters: [],
+  pov: [],
+  foreshadowing: { planted: [], activeThrough: [], duePayoff: [] },
+  reveals: [],
+  referencedObjects: [],
+  rhythm: { wordCount: 0, sceneCount: 0, avgSceneLength: 0 },
+};
+
+/** 指定 next_chapter 的最新一条续写提案(文件名序取最后, 与 writing.latestProposal 同口径; 无则 undefined)。 */
+function latestProposalForChapter(root: string, nextChapter: number): ProposalRecord | undefined {
+  const dir = path.join(root, '.assistant', 'proposals');
+  if (!existsSync(dir)) return undefined;
+  const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+  for (let i = files.length - 1; i >= 0; i--) {
+    try {
+      const rec = JSON.parse(readFileSync(path.join(dir, files[i]), 'utf8')) as ProposalRecord;
+      if (rec.next_chapter === nextChapter) return rec;
+    } catch {
+      // 非法 JSON 跳过(§17.5.1 容错)
+    }
+  }
+  return undefined;
 }
 
 /** 解析 vault 根: sessionId 优先, 其次 workspacePath 向上找; 都不可用 → undefined。 */
@@ -244,6 +275,50 @@ export function createNovelcraftHandlers(ctx: Context) {
           objects: index.objects.map((o) => ({ slug: o.slug, name: o.name, kind: o.kind, status: o.status })),
           reviews: readReviewCards(binding.root),
           proposals: proposal
+            ? {
+                run_id: proposal.run_id,
+                chapter_index: proposal.chapter_index,
+                next_chapter: proposal.next_chapter,
+                generated_at: proposal.generated_at,
+                proposals: proposal.proposals,
+              }
+            : null,
+        });
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
+    async chapterDossier(payload: ChapterDossierPayload): Promise<RpcResult<ChapterDossierValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcOk({ bound: null, dossier: EMPTY_DOSSIER, review: null, signals: [], proposal: null });
+      }
+      try {
+        // 坏数据容错: 非有限数 → 0(该章通常不存在 → chapter=null 兜底, 不炸)。
+        const idx = Number.isFinite(payload.chapterIndex) ? Math.trunc(payload.chapterIndex) : 0;
+        // 资产面: store.chapterDossier(逐资产容错自组装, §17.5.1)。
+        const dossier = chapterDossier(binding.root, idx);
+        // 读面: 本章最新审查 / 本章 open 信号(inboxView 已滤 open+新鲜) / next_chapter==N 最新提案。
+        const reviews = readReviewCards(binding.root).filter((r) => r.chapter_index === idx);
+        const review = reviews.length > 0 ? reviews[reviews.length - 1] : null;
+        const signals = inboxView(binding.root)
+          .filter((s) => s.target?.chapter_index === idx)
+          .map(card);
+        const proposal = latestProposalForChapter(binding.root, idx);
+        return rpcOk({
+          bound: { book: binding.book, root: binding.root },
+          dossier,
+          review: review
+            ? {
+                review_id: review.review_id,
+                verdict: review.verdict,
+                finding_count: review.finding_count,
+                reviewed_at: review.reviewed_at,
+              }
+            : null,
+          signals,
+          proposal: proposal
             ? {
                 run_id: proposal.run_id,
                 chapter_index: proposal.chapter_index,

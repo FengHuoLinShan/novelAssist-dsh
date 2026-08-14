@@ -9,6 +9,7 @@ export const ENDPOINTS = {
   inboxAct: 'inbox/act',
   storyMap: 'story/map',
   writingDesk: 'writing/desk',
+  chapterDossier: 'chapter/dossier',
 } as const;
 
 export interface WatchStatePayload {
@@ -159,4 +160,57 @@ export interface WritingDeskValue {
   reviews: ReviewCard[];
   /** 计划台: 最新一条续写提案(无则 null) */
   proposals: ProposalCard | null;
+}
+
+export interface ChapterDossierPayload {
+  sessionId?: string;
+  workspacePath?: string;
+  chapterIndex: number;
+}
+
+/** Scene 分解卡(§17.5.1; store DossierScene 的纯 JSON 投影, 作者语言)。 */
+export interface DossierSceneCard {
+  slug: string;
+  title: string;
+  status: string;
+  goal?: string;
+  core_conflict?: string;
+  must_happen?: string;
+  must_not_happen?: string;
+  narrative_tag?: string;
+  pov_character_id?: string;
+}
+
+/** 章节档案资产面(镜像 store.ChapterDossier, 平铺为纯 JSON 接口; 逐资产容错, 不炸整体)。 */
+export interface ChapterDossierAsset {
+  /** 章不存在 → null(「未导入章」兜底 UI, 其余字段尽力组装)。 */
+  chapter: {
+    index: number;
+    title?: string;
+    status: string;
+    contentHash?: string;
+    wordCount: number;
+  } | null;
+  scenes: DossierSceneCard[];
+  characters: Array<{ slug: string; name: string }>;
+  pov: Array<{ scene: string; character: string }>;
+  foreshadowing: {
+    planted: Array<{ slug: string; name: string }>;
+    activeThrough: Array<{ slug: string; name: string }>;
+    duePayoff: Array<{ slug: string; name: string }>;
+  };
+  reveals: Array<{ slug: string; name: string }>;
+  referencedObjects: Array<{ slug: string; name: string; kind: string }>;
+  rhythm: { wordCount: number; sceneCount: number; avgSceneLength: number };
+}
+
+export interface ChapterDossierValue {
+  bound: { book: string; root: string } | null;
+  dossier: ChapterDossierAsset;
+  /** 本章最新一条语义审查(无则 null)。 */
+  review: { review_id: string; verdict: string; finding_count: number; reviewed_at: string } | null;
+  /** target.chapter_index==N 的 open 信号。 */
+  signals: SignalCard[];
+  /** next_chapter==N 的最新一条续写提案(无则 null)。 */
+  proposal: ProposalCard | null;
 }
