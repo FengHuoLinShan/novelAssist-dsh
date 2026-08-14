@@ -1,0 +1,109 @@
+// outline · 结构面(Scene/线程/篇章/总纲 + 结构健康信号, R5 确定性核心)。
+// 依据: specs/assets/outline.md + store-rules + N1(六键健康词汇表)+ N12(目录化)。
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { paths, slugify } from "@novelcraft/vault";
+import { computeSceneHealth, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter } from "@novelcraft/store";
+
+export interface SceneLite {
+  slug: string;
+  title: string;
+  status: string;
+  chapter_ids: number[];
+  file: string;
+  fm: Record<string, unknown>;
+}
+
+export function listScenes(root: string): SceneLite[] {
+  const dir = paths(root).scenes.dir;
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => {
+      const file = `${dir}/${f}`;
+      const { data } = parseFrontmatter(readFileSync(file, "utf8"));
+      return {
+        slug: f.replace(/\.md$/, ""),
+        title: String(data.title ?? ""),
+        status: String(data.status ?? ""),
+        chapter_ids: Array.isArray(data.chapter_ids) ? data.chapter_ids.map(Number) : [],
+        file,
+        fm: data as Record<string, unknown>,
+      };
+    });
+}
+
+/** Scene 四键健康信号(N1): 委托 store 确定性推导。 */
+export function sceneHealthSignals(scenes: SceneLite[]): Array<{ slug: string; keys: string[] }> {
+  return scenes
+    .map((s) => ({ slug: s.slug, keys: computeSceneHealth(s.fm as never) }))
+    .filter((x) => x.keys.length > 0);
+}
+
+/** 结构资产级信号(N1 后两键): threads/arcs 等目录里的 needs_review/unassigned。 */
+export function structureHealthSignals(root: string): Array<{ kind: string; slug: string; keys: string[] }> {
+  const out: Array<{ kind: string; slug: string; keys: string[] }> = [];
+  const p = paths(root).structure;
+  const dirs: Array<[string, string]> = [
+    ["thread", p.threads],
+    ["arc", p.arcs],
+    ["foreshadowing", p.foreshadowing],
+    ["reveal", p.reveal],
+  ];
+  for (const [kind, dir] of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".md"))) {
+      const { data } = parseFrontmatter(readFileSync(`${dir}/${f}`, "utf8"));
+      const keys: string[] = [];
+      if (data.needs_review === true) keys.push("structure_needs_review");
+      const related = Array.isArray(data.related_thread_ids) ? data.related_thread_ids : [];
+      if (data.unassigned === true || (related.length === 0 && kind === "thread")) keys.push("structure_unassigned");
+      if (keys.length) out.push({ kind, slug: f.replace(/\.md$/, ""), keys });
+    }
+  }
+  return out;
+}
+
+/** 总纲单文件(structure/outline.md, adjudication #1): 读/写; revisions 由 git 承接。 */
+export function readOutline(root: string): Record<string, unknown> | undefined {
+  const file = paths(root).structure.outline;
+  if (!existsSync(file)) return undefined;
+  const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+  return { ...data, outline_markdown: body.trim() };
+}
+
+export function writeOutline(
+  root: string,
+  content: Record<string, unknown>,
+  opts: { workflowId?: string; message?: string } = {},
+): void {
+  const file = paths(root).structure.outline;
+  const { outline_markdown: body, ...meta } = content as { outline_markdown?: string } & Record<string, unknown>;
+  const fm: Record<string, unknown> = { status: "draft", ...meta };
+  if (opts.workflowId) fm.workflow = opts.workflowId;
+  writeFileSync(file, serializeFrontmatter(fm, String(body ?? "")), "utf8");
+  gitAdd(root);
+  gitCommit(root, opts.message ?? "outline: update story outline");
+}
+
+/** 写结构资产(threads/arcs/foreshadowing/reveal 目录, N12)。 */
+export function writeStructureAsset(
+  root: string,
+  kind: "thread" | "arc" | "foreshadowing" | "reveal",
+  content: Record<string, unknown>,
+  opts: { workflowId?: string } = {},
+): string {
+  const title = String(content.title ?? "未命名");
+  const slug = slugify(`${kind}-${title}`) || `${kind}-${Date.now()}`;
+  const dir =
+    kind === "thread" ? paths(root).structure.threads :
+    kind === "arc" ? paths(root).structure.arcs :
+    kind === "foreshadowing" ? paths(root).structure.foreshadowing :
+    paths(root).structure.reveal;
+  const { summary: body, ...meta } = content as { summary?: string } & Record<string, unknown>;
+  const fm: Record<string, unknown> = { status: "draft", title, ...meta };
+  if (opts.workflowId) fm.workflow = opts.workflowId;
+  writeFileSync(`${dir}/${slug}.md`, serializeFrontmatter(fm, String(body ?? "")), "utf8");
+  gitAdd(root);
+  gitCommit(root, `outline: ${kind} ${slug}`);
+  return slug;
+}

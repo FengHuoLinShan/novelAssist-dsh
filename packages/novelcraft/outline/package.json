@@ -1,0 +1,17 @@
+{
+  "name": "@novelcraft/outline",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@novelcraft/vault": "*",
+    "@novelcraft/store": "*",
+    "@novelcraft/llm-step": "*"
+  }
+}
