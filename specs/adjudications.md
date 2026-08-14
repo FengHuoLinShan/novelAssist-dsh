@@ -54,3 +54,11 @@
 | N15 | relation type 枚举 + 白名单 | 核心 type 进 store 硬校验(确定性); type 表达关系语义、不编码源 kind; 每类资产 schema 声明允许 type 子集 + 目标 kind 约束; 扩展 type 走 policy 白名单。7 个核心 type 见 ADR-0019 附录 A |
 | N16 | 身份锚与关系边分层 | 必填单目标身份锚(`reveal.target_type/target_id`、`scene.pov_character_id`)保留顶层字段、不进 relations; 仅可选多目标关联走 `relations` |
 | N17 | `related_*_ids` 兼容投影 | 读面把 `related_*_ids` 展开为等价有向边并与 `relations` 并集去重; 写端已自然收敛到 `relations`(M4 无生产工作流写散字段)、读端长期保留(只做加法, 不删字段); `reveal.related_thread_ids` 必填已放宽(「未归类」=「无边」, 2026-08-14 用户裁定) |
+
+## 第四批(M5 体验闭环批次, 2026-08-14 用户确认——M5 计划评审通过)
+
+| # | 裁定 | 决定 |
+|---|---|---|
+| N18 | imports/*.md 与 chapters/*.md 对应关系(imports.md §129【待定】关闭) | **一导入文件一原文停靠**(imports/<slug>.md, frontmatter 带 import_record_id/file_name/file_type/file_size/total_chapters); **chapters/*.md 是章节正文唯一落点**(importTextChapters 直接落库, 无独立停靠层); import-log.jsonl 承载 ImportRecord(§41) |
+| N19 | client RPC 写边界收窄 | 客户端通道(loopback)维持「只读信号 + 记录决定 + 不写资产」; **唯一例外: presets/select 经 selectPresetInLlmYml 只写 .assistant/llm.yml 的 preset 单键**(配置非资产, 不过 approval; 其余键原样保留, 非法预设名拒绝) |
+| N20 | 内容手模型预设层归属 | DSH 无模型预设层(agent-presets 不拥有模型路由, 上游勘察结论)→ **插件自建薄层**: ContentPreset 类型在 llm-step, 注册表存 novelcraft domain KV(presets 表 ∪ 种子), llm.yml preset 键引用(每书), 执行链经 withResolvedDefaults/mergeStepOverrides 注入 runStep/deepImport/propose/generate; 重内容流程由编排脑以子代理发起, agentOptions {provider, model} 取当前预设(DSH 原生 seam); 编排脑模型切换 = DSH 原生(/model), 零代码 |

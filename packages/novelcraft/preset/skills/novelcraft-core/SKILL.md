@@ -39,6 +39,12 @@ imports/*.md                导入原文停靠(统一 .txt/.md)
    (fail-closed); adopt = git commit, 已采用不硬删(git 历史天然保留)。
 4. **编排边界**: 内容质量只由内容手(llm_step, 用户选定模型)决定; 编排脑
    (默认 deepseek-v4-flash+high)只观察/计划/验证/复核/对话, 推理不承载内容质量。
+   - 模型分工与预设(N20/D13): 编排脑切换直接用 DSH 原生模型切换(/model 或输入框模型
+     入口, 会话即生效); 简单任务子代理 = deepseek-v4-flash(max effort)。
+     内容手由「预设卡」承载: 预设面板选卡(写作日/导入日/精修校对等)写入该书
+     .assistant/llm.yml 的 preset 键, 执行链(runStep/deepImport/propose/generate)自动
+     注入 provider/model/参数; 重内容流程(如深度导入)以子代理发起时,
+     agentOptions {provider, model} 取当前预设。Key 永不进预设与文件(铁律 6)。
 5. **用户语言**: 作者语言沟通; 不暴露 raw JSON/内部枚举/文件路径细节;
    诊断信息进次级入口。
 6. **降级与确定性**: 阈值/预算/降级条款在 .assistant/policy.yml(agent 必读、
