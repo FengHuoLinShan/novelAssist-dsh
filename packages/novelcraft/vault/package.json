@@ -1,0 +1,25 @@
+{
+  "name": "@novelcraft/vault",
+  "version": "0.0.1",
+  "description": "NovelCraft M4 vault kernel: workspace init, path spec, slug, guarded read/write (ADR-0016 R1)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

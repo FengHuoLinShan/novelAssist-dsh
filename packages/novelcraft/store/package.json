@@ -1,0 +1,26 @@
+{
+  "name": "@novelcraft/store",
+  "version": "0.0.1",
+  "description": "NovelCraft M4 R1 kernel: frontmatter validation, adopt+commit, CAS, merge/split/attach_alias, index rebuild",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@novelcraft/vault": "*",
+    "yaml": "^2.5.0"
+  }
+}

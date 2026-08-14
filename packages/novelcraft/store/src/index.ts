@@ -1,0 +1,206 @@
+import path from 'node:path';
+import { paths, slugFromFilename, assetKindFromPath } from './paths';
+import { parseFrontmatter, normalizeAliases, normalizeAliasKey } from './frontmatter';
+import { readText, listFilesRecursive, exists } from './fs';
+
+// ============================================================================
+// 索引重建(R12): 文件是唯一真相, 索引是纯派生, 任何时刻可全量重建且幂等。
+// ============================================================================
+
+export interface IndexedObject {
+  slug: string;
+  file: string;
+  kind: string;
+  name: string;
+  status: string;
+  aliases: string[];
+}
+
+export interface AliasEntry {
+  alias: string;
+  normalized: string;
+  owner: string;
+}
+
+export interface RelationEntry {
+  source: string;
+  target: string;
+  type: string;
+  status: string;
+}
+
+export interface SceneEntry {
+  slug: string;
+  file: string;
+  status: string;
+  chapters: string[];
+}
+
+export interface ChapterEntry {
+  index: number;
+  file: string;
+  status: string;
+  title?: string;
+}
+
+export interface StructureEntry {
+  kind: string;
+  slug: string;
+  file: string;
+  status: string;
+  name?: string;
+}
+
+export interface VaultIndex {
+  version: 1;
+  objects: IndexedObject[];
+  aliases: AliasEntry[];
+  relations: RelationEntry[];
+  scenes: SceneEntry[];
+  chapters: ChapterEntry[];
+  structure: StructureEntry[];
+}
+
+function normalizeChapterIds(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => String(x)).filter((s) => s.length > 0);
+}
+
+function cmpStr(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** 纯函数: 扫描全 vault 产索引 JSON(对象 slug→文件、别名→owner、关系有向对、Scene→章节覆盖)。 */
+export function rebuildIndex(root: string): VaultIndex {
+  const p = paths(root);
+
+  const objects: IndexedObject[] = [];
+  const rawAliases: AliasEntry[] = [];
+  const relations: RelationEntry[] = [];
+  const scenes: SceneEntry[] = [];
+  const chapters: ChapterEntry[] = [];
+  const structure: StructureEntry[] = [];
+
+  const scan = (absDir: string, cb: (rel: string, abs: string) => void): void => {
+    if (!exists(absDir)) return;
+    for (const rel of listFilesRecursive(absDir)) cb(rel, path.join(absDir, rel));
+  };
+
+  const addObject = (rel: string, abs: string): void => {
+    const { data } = parseFrontmatter(readText(abs));
+    const slug = slugFromFilename(rel);
+    const aliases = normalizeAliases(data.aliases);
+    objects.push({
+      slug,
+      file: rel,
+      kind: String(data.kind ?? ''),
+      name: String(data.name ?? ''),
+      status: String(data.status ?? ''),
+      aliases,
+    });
+    for (const a of aliases) rawAliases.push({ alias: a, normalized: normalizeAliasKey(a), owner: slug });
+    if (Array.isArray(data.relations)) {
+      for (const r of data.relations) {
+        if (r && typeof r === 'object') {
+          const o = r as Record<string, unknown>;
+          const target = typeof o.target === 'string' ? o.target : typeof o.target_ref === 'string' ? (o.target_ref as string) : undefined;
+          if (typeof target === 'string' && target !== '') {
+            relations.push({
+              source: slug,
+              target,
+              type: String(o.type ?? o.relation_type ?? ''),
+              status: String(o.status ?? 'canonical'),
+            });
+          }
+        }
+      }
+    }
+  };
+
+  scan(p.world.objects, (rel, abs) => {
+    if (rel.endsWith('.md')) addObject(`world/objects/${rel}`, abs);
+  });
+  scan(p.world.pending, (rel, abs) => {
+    if (rel.endsWith('.md')) addObject(`world/pending/${rel}`, abs);
+  });
+
+  scan(p.scenes.dir, (rel, abs) => {
+    if (!rel.endsWith('.md')) return;
+    const { data } = parseFrontmatter(readText(abs));
+    scenes.push({
+      slug: slugFromFilename(rel),
+      file: `scenes/${rel}`,
+      status: String(data.status ?? ''),
+      chapters: normalizeChapterIds(data.chapter_ids),
+    });
+  });
+
+  scan(p.chapters.dir, (rel, abs) => {
+    if (!rel.endsWith('.md')) return;
+    if (rel.startsWith('pending/')) return;
+    const m = /^(\d{3})\.md$/.exec(rel);
+    if (!m) return;
+    const { data } = parseFrontmatter(readText(abs));
+    chapters.push({
+      index: parseInt(m[1], 10),
+      file: `chapters/${rel}`,
+      status: String(data.status ?? ''),
+      title: typeof data.title === 'string' ? data.title : undefined,
+    });
+  });
+
+  scan(p.structure.dir, (rel, abs) => {
+    if (!rel.endsWith('.md')) return;
+    const { data } = parseFrontmatter(readText(abs));
+    structure.push({
+      kind: assetKindFromPath(`structure/${rel}`),
+      slug: slugFromFilename(rel),
+      file: `structure/${rel}`,
+      status: String(data.status ?? ''),
+      name: typeof data.name === 'string' ? data.name : typeof data.title === 'string' ? data.title : undefined,
+    });
+  });
+
+  // 确定性排序 + 别名去重(canonical owner 优先)。
+  objects.sort((a, b) => cmpStr(a.slug, b.slug));
+
+  const statusBySlug = new Map(objects.map((o) => [o.slug, o.status]));
+  const aliasSeen = new Set<string>();
+  const aliases: AliasEntry[] = [];
+  rawAliases
+    .slice()
+    .sort((a, b) => {
+      const pa = statusBySlug.get(a.owner) === 'canonical' ? 0 : 1;
+      const pb = statusBySlug.get(b.owner) === 'canonical' ? 0 : 1;
+      return pa !== pb ? pa - pb : cmpStr(a.owner, b.owner);
+    })
+    .forEach((e) => {
+      if (!aliasSeen.has(e.normalized)) {
+        aliasSeen.add(e.normalized);
+        aliases.push(e);
+      }
+    });
+  aliases.sort((a, b) => cmpStr(a.normalized, b.normalized) || cmpStr(a.owner, b.owner));
+
+  relations.sort((a, b) => cmpStr(a.source, b.source) || cmpStr(a.target, b.target) || cmpStr(a.type, b.type));
+  scenes.sort((a, b) => cmpStr(a.slug, b.slug));
+  chapters.sort((a, b) => a.index - b.index);
+  structure.sort((a, b) => cmpStr(a.kind, b.kind) || cmpStr(a.slug, b.slug));
+
+  return { version: 1, objects, aliases, relations, scenes, chapters, structure };
+}
+
+// ============================================================================
+// 包入口(barrel)
+// ============================================================================
+
+export * from './types';
+export * from './errors';
+export * from './hash';
+export * from './paths';
+export * from './frontmatter';
+export * from './git';
+export * from './adopt';
+export * from './merge';
+export * from './dedup';
+export * from './health';
