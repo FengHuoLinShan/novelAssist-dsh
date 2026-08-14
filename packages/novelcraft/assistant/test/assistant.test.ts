@@ -17,6 +17,7 @@ import {
   sortInbox,
 } from "../src/index";
 import { act } from "../src/index";
+import { buildMicroflowPlan, listMicroflows, routeMicroflow, validateMicroflowArgs } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -138,5 +139,27 @@ describe("HEALTH_KEYS(N1 六键词汇表)", () => {
       "scene_unreviewed", "scene_unassigned_chapter", "scene_missing_setup",
       "scene_needs_organize", "structure_needs_review", "structure_unassigned",
     ]);
+  });
+});
+
+describe("microflows(D7 首批 6 条, R6 骨架)", () => {
+  it("目录 6 条", () => {
+    expect(listMicroflows()).toEqual(["去重修复", "Scene 重切", "补设定", "审章", "改对象名", "续写提案"]);
+  });
+  it("关键词路由(确定性兜底)", () => {
+    expect(routeMicroflow("「红衣女子」和「苏婉」重复了")).toBe("去重修复");
+    expect(routeMicroflow("第 3 章场景拆太细了")).toBe("Scene 重切");
+    expect(routeMicroflow("补一下林晚的家族")).toBe("补设定");
+    expect(routeMicroflow("随便聊聊天")).toBeNull();
+  });
+  it("参数校验: 缺参/类型错拒绝", () => {
+    expect(validateMicroflowArgs("去重修复", {})).toHaveLength(1);
+    expect(validateMicroflowArgs("去重修复", { targets: ["a"] })).toHaveLength(0);
+    expect(validateMicroflowArgs("审章", { chapter: "三" })).toHaveLength(1);
+  });
+  it("计划: 合法参数给出阶段函数引用表", () => {
+    const p = buildMicroflowPlan("Scene 重切", { chapters: [3] });
+    expect(p.ok).toBe(true);
+    expect(p.steps[0]).toEqual({ pkg: "imports", fn: "sliceChapterBatch", args: "chapterIndices=chapters" });
   });
 });

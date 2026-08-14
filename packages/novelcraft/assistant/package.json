@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@novelcraft/vault": "*"
+    "@novelcraft/vault": "*",
+    "@novelcraft/llm-step": "*"
   }
 }
