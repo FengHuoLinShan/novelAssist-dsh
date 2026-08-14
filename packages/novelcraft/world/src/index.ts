@@ -5,3 +5,5 @@ export * from "./generation.js";
 export * from "./map-atlas/types.js";
 export * from "./map-atlas/read.js";
 export * from "./map-atlas/write.js";
+export * from "./map-atlas/context.js";
+export * from "./map-atlas/spatial.js";

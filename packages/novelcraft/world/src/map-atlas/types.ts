@@ -110,6 +110,35 @@ export interface SpatialFact {
   source_keys: string[];
 }
 
+/**
+ * 空间事实提取结果(Phase 2; AtlasRun.spatial_evidence 落盘形态)。
+ * 分桶确定性: explicit→supported, inferred/working→visual_fill, conflicting→conflicts。
+ */
+export interface SpatialEvidence {
+  schema_version: number;
+  facts: SpatialFact[];
+  supported: SpatialFact[];
+  visual_fill: SpatialFact[];
+  conflicts: SpatialFact[];
+  /** sha256(schema_version + 各地点 {slug,name,aliases,sources} 规范化 JSON)。 */
+  source_fingerprint: string;
+  locations_checked: number;
+  locations_with_facts: number;
+  /** 部分批次失败(降级继续)。 */
+  degraded: boolean;
+  /** 全部批次失败。 */
+  all_batches_failed: boolean;
+  /** 因 location_key/basis/source_keys 非法被丢弃的条数(规则 4)。 */
+  invalid_count: number;
+  /** 无地点(catalog §4.12 降级口径)。 */
+  insufficient_sources?: boolean;
+  /** 指纹复用自上一 run(未调 provider)。 */
+  reused?: boolean;
+  /** checkpoint 续跑游标(降级时 = 下一待跑批号)。 */
+  next_checkpoint?: number;
+  message?: string;
+}
+
 // ============================================================================
 // 节点 / 页面(§2.1/§2.2)
 // ============================================================================
@@ -220,4 +249,55 @@ export interface AtlasTree {
   pendingPages: AtlasPageView[];
   /** 已采用节点树(每节点附 adopted pages; 空页占位 is_placeholder 可见)。 */
   tree: AtlasTreeNode[];
+}
+
+// ============================================================================
+// Phase 2: 来源上下文编译(计划 §4 Phase 2; 确定性, 无 LLM; catalog §4.12 输入侧)
+// ============================================================================
+
+/** compileAtlasContext 选项。 */
+export interface AtlasContextOptions {
+  /** 世界书 draft(工作稿)页纳入证据(默认 false; 计划 §2 来源口径)。 */
+  include_working_drafts?: boolean;
+  /** 室内图开关(保留字段, Phase 2 不消费)。 */
+  include_interiors?: boolean;
+  /** 作者风格要求(保留字段, Phase 3 plan prompt 消费)。 */
+  style_note?: string;
+}
+
+/** 一条来源证据(预算截断后文本)。 */
+export interface AtlasEvidenceItem {
+  /** 逐字 key: `wiki:<slug>` / `rag:<chunk_id>`(供 llm 输出 source_keys 校验)。 */
+  source_key: string;
+  text: string;
+}
+
+/** 单个地点的资料 packet(map_spatial_facts 的 LLM 输入单元)。 */
+export interface AtlasContextPacket {
+  /** = 地点对象裸 slug。 */
+  location_key: string;
+  name: string;
+  aliases: string[];
+  /** 对象 frontmatter 可选 importance(缺省 0)。 */
+  importance: number;
+  /** 世界书证据(≤3 页/地点)。 */
+  wiki: AtlasEvidenceItem[];
+  /** RAG 证据(topK=5; 无索引/失败时为空, degrade 不抛错)。 */
+  rag: AtlasEvidenceItem[];
+  /** 逐字 key 清单(= manifest 中属于该地点的 source_id 带族前缀)。 */
+  source_keys: string[];
+}
+
+/** compileAtlasContext 结果(确定性: 同输入同 context_hash)。 */
+export interface AtlasContextResult {
+  packets: AtlasContextPacket[];
+  /** 全部来源清单(spatial facts 校验白名单 + 前端 open_target)。 */
+  source_manifest: SourceRef[];
+  /** location_key → 排序后的 source_hash 列表(source_fingerprint 输入)。 */
+  location_source_hashes: Record<string, string[]>;
+  /** sha256(options + manifest ids + hashes) 全 hex。 */
+  context_hash: string;
+  /** 无可核对地点(空 packets)。 */
+  insufficient_sources: boolean;
+  message?: string;
 }

@@ -22,8 +22,8 @@
 | 锚点 | 位置 | 规则 |
 |---|---|---|
 | `_plan_prompt` | 68-110 | 全文中文化移植; 规则 8 条(≤20 页/父先子/默认最深 street/室内需授权/working 不独撑 supported/annotations 无方向距离比例/来源不伪造 open_target/地点全名入 visual_brief); update 模式换行话术 |
-| 层级 rank | schemas.py 12-20 | cover=0 world=1 region=2 city=3 district=4 street=5 interior=6 |
-| AtlasPlan 校验器 | schemas.py 182-230 | ①location 唯一 ②plan_key 唯一 ③supported 必须有 retained source ④parent_plan_key 与 existing_parent_node_id 互斥 ⑤cover/world 必根 ⑥父必须先出现(seen 集) ⑦父 rank 严格 < 子 ⑧annotation target_plan_key 必须在 plan 内 |
+| 层级 rank | schemas.py 12-20 | 旧引擎 cover=0..interior=6; **M4 已翻转(计划 §5 规则 1 权威)**: cover=6 world=5 region=4 city=3 district=2 street=1 interior=0, 父 rank 严格**大于**子(代码 ATLAS_LEVEL_RANK, Phase 1 已修) |
+| AtlasPlan 校验器 | schemas.py 182-230 | ①location 唯一 ②plan_key 唯一 ③supported 必须有 retained source ④parent_plan_key 与 existing_parent_node_id 互斥 ⑤cover/world 必根 ⑥父必须先出现(seen 集) ⑦父 rank 严格**大于**子(M4 翻转, 勿抄旧引擎方向) ⑧annotation target_plan_key 必须在 plan 内 |
 | `_validate_plan_sources` | 934-981 | 每条 source 必须命中 manifest(source_type+source_id); open_target 必须与 canonical 逐字段一致(除 novel_id); working 不能单独支撑 supported; 校验后回填 canonical title/summary/hash/status |
 | `_plan_semantic_keys` | 982-1007 | `entity:{location_id}` 或 `path:{parent_semantic}:{slug(title)}`; M4 改为 location_slug |
 | `_validate_update_targets` | 1008-1046 | update run: 新 location 必须在 missing 集; 新 path 节点必须有新 formal source; 已存在 semantic_key 必须在 changed 集否则拒 |
