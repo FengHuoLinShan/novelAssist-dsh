@@ -15,4 +15,5 @@ export * from './storage/domain.js';
 export * from './vault/binding.js';
 export * from './deep-import.js';
 export * from './jobs/radar.js';
+export * from './radar-hooks.js';
 export * from './tools.js';

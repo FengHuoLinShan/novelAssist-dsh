@@ -2,6 +2,8 @@
 // 组装全部 seam 适配器, 以 ctx.novelcraft 服务暴露给 agent 组合/其他插件;
 // 并把核心包 facade 命名空间挂在此处(供 client module、skills、子代理组合消费)。
 // 依据: 设计文档 §22.3(插件族, 经 DSH seam 互连)、seam 契约(packages/novelcraft/README.md)。
+import { readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
 import * as context from '@novelcraft/context';
@@ -157,5 +159,39 @@ export class NovelCraftService extends Service {
   /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */
   scanHealth(root: string): assistant.HealthScanResult {
     return assistant.scanHealthSignals(root);
+  }
+
+  /**
+   * 便捷: 文本入库(Track 1b, D9a 纯文本)。宿主侧读文件(插件进程内 fs,
+   * 不经 agent 沙箱); 超 50MB 提前拒绝(store.MAX_IMPORT_FILE_SIZE, imports.md §41);
+   * 成功后重建派生索引。chapters/*.md 为 draft 停靠(R3 语义), 非 adopt。
+   */
+  ingestTextFile(
+    root: string,
+    opts: { filePath: string; startChapter?: number; force?: boolean },
+  ): writing.ImportReport {
+    const size = statSync(opts.filePath).size; // 不存在则抛 ENOENT(工具层转作者语言)
+    if (size > store.MAX_IMPORT_FILE_SIZE) {
+      return {
+        ok: false,
+        reason: `文件超过 50MB 上限(imports.md §41), 请拆分后导入`,
+        warnings: [],
+      };
+    }
+    const text = readFileSync(opts.filePath, 'utf8');
+    const report = writing.importTextChapters(root, {
+      fileName: opts.filePath,
+      text,
+      source: `file:${path.basename(opts.filePath)}`,
+      ...(opts.startChapter !== undefined ? { startChapter: opts.startChapter } : {}),
+      ...(opts.force ? { force: true } : {}),
+    });
+    if (report.ok) this.refreshIndex(root);
+    return report;
+  }
+
+  /** 便捷: 雷达巡检(默认五面; §11 事件/手动触发, 非定时)。 */
+  radarSweep(root: string, radars?: assistant.RadarKind[]): assistant.SweepResult {
+    return assistant.runRadarSweep(root, radars ? { radars } : {});
   }
 }
