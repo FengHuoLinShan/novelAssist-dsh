@@ -22,7 +22,7 @@
   workspaces 97/97 全绿, typecheck 零错误; 两包经 vault dist 直接依赖, 无 alias 残留
 - [x] R2 完成: @novelcraft/llm-step(19 测试)
 - [x] R3 完成: writing 垂直切片闭环(15 测试 + r3-demo); store chapter 采用语义修正
-- [~] R4 imports: Phase 1 完成(12 测试 + r4a-demo); Phase 2/3 + L0–L4 待 R4b
+- [x] R4 完成: imports 全六阶段 + L0–L3 去重 + 恢复(19 测试 + r4a/r4b demo)
 - [ ] R5 其余领域(部分先行: memory 5 测试 / assistant 核心 11 测试)→ R6 → R7 client + 发布
 
 ## 约定(继承 specs/README.md 与设计文档 §15)
