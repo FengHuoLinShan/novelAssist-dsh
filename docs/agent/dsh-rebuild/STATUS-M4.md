@@ -44,6 +44,14 @@
 - [x] **剧情地图关系边 UI**: StoryMapAction 新增「关系边」Section(按 7 type 分组 + 彩色徽章 + 未知 type 兜底, deprecated 删除线弱化, 中英双语 story.edge.*), 纯展示零写操作; 浏览器级核验: scratch boot + @novelcraft/client bundle 200 + 控制台/页面/请求错误 0, 截图 /tmp/nc-web.png(Modal 自动点击受 scratch GUI 工作区引导门限, 读图待确认)
 - [ ] 旧引擎退役(ai-writing-assist main): 父仓库 main 的旧 FastAPI/PG/Vue 引擎保留, 退役时机另行裁决(ADR-0017 §1)。**【用户明确指示】不得反向改动父仓库 ai-writing-assist(含其 main)** —— 只读, 不回写/不退役/不同步
 
+## M5 体验闭环(2026-08-14, 四 Track)
+
+- [x] **Track 1 文本入库闭环**: writing 包 splitChapterText(确定性章节切分: 第X章/Chapter N/序章楔子番外)+ importTextChapters(门禁/编码护栏/幂等/冲突保护)+ import-log.jsonl(N18 裁定: 一导入文件一停靠, chapters/*.md 唯一落点); dsh `novelcraft_ingest_file` 工具(宿主侧读文件); novelcraft-writing skill 入库协议; scripts/m5-ingest-demo.mjs 全链冒烟
+- [x] **Track 2 五面雷达 + 事件触发**: assistant 五面确定性扫描器(radar-ingest/dedup/suggest/risk 新文件 + plot 一句话摘要 plotSummaryLine)+ reconcileRadarSignals 对账层(health.ts 范式一般化)+ runRadarSweep; dsh radar-hooks(ingest/deep_import/adopt/generate 成功后自动对账 + 推送, §11)+ `novelcraft_radar_sweep` 工具; client watch/state 增 plotSummary, 宠物静默态点击显示当前剧情(§9 默认答复)
+- [x] **Track 3 章节档案(§17.5.1)**: store.chapterDossier 纯读组装(Scene 分解/人物在场/POV/伏笔对账/设定引用/节奏, 容错降级); client chapter/dossier 端点(合并审查/信号/提案读面)+ ChapterDossier 视图; 剧情地图与写作台章节行钻取
+- [x] **Track 4 内容手模型预设(N20)**: llm-step ContentPreset/种子预设 + ProviderRequest/StepRequest.overrides 增 provider 路由 + policy preset 键 + selectPresetInLlmYml(N19 单键写); dsh ContentPresetRegistry(domain KV presets 表∪种子)+ withResolvedDefaults/mergeStepOverrides 注入链(runStep/deepImport/propose/generate)+ DshProvider req.provider 直通; client presets/list+presets/select 端点与预设卡面板; 编排脑 = DSH 原生切换(零代码, 写进 novelcraft-core skill)
+- 裁定: specs/adjudications.md 第四批 N18/N19/N20; 全仓测试 **368 全绿**, typecheck 零错误(HEAD e7209da0)
+
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面
