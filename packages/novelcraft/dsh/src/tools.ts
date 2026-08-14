@@ -15,6 +15,7 @@ import type { AdoptableKind } from '@novelcraft/store';
 import { GateDeniedError } from './approval/gate.js';
 import { svc } from './ctx.js';
 import { importTraceFile } from './deep-import.js';
+import { EVENT_RADAR_MAP, fireRadarHooks } from './radar-hooks.js';
 import type { NovelCraftService } from './service.js';
 import { pushSignalsChanged } from './push.js';
 
@@ -107,6 +108,14 @@ interface GenerateNextChapterArgs extends RootArgs {
   chapter: number;
   proposal_title: string;
   premise?: string;
+}
+interface IngestFileArgs extends RootArgs {
+  file_path: string;
+  start_chapter?: number;
+  force?: boolean;
+}
+interface RadarSweepArgs extends RootArgs {
+  radar?: string;
 }
 
 function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
@@ -247,6 +256,14 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               ...(args.adopted_by ? { adoptedBy: args.adopted_by } : {}),
             },
             args.note,
+          );
+          // 事件触发雷达(§11): adopt 后去重+风险对账; 章候选采用另加写作面。
+          fireRadarHooks(
+            ctx,
+            args.root,
+            args.kind === 'chapter_candidate'
+              ? [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]
+              : EVENT_RADAR_MAP.adopt,
           );
           return {
             ok: true,
@@ -443,6 +460,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             startChapter: args.start_chapter,
             endChapter: args.end_chapter,
           });
+          // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
+          fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.deepImport);
           return {
             ok: true,
             workflow_id: result.workflow_id,
@@ -576,6 +595,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             ...(args.premise ? { premise: args.premise } : {}),
           });
           if (!r.ok) return { ok: false, file: '', message: r.error?.message ?? '生成失败' };
+          // 事件触发雷达(§11): 新候选入库后写作面对账。
+          fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.generate);
           return {
             ok: true,
             file: r.file ?? '',
@@ -583,6 +604,123 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           };
         } catch (err) {
           return { ok: false, file: '', message: errMessage(err) };
+        }
+      },
+    }),
+
+    // ---- 11. 文本入库(Track 1b: 路径 → 章节切分 → wiki 化存储; D9a 纯文本) ----
+    defineTool({
+      name: 'novelcraft_ingest_file',
+      description:
+        '文本入库: 从绝对路径读手稿(.txt/.md, ≤50MB), 确定性切分章节并写入工作区' +
+        '(imports/ 原文停靠 + chapters/NNN.md + import-log.jsonl)。调用前建议先用 read 工具' +
+        '预览前 100 行确认章节标题结构(第X章/Chapter N/序章)。同号章内容冲突默认跳过' +
+        '(force 才覆盖); 同文件重复导入自动跳过(幂等)。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        file_path: { type: 'string', required: true, description: '手稿文件绝对路径(.txt/.md)' },
+        start_chapter: { type: 'integer', description: '落库起始章节号(缺省接现有最大章之后)' },
+        force: { type: 'boolean', description: '同号章内容不同时覆盖(默认跳过并报告冲突)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          total: { type: 'integer' },
+          imported: { type: 'integer' },
+          skipped: { type: 'integer' },
+          conflicts: { type: 'array' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      async execute(rawArgs) {
+        const args = rawArgs as unknown as IngestFileArgs;
+        try {
+          const report = service.ingestTextFile(args.root, {
+            filePath: args.file_path,
+            ...(args.start_chapter !== undefined ? { startChapter: args.start_chapter } : {}),
+            ...(args.force ? { force: true } : {}),
+          });
+          if (!report.ok) {
+            return { ok: false, total: 0, imported: 0, skipped: 0, conflicts: [], message: report.reason ?? '导入失败' };
+          }
+          // 事件触发雷达(§11): 摄入对账 + 写作健康。
+          fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.ingest);
+          const dup = report.warnings.includes('duplicate_import');
+          const conflictNote = (report.conflicts?.length ?? 0) > 0
+            ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
+            : '';
+          const noHeading = report.warnings.includes('no_headings') ? ', 未识别到章节标题已按单章处理' : '';
+          const message = dup
+            ? '该文件此前已导入(幂等跳过, 不写任何文件)。'
+            : `已入库 ${report.imported ?? 0} 章(共解析 ${report.total ?? 0} 章${conflictNote}${noHeading})。下一步可跑深度导入(novelcraft_deep_import)。`;
+          return {
+            ok: true,
+            total: report.total ?? 0,
+            imported: report.imported ?? 0,
+            skipped: report.skipped ?? 0,
+            conflicts: report.conflicts ?? [],
+            message,
+          };
+        } catch (err) {
+          return { ok: false, total: 0, imported: 0, skipped: 0, conflicts: [], message: errMessage(err) };
+        }
+      },
+    }),
+
+    // ---- 12. 雷达巡检(§11 手动触发; 默认五面, 幂等 + 自动结算) ----
+    defineTool({
+      name: 'novelcraft_radar_sweep',
+      description:
+        '雷达巡检: 五面确定性扫描器对账收件箱信号(摄入/去重/建议/风险/写作; 幂等落盘 + ' +
+        '条件消失自动结算 + 作者裁决不复活), 并返回一句话剧情摘要(宠物默认答复数据源)。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        radar: { type: 'string', enum: [...RADARS], description: '只跑某一面(缺省全五面)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+          ok: { type: 'boolean' },
+          results: { type: 'object', additionalProperties: true },
+          plot_summary: { type: 'string' },
+          message: { type: 'string' },
+          },
+        },
+        render,
+      },
+      async execute(rawArgs) {
+        const args = rawArgs as unknown as RadarSweepArgs;
+        try {
+          const r = service.radarSweep(
+            args.root,
+            args.radar ? [args.radar as assistant.RadarKind] : undefined,
+          );
+          pushSignalsChanged(ctx, { root: args.root });
+          // 输出摊平为开放对象(dsh-tools 输出根必须 JSON 开放; 逐键构造字面量,
+          // 使每条计数对象可赋给 JsonValue 索引签名)。
+          const results: Record<string, { created: number; skipped: number; resolved: number; reopened: number; total: number }> = {};
+          const summaryParts: string[] = [];
+          for (const [k, v] of Object.entries(r.results)) {
+            if (!v) continue;
+            results[k] = { created: v.created, skipped: v.skipped, resolved: v.resolved, reopened: v.reopened, total: v.total };
+            summaryParts.push(`${k}: 新${v.created}/结${v.resolved}/复${v.reopened}`);
+          }
+          const summary = summaryParts.join(', ');
+          return {
+            ok: true,
+            results,
+            plot_summary: r.plotSummary,
+            message: `巡检完成(${summary || '无命中'})。当前: ${r.plotSummary}`,
+          };
+        } catch (err) {
+          return { ok: false, results: {}, plot_summary: '', message: errMessage(err) };
         }
       },
     }),
