@@ -224,3 +224,4 @@ export * from './merge.js';
 export * from './dedup.js';
 export * from './health.js';
 export * from './story-map.js';
+export * from './dossier.js';
