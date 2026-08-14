@@ -52,6 +52,22 @@
 - [x] **Track 4 内容手模型预设(N20)**: llm-step ContentPreset/种子预设 + ProviderRequest/StepRequest.overrides 增 provider 路由 + policy preset 键 + selectPresetInLlmYml(N19 单键写); dsh ContentPresetRegistry(domain KV presets 表∪种子)+ withResolvedDefaults/mergeStepOverrides 注入链(runStep/deepImport/propose/generate)+ DshProvider req.provider 直通; client presets/list+presets/select 端点与预设卡面板; 编排脑 = DSH 原生切换(零代码, 写进 novelcraft-core skill)
 - 裁定: specs/adjudications.md 第四批 N18/N19/N20; 全仓测试 **368 全绿**, typecheck 零错误(HEAD e7209da0)
 
+## M6 RAG 插件化分层(2026-08-14, 三层检索, 提交区间 2b73f871..209b633a 四笔)
+
+- [x] **Track A1 L0 确定性召回 + 增量索引**: rag 包 BM25+字 bigram 词法召回(默认, 零 LLM 依赖);
+  chunk 派生索引 .assistant/rag-index.json 增量同步(syncRagIndex); vault gitignore 增
+  .assistant/rag-index.json(派生索引不提交 git, 可全量重建); chapters/pending 不入索引
+- [x] **Track A1 收尾 L1 内容手精排**: llm-step 内置 spec `rag_rerank`(2048/temp 0.1/120s,
+  schema `ranked_ids[]`)+ rag `rerankWithProvider`(默认开; 失败回退 BM25 原序, 检索不阻断写作)
+- [x] **Track A3 检索工具 + 事件钩子**: dsh 第 13 工具 `novelcraft_rag_search`(root/query/top_k/
+  rerank)+ adopt/ingest/deep_import 事件钩子(fireRagHook)增量维护索引; 结果带 degraded 字段
+- [x] **Track B L2 可选 BGE 向量召回**: 新增第 16 包 `@novelcraft/rag-bge`(可选, dsh
+  optionalDependencies + 动态 import, 缺包全链自动降级); llm.yml 设 `embedding: bge-local-v1`
+  启用; 模型懒下载 `$DSH_HOME/novelcraft/models`(transformers.js 缓存层); 第 14 工具
+  `novelcraft_rag_embed` 批量补向量(中断可重入); 向量 = rag-index.json 派生字段, 失败回退文本检索
+- 裁定: specs/adjudications.md 第五批 N21/N22; 工具数 **12 → 14**; 全仓测试 **440 全绿**,
+  typecheck 零错误(HEAD 209b633a)
+
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面

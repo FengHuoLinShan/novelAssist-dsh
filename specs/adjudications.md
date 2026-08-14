@@ -62,3 +62,10 @@
 | N18 | imports/*.md 与 chapters/*.md 对应关系(imports.md §129【待定】关闭) | **一导入文件一原文停靠**(imports/<slug>.md, frontmatter 带 import_record_id/file_name/file_type/file_size/total_chapters); **chapters/*.md 是章节正文唯一落点**(importTextChapters 直接落库, 无独立停靠层); import-log.jsonl 承载 ImportRecord(§41) |
 | N19 | client RPC 写边界收窄 | 客户端通道(loopback)维持「只读信号 + 记录决定 + 不写资产」; **唯一例外: presets/select 经 selectPresetInLlmYml 只写 .assistant/llm.yml 的 preset 单键**(配置非资产, 不过 approval; 其余键原样保留, 非法预设名拒绝) |
 | N20 | 内容手模型预设层归属 | DSH 无模型预设层(agent-presets 不拥有模型路由, 上游勘察结论)→ **插件自建薄层**: ContentPreset 类型在 llm-step, 注册表存 novelcraft domain KV(presets 表 ∪ 种子), llm.yml preset 键引用(每书), 执行链经 withResolvedDefaults/mergeStepOverrides 注入 runStep/deepImport/propose/generate; 重内容流程由编排脑以子代理发起, agentOptions {provider, model} 取当前预设(DSH 原生 seam); 编排脑模型切换 = DSH 原生(/model), 零代码 |
+
+## 第五批(M6 RAG 插件化分层批次, 2026-08-14 用户确认)
+
+| # | 裁定 | 决定 |
+|---|---|---|
+| N21 | RAG 三层架构裁定 | **L0 = BM25+字 bigram 确定性召回(默认)**, 零 LLM 依赖、恒可复现; **L1 = `llm_step(spec=rag_rerank)` 内容手精排**(默认开, 对召回候选按相关性重排返回 `ranked_ids`); **L2 = 本地 BGE 向量召回**(llm.yml 设 `embedding: bge-local-v1` 启用, 可选包动态加载)。**逐层静默降级**: L1 失败回退 L0、L2 失败回退文本检索, 检索永不阻断写作; 嵌入与精排失败只在结果 `degraded` 字段留痕(`rerank_failed`/`embedding_failed`)。依据: 铁律 5(内容手受控, llm_step 带 output_schema/预算/超时)+ 铁律 2(文件真相、派生可重建); 检索是只读辅助面, 不因模型不可用阻塞写作主链。影响面: `@novelcraft/rag`(L0/L1 实现 + EmbeddingBackend 接口)、`@novelcraft/llm-step`(rag_rerank spec)、`@novelcraft/dsh`(novelcraft_rag_search 工具 + degraded 字段) |
+| N22 | 嵌入模型资产与打包裁定 | **模型权重不进 git / npm 主包**: 首次启用懒下载到 `$DSH_HOME/novelcraft/models`(transformers.js 缓存层保证, 幂等可复现); **@novelcraft/rag-bge 为可选包**(dsh `optionalDependencies` + 动态 import, 缺包全链自动降级); **向量 = rag-index.json 派生字段**(可全量重建), **不引入向量数据库/外部进程**。依据: 铁律 2(不另建数据库/队列; 派生索引任何时刻可全量重建); 模型资产不随主包分发, 下载放权给 transformers.js 缓存层。影响面: `@novelcraft/rag-bge`(新增第 16 包)、`@novelcraft/rag`(EmbeddingBackend seam)、`@novelcraft/dsh`(optionalDependencies + novelcraft_rag_embed 工具)、vault gitignore(`.assistant/rag-index.json` 不提交) |

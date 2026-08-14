@@ -235,6 +235,16 @@ M4 落点: `@novelcraft/writing` 插件(§22.3), 停靠舱 + 修订中心。
 - **调用点**: `@novelcraft/writing` `proposeNextChapter`(微工作流「续写提案」阶段函数, D7)。
 - **M4 落点**: `llm_step(spec=next_chapter_proposal)` 由 `@novelcraft/writing` 计划台调用(§17.4/§17.5.3)。
 
+### 3.6 rag_rerank(检索精排, M6 新增)
+
+- **用途一句话**: 对召回候选片段按与查询的相关性重排, 返回按相关度降序的 `ranked_ids`(只排序, 不创作/不裁决内容)。
+- **输入**: 查询文本 + 编号候选片段(每候选一行 `[序号] [chunk_id] text 前 200 字`, 统一用 text 不依赖 summary; 候选数上限由调用方控制)。
+- **输出 Schema**: `ranked_ids: string[]`(必填; 未知 id 忽略, 未提及 chunk 按原相对顺序殿后; 同输入恒同输出, 确定性)。
+- **预算/温度/超时/重试**: budget `2048`、temp `0.1`、timeout `120s`。来源: `@novelcraft/llm-step` BUILTIN_SPECS `rag_rerank`(contractVersion v1, M6 N21)。
+- **降级**: 失败/超时回退 BM25 原序, 检索不阻断写作; 精排失败在结果 `degraded` 字段留痕(`rerank_failed`)。
+- **调用点**: `@novelcraft/rag` `rerankWithProvider`(search.ts: 召回 >1 条且 provider 存在时调用, L1)。
+- **M4 落点**: `llm_step(spec=rag_rerank)` 由 `@novelcraft/rag` `rerank.ts` 调用(M6 新增 ➕)。
+
 > 注: 另有 `writing/conflict_ai.py`(step `writing.conflict_check.ai_review.structured` temp 0.2 / `ai_suggestion.structured` temp 0.3)为确定性冲突检查的 AI 辅助面, docs/prompts 无契约条目, 见结尾对照表。
 
 ---
@@ -421,6 +431,7 @@ M4 落点: `@novelcraft/preset`(companion preset)+ DSH 会话(§20.11); interact
 | semantic_review | ✅ `writing/semantic_review.py` 内联 | step `writing.semantic_review.chunk_N` | 无 | ⚠️ |
 | targeted_revision | ✅ 同上 | step `writing.targeted_revision.generate` | 无 | ⚠️ |
 | next_chapter_proposal | ➕(M4 新增, §3.5) | `@novelcraft/writing` `proposeNextChapter`(llm_step) | 无 | ⚠️ |
+| rag_rerank | ➕(M6 新增, §3.6) | `@novelcraft/rag` `rerankWithProvider`(llm_step) | 无 | ⚠️ |
 | world_creation_chat | ✅ 内联 | operation `world.generation.chat` | 无 | ⚠️ |
 | world_convergence | ✅ 内联 | operation `world.generation.convergence` | 无 | ⚠️ |
 | world_exploration | ✅ 内联 | operation `world.generation.exploration` | 无 | ⚠️ |
