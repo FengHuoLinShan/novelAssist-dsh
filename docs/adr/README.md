@@ -9,6 +9,7 @@
 | [ADR-0017](0017-m4-repo-form-and-mounting.md) | Accepted | 独立 fork 仓库形态、挂载阶段授权、构建链以 npm rc.6 官方包为准。 |
 | [ADR-0018](0018-m4-dsh-shared-layer-policy.md) | Accepted | DSH 共享层默认不改、窄缝例外(pnpm patch / 最小 fork)+ 上游回馈四条纪律。 |
 | [ADR-0019](0019-structure-relation-model.md) | Accepted | 结构资产统一 relations 有向对(对齐 N11)+ 跨类关系索引; related_*_ids 降级为兼容投影, 只做加法渐进收敛。 |
+| [ADR-0020](0020-map-atlas-m4-file-model.md) | Accepted | 世界地图册(map atlas)M4 文件模型: world/atlas/** 文件真相 + 无生图边界 + prompt_only 不可 adopt + 空页占位 + 标签 L1 队列 + 本机路径图片导入(N28/N29)。 |
 
 ## 状态约定
 

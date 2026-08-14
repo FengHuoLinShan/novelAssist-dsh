@@ -54,7 +54,8 @@
 | world_bible_new_page | 0.35 | 同上 | `llm.steps.world_bible_new_page.temperature` |
 | world_ask | 0.0 | 同上 | `llm.steps.world_ask.temperature` |
 | world_bible_synopsis | 0.2 | 同上 | `llm.steps.world_bible_synopsis.temperature` |
-| map_atlas_plan | 规划 0 / 图片 Prompt 0.2(图片非 llm_step) | 图片走 Image API | `llm.steps.map_atlas_plan.temperature` / `map.image_prompt.temperature` |
+| map_atlas_plan | 0 | llm.yml / policy.yml / 默认 | `llm.steps.map_atlas_plan.temperature` |
+| map_spatial_facts | 0 | 同上 | `llm.steps.map_spatial_facts.temperature` |
 | rag_rerank | 0.1 | llm.yml / policy.yml / 默认 | `llm.steps.rag_rerank.temperature` |
 | interaction_story | 0.8(profile 可覆盖) | preset profile / llm.yml / 默认 | `llm.steps.interaction_story.temperature` |
 | interaction_summary | 0.2 | 同上 | `llm.steps.interaction_summary.temperature` |
@@ -88,6 +89,8 @@
 | world_bible_synopsis 超时 | 1800 | `WORLD_BIBLE_SYNOPSIS_TIMEOUT_SECONDS` | `llm.steps.world_bible_synopsis.timeout_seconds` |
 | world_ask 超时 | 1800 | `WORLD_ASK_TIMEOUT_SECONDS`【待定: 精确 env 名未在 catalog 列全】 | `llm.steps.world_ask.timeout_seconds` |
 | rag_rerank 超时 | 1800 | `RERANKER_TOTAL_TIMEOUT_SECONDS` | `llm.steps.rag_rerank.timeout_seconds` |
+| map_spatial_facts 超时 | 900 | —(M4 map atlas 批次) | `llm.steps.map_spatial_facts.timeout_seconds` |
+| map_atlas_plan 规划 run | 3600(工具级同步执行) | —(M4 map atlas 批次) | (工具 timeout, 非 llm_step 单步) |
 | 用户可设 timeout 上界 | 1–3600 | `settings.timeout`(llm.yml) | `llm.yml.timeout` |
 
 ---
@@ -103,7 +106,8 @@
 | entity_extraction max_tokens | 32768 | `phase2.parallel_scene_max_tokens`(min/max 均 32768) | `llm.steps.entity_extraction.max_tokens` |
 | structure_analysis max_tokens | 32768 | `phase3.structure_max_tokens` | `llm.steps.structure_analysis.max_tokens` |
 | world_bible_synopsis max_tokens | 4000 | `WORLD_BIBLE_SYNOPSIS_MAX_TOKENS` | `llm.steps.world_bible_synopsis.max_tokens` |
-| map_atlas_plan max_tokens | 规划 4000 / 图片 Prompt 12000 | — | `llm.steps.map_atlas_plan.max_tokens` / `map.image_prompt.max_tokens` |
+| map_atlas_plan max_tokens | 4000(旧引擎实际 12000, 见 map_atlas 段) | — | `llm.steps.map_atlas_plan.max_tokens` |
+| map_spatial_facts max_tokens | 4000 | — | `llm.steps.map_spatial_facts.max_tokens` |
 | interaction_story max_tokens | 8192(看海 4096) | `STORY_OUTPUT_TOKENS` | `llm.steps.interaction_story.max_tokens` |
 | interaction_summary max_tokens | 12000 | `SUMMARY_OUTPUT_TOKENS` | `llm.steps.interaction_summary.max_tokens` |
 | phase0 窗口预算 | target_input_chars 72000 / max_chapters_per_window 20 / min_max_tokens 13000 / max_max_tokens 32768 | `phase0.*` | `import.phase0.target_input_chars` 等 |
@@ -193,7 +197,32 @@
 
 ---
 
-## 9. 待定汇总
+## 9. map_atlas 世界地图册(map atlas 批次, 2026-08-15, N28/N29)
+
+| 常量 | 默认值 | 来源 | 建议 policy.yml 键 |
+|---|---|---|---|
+| map_atlas 规划页数 | ≤20 | 计划 §1.1/§5 规则 2 | `budget.map_atlas.max_pages` |
+| map_atlas 每批地点 | 5 | 计划 §1.1/§2 | `budget.map_atlas.batch_locations` |
+| map_atlas 最多核对已采用 location | ≤20 | 计划 §1.1/§2 | `budget.map_atlas.max_locations` |
+| map_atlas_plan 规划 budgetTokens | 4000(旧引擎实际 12000, 见下注) | catalog §4.11 / 计划 §1.3 待确认项 3 | `llm.steps.map_atlas_plan.budget_tokens` |
+| map_spatial_facts budgetTokens | 4000 | catalog §4.12 | `llm.steps.map_spatial_facts.budget_tokens` |
+| map_spatial_facts 单地点/单批输入上限 | 8000 字 / 40000 字 | 计划 §2 | `budget.map_atlas.spatial_chars_per_location` / `.spatial_chars_per_batch` |
+| map_spatial_facts 事实上限 | 每地点 ≤12 条 / 每批 ≤60 条 | 计划 §2 | `budget.map_atlas.spatial_facts_per_location` / `.spatial_facts_per_batch` |
+| 地图图片单文件 / 尺寸 | ≤50MB; 16×16 ~ 8192×8192 | 计划 附录 A.3 | `import.map_atlas_image.max_file_size` / `.min_dim` / `.max_dim` |
+
+**spatial facts 降级规则**(计划 §2 Phase 2):
+- 单批失败 → 记 `degraded`, **降级不失败**(不阻断规划);
+- 全批失败 → 记 `all_batches_failed`;
+- RAG 失败 → 只减少证据, 不失败;
+- 无地点 → `insufficient_sources`。
+
+> **map_atlas_plan 规划预算默认口径**(计划 §1.3 待确认项 3): 默认 4000 tokens; 旧引擎实际使用
+> 12000。若 20 页 schema 修复频繁失败, 下一轮裁定提升为 12000。本段不改变 §1/§2/§3 表中
+> `map_atlas_plan`/`map_spatial_facts` 的温度/超时/max_tokens 行(已随本批次去生图改写)。
+
+---
+
+## 10. 待定汇总
 
 1. 【待定】`watch.notify_threshold` / `repair.max_rounds` / `dedup.l2_threshold` / `alias.attach_confidence` 的具体默认数值(设计 §13 只列键名, 本 commit 代码未定义)——需在实现期补默认。
 2. 【待定】`CONTEXT_BUDGET` 分类默认进 policy.yml 还是 helper 内置常量(small-modules.md 待定)。

@@ -31,3 +31,19 @@ whenToUse: 操作世界对象、复核待处理建议、生成中心对话/收�
 
 - 待处理建议 → 收件箱信号卡(四动词: 采纳/打回/改一改/先放着); 采纳必过 approval。
 - 打回必带理由(进 calibration.md); 低置信/冲突保持待处理。
+
+## 世界地图册 map atlas(无生图; 随 Phase 5 落地)
+
+- 落点: `world/atlas/{nodes,pages,pending/nodes,pending/pages,images}/` + `.assistant/atlas/runs/*.json`
+  (文件真相, ADR-0020); 图片目录 `world/atlas/images/` 写入 vault `.gitignore`。
+- 内容步: `llm_step(spec=map_spatial_facts)`(每批 5 地点, 只读规划输入)+
+  `llm_step(spec=map_atlas_plan)`(≤20 页, 层级严格递降)。**M4 不生图**(N28), `prompt` 仅为外部
+  生图参考文本; `prompt_only` 页面不可 adopt。
+- 空页占位: adopted 节点可无 page(点进去再上传); 本机路径导入(N29): 解析本机绝对路径 +
+  `mode=copy` 复制进本地图片目录, 图片字节绝不 `git add`、不 push GitHub; adopt 必经
+  ApprovalGate(fail-closed)。
+- 文字标签 = L1 intent 队列 + `novelcraft_map_atlas_annotation` 工具应用(不过 approval);
+  工具只消费队列或精确 ops, 拒绝自然语言坐标, 坐标恒 0–1。
+- 工具预告(Phase 5): `novelcraft_map_atlas_plan/view/upload/review/annotation`
+  (+可选 `update_prompt`); 规划 run 同步执行, adopt/adopt_placeholder/restore 过 ApprovalGate,
+  reject/archive 经工具执行。

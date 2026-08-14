@@ -355,13 +355,23 @@ M4 落点: `@novelcraft/world` 插件(§22.3); 五模式从「并列 UI」变「
 
 ### 4.11 map_atlas_plan(地图册层级规划)
 
-- **用途一句话**: 把已确认资料规划为最多 20 页地图册层级; 图片 Prompt 交给固定 Image API。
-- **输入**: `world.map_atlas.generate` 编译的 author-full canonical 资料 + RAG `map_atlas` 证据 + 可选工作稿; 每批 5 个地点提取空间线索。
-- **输出 Schema**(`AtlasPlan`): 最多 20 页、无环、父级先于子级、默认不深于街道; 每页直接来源/AI 视觉补全/冲突/标注; 来源短引用须属当前 `novel_id`。step `world.map_atlas.plan.structured`。
-- **预算/温度/超时/重试**: 规划 temp `0`、max_tokens `4000`; 图片 Prompt temp `0.2`、max_tokens `12000`。来源: `world/map_atlas_workflow.py:761-762,1501-1502`。
-- **降级**: 成图不出现文字/字母/数字/方向箭头/距离/比例尺/图例/层级标签; 图片模型不输出结构化业务状态、不把视觉补全写回正式资料(P体系 §5「AI 地图册规划与图片 Prompt」)。
-- **调用点**: `world/map_atlas_workflow.py`(step `world.map_atlas.plan.structured`; 图片走 `gpt-image-2` Image API)。
-- **M4 落点**: `llm_step(spec=map_atlas_plan)` 由 `@novelcraft/world` map 子系统调用; 图片模型非 llm_step(直连 Image API)。
+- **用途一句话**: 把已确认资料规划为最多 20 页地图册层级; **M4 不生图**, prompt 仅为外部生图参考文本产物。
+- **输入**: `@novelcraft/world` map 子系统编译的 author-full canonical 资料 + RAG `map_atlas` 证据 + 可选工作稿; 空间事实由 §4.12 `map_spatial_facts` 先行提取(每批 5 地点), 作为规划输入。
+- **输出 Schema**(`AtlasPlan`, 精简 JSON schema; 旧 step `world.map_atlas.plan.structured`): 最多 20 页、无环、父级先于子级、层级严格递降、默认不深于 street(interior 需显式授权); 每页 `visual_brief`/`prompt`(外部生图参考)+ `evidence`(supported/visual_fill/conflicts)+ `source_manifest` + 初始文字标签建议; 来源短引用须属当前 vault 的 `source_manifest`。由 `validateAtlasPlan()` 纯函数落地(§5 规则 1–3)。
+- **预算/温度/超时/重试**: temp `0`、max_tokens `4000`。来源: `old-engine:world/map_atlas_workflow.py:761-762`(规划 temp 0/max_tokens 4000)。**M4 移植自 `map_atlas_workflow.py`, 生图调用(gpt-image-2/Image API)不迁移**; 旧「图片 Prompt temp 0.2 / max_tokens 12000」随生图一并移除。规划 run 同步执行, 工具级 timeout `3600s`(计划 §1.3)。
+- **降级**: 规划失败 fail-closed——不产出 adopted 资产, run status=failed + error_code; `prompt_only` 候选页只作外部生图参考, **不可 adopt**。
+- **调用点**: `old-engine:world/map_atlas_workflow.py`(step `world.map_atlas.plan.structured`); M4 由 `@novelcraft/world` `planMapAtlas()` orchestrator 调用。
+- **M4 落点**: `llm_step(spec=map_atlas_plan)` 由 `@novelcraft/world` map 子系统 `plan.ts` 调用(§4 落点 `planMapAtlas`)。
+
+### 4.12 map_spatial_facts(空间事实提取)
+
+- **用途一句话**: 每批 5 个地点提取空间事实, 只作规划输入, 不回写正式资产。
+- **输入**: 地点 packet(location_key + 资料)+ wiki/RAG 证据(source keys 由服务端注入); 每地点 wiki+RAG ≤8000 字, 每批 ≤40000 字。来源: 计划 §2 Phase 2。
+- **输出 Schema**(`SpatialFacts`, 精简 JSON schema): `locations[] { location_key, facts[] { statement, basis, source_keys[] } }`; `location_key`/`source_keys` 必须逐字来自 packet; `basis` 枚举 `explicit|inferred|working|conflicting`; 每地点 ≤12 条、每批 ≤60 条。确定性 partition: explicit→supported、inferred/working→visual_fill、conflicting→conflicts。
+- **预算/温度/超时/重试**: temp `0`、max_tokens `4000`、timeout `900s`、schema 修复沿用默认 1 次。来源: 计划 §1.3(4000 默认口径)/§2 Phase 2。
+- **降级**: 单批失败记 `degraded`、不阻断; 全批失败记 `all_batches_failed`; RAG 失败只减少证据不失败; 无地点 → `insufficient_sources`。空间事实只读, 不写 canonical。
+- **调用点**: `@novelcraft/world` `map-atlas/spatial.ts`(由 `planMapAtlas` 编排, 带 checkpoint 续跑)。
+- **M4 落点**: `llm_step(spec=map_spatial_facts)` 由 `@novelcraft/world` map 子系统 `map-atlas/spatial.ts` 调用。
 
 ---
 
@@ -442,7 +452,8 @@ M4 落点: `@novelcraft/preset`(companion preset)+ DSH 会话(§20.11); interact
 | world_bible_new_page | ✅ 内联 | step `world.generation.world_bible_new_page.structured` | `world_generation_world_bible_new_page.json` | ✅ |
 | world_ask | ✅ `ask_world_service.py` 内联 | step `world.ask` | 无 | ⚠️ |
 | world_bible_synopsis | ✅ 内联 | step `world.world_bible.synopsis.structured` | `world_bible_synopsis.json` | ✅ |
-| map_atlas_plan | ✅ `map_atlas_workflow.py` 内联 | step `world.map_atlas.plan.structured`(+ Image API) | 无 | ⚠️ |
+| map_atlas_plan | ✅ `map_atlas_workflow.py` 内联 | step `world.map_atlas.plan.structured`(M4 不生图, 生图调用不迁移) | 无 | ⚠️ |
+| map_spatial_facts | ➕(M4 map atlas 批次新增 §4.12) | `@novelcraft/world` `map-atlas/spatial.ts`(llm_step) | 无 | ⚠️ |
 | rag_rerank | ✅ `rag_reranker.md` | step `rag.reranker.generate` | `rag_reranker.json` | ✅ |
 | interaction_story | ✅ `interaction/prompts.py` | `interaction-story-v2` | 无 | ⚠️ |
 | interaction_summary | ✅ `interaction/prompts.py` | `interaction-summary-v1` / `-output-v1` | 无 | ⚠️ |
