@@ -20,6 +20,9 @@
    参数(N5); 不落盘、不记录、不返回 Key。
 7. **trace contract 锁编排纪律**: 深度导入等编排走 `@novelcraft/trace` 事件词表 +
    `@novelcraft/imports` 的 `runDeepImport` seam; adopt 序列/checkpoint/分片/降级逐条可断言。
+8. **父仓库 ai-writing-assist 只读(用户明确指示, 2026-08-14)**: 不得反向改动父仓库
+   `ai-writing-assist`(含其 main 分支)——不回写、不退役、不同步、不 cherry-pick;
+   一切改动只发生在 novelAssist-dsh 本仓库。
 
 ## 测试与验证
 
@@ -32,6 +35,7 @@
 - 只在 novelAssist-dsh 的 **main** 分支提交, push 到 origin(https://github.com/FengHuoLinShan/novelAssist-dsh.git)。
 - 危险操作(删除/合并/废弃)保留二次确认; 不得 force push main、`reset --hard`。
 - 旧引擎(FastAPI/PG/Vue)已退役: 需要时 checkout annotated tag `old-engine`, 不回写、不复活。
+- 父仓库 `ai-writing-assist` 只读(铁律 8): 一切 push/分支/文档操作只在 novelAssist-dsh 本仓库。
 
 ## 停止并报告
 
