@@ -20,10 +20,10 @@
 - [x] R1 内核完成并集成验收: vault 29 测试(dist 发布, N9/N10/N12)+ store 68 测试
   (frontmatter/adopt/merge/dedup/index/health/git, R1–R64 可测规则全覆盖); 根
   workspaces 97/97 全绿, typecheck 零错误; 两包经 vault dist 直接依赖, 无 alias 残留
-- [~] R2 @novelcraft/llm-step —— 实现中(后台子代理)
-- [ ] R3 writing 垂直切片 —— 计划已备: packages/novelcraft/writing/PLAN.md
-- [~] R2 @novelcraft/llm-step —— 实现中(后台子代理)
-- [ ] R3 writing 垂直切片 —— 计划已备: packages/novelcraft/writing/PLAN.md
+- [x] R2 完成: @novelcraft/llm-step(19 测试, 两次子代理无产出后由主会话实现)
+- [~] R3 writing 垂直切片 —— 停靠(ingest)已完成(8 测试); 审查/返修/采用待实现
+- [x] R2 完成: @novelcraft/llm-step(19 测试, 两次子代理无产出后由主会话实现)
+- [~] R3 writing 垂直切片 —— 停靠(ingest)已完成(8 测试); 审查/返修/采用待实现
 - [ ] R3 writing 垂直切片(首个可用闭环)
 - [ ] R4 imports → R5 其余领域 → R6 assistant → R7 client + 发布
 
