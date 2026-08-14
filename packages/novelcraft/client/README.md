@@ -51,14 +51,17 @@
 - [x] 构建链(vendor 预设)+ E2E 挂载验证
 - [x] 剧情地图(story/map 端点 + StoryMapAction 面板)
 - [x] 写作台四模式(writing/desk 端点 + WritingDeskAction 面板, 守望/计划/评审/参照 tab)
-- [ ] 信号变化主动推送(现为 5s 轮询 + 动作后即时刷新; 真 mux 推送需 DSH 共享层暴露订阅 seam, 见 §信号推送)
+- [x] 事件触发短轮询 + 退避(ADR-0018 §2: 固定 5s 轮询退役; 挂载/聚焦/可见/动作后立即刷新并重置退避)
+- [x] 真 mux 推送: 已落地(ADR-0018 §1: scripts/apply-dsh-patches.mjs 加 client/push allowlist; dsh emit + client ctx.remote.$on 订阅); 上游 Discussion #1289 回应后去 fork 化
 
 ## 信号推送(轮询 → mux)现状
 
-- 现状: 宠物四态经 useWatch 固定 5s 轮询 watch/state; 收件箱在挂载/手动/u 键/动作后
-  即时刷新(不轮询)。四动词后 inbox/act 已即时刷新收件箱。
-- 阻塞(实现期核实): DSH rc.6 平台模块表(build-tools/web/src/platform.ts)不暴露
-  connection 事件/订阅 seam; ConnectionHandle.start(sinks) 的 mux 帧订阅被 runtime
-  单持有者独占(second call throws)。插件唯一数据面是 connection.rpc.call。
-- 落地路径: (a) 本包内把固定轮询改事件触发短轮询/退避(无跨层风险, 未做); (b) 宿主向
-  mux 发信号帧 + runtime/平台模块暴露订阅 seam —— 需动 DSH 共享层, 属上层确认/ADR 范畴。
+- 现状: 宠物四态经 useWatch 事件触发短轮询 + 退避(挂载/聚焦/可见性恢复立即刷新, 快照
+  无变化退避延长、有变化回到短间隔, 保留非零基线轮询捕获雷达产出); 收件箱在挂载/手动/
+  u 键/动作后即时刷新(不轮询)。四动词后 inbox/act 已即时刷新收件箱。
+- 核实: 真推送 seam 已存在——host api-proxy 按 API_REMOTE_FORWARDED_EVENTS allowlist 转发
+  host/remote-event 帧, client runtime 扇出到 ctx.remote.$on; 缺口是 allowlist 封闭(11 条),
+  插件无法推送自定义事件(connection.rpc.call 仍是一元 request/response, 不是推送通道)。
+- 落地路径(ADR-0018): (a) 本包内事件触发短轮询/退避(已落地, 无跨层风险); (b) 给
+  @deepseek-ai/dsh-api-remotes 的 allowlist 加通用 client/push + 声明 Events, 单包 pnpm
+  patch —— 见 docs/agent/dsh-rebuild/信号推送-远程事件seam提案.md, 独立后续项。

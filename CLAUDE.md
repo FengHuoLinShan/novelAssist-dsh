@@ -23,7 +23,7 @@
 ## 常用命令
 
 ```sh
-npm test                    # 全仓 266 测试
+npm test                    # 全仓 279 测试
 npm run typecheck           # 全仓零错误
 npm test -w @novelcraft/<pkg>
 npm run build --workspaces  # 注意拓扑序: vault→trace→store→llm-step→rag→memory→context→outline→assistant→world→writing→imports→dsh→client
@@ -38,7 +38,7 @@ npm run build --workspaces  # 注意拓扑序: vault→trace→store→llm-step�
 - 测试 = vitest 行为契约, 断言注释引规则/裁定编号; 阶段函数用 MockProvider/MockApproval 驱动。
 - 权威文档: `docs/agent/dsh-rebuild/跨会话交接.md`(单一事实入口)、
   `STATUS-M4.md`(总进度)、`自主智能式作家助手设计.md`(D1–D25)、
-  `docs/adr/0016|0017`(M4 重写/仓库形态)。
+  `docs/adr/0016|0017|0018`(M4 重写/仓库形态/共享层政策)。
 
 ## 旧引擎已退役
 

@@ -2,8 +2,11 @@
   "name": "novelcraft-m4",
   "private": true,
   "version": "0.0.1",
-  "workspaces": ["packages/novelcraft/*"],
+  "workspaces": [
+    "packages/novelcraft/*"
+  ],
   "scripts": {
+    "postinstall": "node scripts/apply-dsh-patches.mjs",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

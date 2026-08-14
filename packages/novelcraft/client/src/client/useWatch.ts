@@ -29,7 +29,9 @@ async function call<T>(
   }
 }
 
-export const POLL_INTERVAL_MS = 5000
+/** 事件触发短轮询下界与退避上界(ADR-0018 §2)。 */
+export const POLL_MIN_MS = 1000
+export const POLL_MAX_MS = 15000
 
 /** 宠物状态(四态 + 徽标数)。 */
 export interface WatchSnapshot {
@@ -50,34 +52,79 @@ const EMPTY_WATCH: WatchSnapshot = {
   radarRunning: false,
 }
 
-/** 轮询 watch/state(宠物数据源)。 */
+/** 轮询 watch/state(宠物数据源): 事件触发立即刷新 + 退避短轮询(ADR-0018 §2)。 */
 export function useWatch(connection: RpcCaller | undefined, sessionId: string | undefined) {
   const [snapshot, setSnapshot] = useState<WatchSnapshot>(EMPTY_WATCH)
   const sessionRef = useRef(sessionId)
   sessionRef.current = sessionId
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastRef = useRef<WatchSnapshot>(EMPTY_WATCH)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean> => {
     const value = await call<WatchStateValue>(connection, ENDPOINTS.watchState, {
       sessionId: sessionRef.current,
     })
-    if (!value) return
-    setSnapshot({
+    if (!value) return false
+    const next: WatchSnapshot = {
       bound: value.bound !== null,
       book: value.bound?.book ?? null,
       open: value.open,
       attention: value.attention,
       threshold: value.threshold,
       radarRunning: value.radarRunning,
-    })
+    }
+    const changed =
+      next.bound !== lastRef.current.bound ||
+      next.book !== lastRef.current.book ||
+      next.open !== lastRef.current.open ||
+      next.attention !== lastRef.current.attention ||
+      next.threshold !== lastRef.current.threshold ||
+      next.radarRunning !== lastRef.current.radarRunning
+    lastRef.current = next
+    if (changed) setSnapshot(next)
+    return changed
   }, [connection])
+
+  const schedule = useCallback(
+    (delayMs: number) => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => {
+        void refresh().then((changed) => {
+          schedule(changed ? POLL_MIN_MS : Math.min(delayMs * 2, POLL_MAX_MS))
+        })
+      }, delayMs)
+    },
+    [refresh],
+  )
 
   useEffect(() => {
     void refresh()
-    const timer = setInterval(() => {
+    schedule(POLL_MIN_MS)
+    const onFocus = () => {
       void refresh()
-    }, POLL_INTERVAL_MS)
-    return () => clearInterval(timer)
-  }, [refresh])
+      schedule(POLL_MIN_MS)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh()
+        schedule(POLL_MIN_MS)
+      }
+    }
+    // 宿主真推送(ADR-0018 §1): client/push → DOM 事件 → 立即刷新并重置退避。
+    const onSignalsChanged = () => {
+      void refresh()
+      schedule(POLL_MIN_MS)
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('novelcraft:signals-changed', onSignalsChanged)
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('novelcraft:signals-changed', onSignalsChanged)
+    }
+  }, [refresh, schedule])
 
   return { snapshot, refresh }
 }

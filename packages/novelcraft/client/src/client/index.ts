@@ -76,4 +76,21 @@ export function apply(ctx: ClientContext): void {
       inject: (): { connection: RpcCaller | undefined } => actionSlot(),
     }, WritingDeskAction),
   )
+
+  // 订阅宿主推送(ADR-0018 §1): client/push 帧到达 → 广播 DOM 事件, useWatch 据此即时刷新。
+  // ctx.remote 是字符串键 Map(dsh-api-gateway/lib/client.js), 运行时无事件名校验; 服务缺省静默。
+  const remote = ctx.get('remote') as
+    | { $on(event: string, listener: (...args: unknown[]) => void): () => void }
+    | undefined
+  if (remote) {
+    ctx.effect(
+      () =>
+        remote.$on('client/push', (channel) => {
+          if (channel === 'novelcraft/signals-changed') {
+            window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
+          }
+        }),
+      'novelcraft: remote push subscription',
+    )
+  }
 }

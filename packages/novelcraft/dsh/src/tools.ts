@@ -16,6 +16,7 @@ import { GateDeniedError } from './approval/gate.js';
 import { svc } from './ctx.js';
 import { importTraceFile } from './deep-import.js';
 import type { NovelCraftService } from './service.js';
+import { pushSignalsChanged } from './push.js';
 
 /** tools 服务缺省时的空注册(返回空 disposer 列表)。 */
 export function registerNovelcraftTools(ctx: Context, service: NovelCraftService): Array<() => void> {
@@ -23,7 +24,7 @@ export function registerNovelcraftTools(ctx: Context, service: NovelCraftService
   if (!registry || typeof registry.register !== 'function') return [];
 
   const disposers: Array<() => void> = [];
-  for (const tool of buildTools(service)) {
+  for (const tool of buildTools(ctx, service)) {
     disposers.push(registry.register(tool));
   }
   return disposers;
@@ -103,7 +104,7 @@ interface ProposeNextChapterArgs extends RootArgs {
   chapter: number;
 }
 
-function buildTools(service: NovelCraftService): ToolDefinition[] {
+function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   return [
     // ---- 1. llm_step(内容手原语, §12) ----
     defineTool({
@@ -341,6 +342,7 @@ function buildTools(service: NovelCraftService): ToolDefinition[] {
               : descriptor.kind === 'microflow'
                 ? `已路由微工作流「${descriptor.microflow ?? ''}」: 请按其阶段调用对应工具执行。`
                 : '已记录决定(校准笔记已更新)。';
+          pushSignalsChanged(ctx, { root: args.root });
           return {
             ok: true,
             action: descriptor.action,
@@ -393,6 +395,7 @@ function buildTools(service: NovelCraftService): ToolDefinition[] {
             ? { expires_when_draft_changes: args.expires_when_draft_changes }
             : {}),
         });
+        pushSignalsChanged(ctx, { root: args.root });
         return { id: signal.id };
       },
     }),
@@ -527,6 +530,7 @@ function buildTools(service: NovelCraftService): ToolDefinition[] {
       async execute(rawArgs) {
         const { root } = rawArgs as unknown as RootArgs;
         const r = service.scanHealth(root);
+        pushSignalsChanged(ctx, { root });
         return { created: r.created, skipped: r.skipped, total: r.total };
       },
     }),
