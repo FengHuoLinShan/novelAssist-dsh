@@ -1,9 +1,10 @@
-# M4 重构开发状态(codex/m4-dsh-plugin-rewrite)
+# M4 重构开发状态(novelAssist-dsh / main)
 
 ## 位置
 
-- worktree: /Users/tywww/Desktop/项目/ai-writing-assist-m4-rebuild
-- 分支: codex/m4-dsh-plugin-rewrite(tracking origin/main, 基点 a257df23e)
+- 仓库: /Users/tywww/Desktop/项目/novelAssist-dsh(独立仓库, remote origin = https://github.com/FengHuoLinShan/novelAssist-dsh.git, PUBLIC)
+- 分支: main(默认), 迁移基点为 annotated tag `dsh`(2026-08-14 完成)
+- 旧 worktree /Users/tywww/Desktop/项目/ai-writing-assist-m4-rebuild(codex/m4-dsh-plugin-rewrite)已冻结, 不动
 - 治理文档: docs/adr/0016-m4-dsh-plugin-rewrite.md(Accepted)、
   docs/adr/0017-m4-repo-form-and-mounting.md(Accepted: fork 仓库形态 + 挂载授权)、
   docs/agent/dsh-rebuild/自主智能式作家助手设计.md(决策 D1–D25)
@@ -33,12 +34,12 @@
   (boot 清单/bundle 200/playwright 浏览器零错误); 验收快照见
   docs/agent/dsh-rebuild/客户端阶段-验收.md。全仓 **231 测试全绿**。
 - [ ] client 后续迭代: 写作台四模式 / 剧情地图 / 信号主动推送(轮询→mux 事件)
-- [ ] trace contract 测试框架(C): 纯仓库工作, 设计文档 §15
-- [ ] 仓库迁出: 分支 → 独立 fork deepseek-harness 新仓库(ADR-0017 §1, 时机待定)
+- [x] **trace contract 测试框架(C)**: `@novelcraft/trace`(trace/assert/mock, 17 测试)+ `imports` 的 `runDeepImport` 编排 seam(11 测试); 全仓 **259 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/trace-contract-验收.md
+- [x] 仓库迁出: codex/m4-dsh-plugin-rewrite → 独立仓库 novelAssist-dsh(annotated tag `dsh`, 2026-08-14)
 - [ ] 旧引擎退役仪式(ai-writing-assist main, 时机另行裁决)
 
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面
   唯一收敛在 @novelcraft/dsh;
-- 旧引擎保留, 旧数据不迁移(D15); 本分支不进 main(ADR-0017)。
+- 旧引擎保留, 旧数据不迁移(D15); 新工作一律在 novelAssist-dsh 的 main 提交(旧 codex 分支已冻结, 不进 main)。

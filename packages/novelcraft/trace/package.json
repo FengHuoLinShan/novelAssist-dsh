@@ -1,6 +1,7 @@
 {
-  "name": "@novelcraft/imports",
+  "name": "@novelcraft/trace",
   "version": "0.0.1",
+  "description": "NovelCraft M4 trace contract: 事件词表 + 内存有序记录 + 策略断言 DSL + mock 决策/策略默认(零运行时依赖)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -8,12 +9,5 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json"
-  },
-  "dependencies": {
-    "@novelcraft/vault": "*",
-    "@novelcraft/store": "*",
-    "@novelcraft/llm-step": "*",
-    "@novelcraft/writing": "*",
-    "@novelcraft/trace": "*"
   }
 }
