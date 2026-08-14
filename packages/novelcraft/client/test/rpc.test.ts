@@ -190,4 +190,65 @@ describe('novelcraft RPC 处理器', () => {
     if (!result.ok) expect(result.error.message).toContain('未绑定');
     env.cleanup();
   });
+
+  it('story/map: 结构资产 + Scene/章节聚合(剧情地图)', async () => {
+    const env = setup();
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { serializeFrontmatter } = await import('@novelcraft/store');
+    const write = (abs: string, fm: Record<string, unknown>) => {
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, serializeFrontmatter(fm, ''), 'utf8');
+    };
+    write(path.join(env.root, 'chapters', '001.md'), { title: '第一章' });
+    write(path.join(env.root, 'scenes', 's001.md'), { id: 's001', status: 'draft', chapter_ids: [1], title: '初遇' });
+    write(path.join(env.root, 'structure', 'threads', '主线.md'), { id: '主线', status: 'canonical', name: '主角成长', thread_type: 'plot', start_chapter: 1 });
+    write(path.join(env.root, 'structure', 'reveal', '身世.md'), { id: '身世', status: 'canonical', name: '身世揭示', target_type: 'thread', target_id: '主线' });
+
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.storyMap({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound).toEqual({ book: '测试书', root: env.root });
+      expect(result.value.book).toBe('测试书');
+      expect(result.value.chapters).toHaveLength(1);
+      expect(result.value.scenes[0]).toMatchObject({ slug: 's001', title: '初遇' });
+      expect(result.value.threads[0]).toMatchObject({ kind: 'thread', name: '主角成长', thread_type: 'plot' });
+      expect(result.value.reveals[0]).toMatchObject({ kind: 'reveal', target_id: '主线' });
+    }
+    env.cleanup();
+  });
+
+  it('writing/desk: 四模式数据(守望信号/计划结构/参照对象/评审摘要)', async () => {
+    const env = setup();
+    pushSignal(env.root, {
+      radar: 'plot', severity: 'risk', title: '伏笔未回收', evidence: ['第1章'],
+      proposed_action: '回收', reversibility: true,
+    });
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { serializeFrontmatter } = await import('@novelcraft/store');
+    const write = (abs: string, fm: Record<string, unknown>) => {
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, serializeFrontmatter(fm, ''), 'utf8');
+    };
+    write(path.join(env.root, 'chapters', '001.md'), { title: '第一章' });
+    write(path.join(env.root, 'structure', 'threads', '主线.md'), { id: '主线', status: 'canonical', name: '主角成长', thread_type: 'plot' });
+    write(path.join(env.root, 'world', 'objects', 'obj-a.md'), { id: 'obj-a', kind: 'character', name: '克莱恩', status: 'canonical' });
+    mkdirSync(path.join(env.root, '.assistant', 'reviews'), { recursive: true });
+    writeFileSync(path.join(env.root, '.assistant', 'reviews', 'semantic-review-001-r1.json'), JSON.stringify({
+      review_id: 'r1', chapter_index: 1, verdict: '需修订', findings: [{ category: '设定', severity: 'high', quote: 'x', suggestion: 'y' }], reviewed_at: '2026-08-14T00:00:00Z',
+    }), 'utf8');
+
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.writingDesk({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound?.book).toBe('测试书');
+      expect(result.value.signals).toHaveLength(1);
+      expect(result.value.threads).toHaveLength(1);
+      expect(result.value.objects).toHaveLength(1);
+      expect(result.value.reviews[0]).toMatchObject({ chapter_index: 1, finding_count: 1 });
+    }
+    env.cleanup();
+  });
 });
+

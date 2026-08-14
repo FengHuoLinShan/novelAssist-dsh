@@ -7,7 +7,9 @@ import type {
   InboxActPayload,
   InboxActValue,
   InboxListValue,
+  StoryMapValue,
   WatchStateValue,
+  WritingDeskValue,
 } from '../wire.ts'
 import { ENDPOINTS, RPC_CHANNEL } from '../wire.ts'
 
@@ -113,3 +115,30 @@ export function useInbox(connection: RpcCaller | undefined, sessionId: string | 
 
   return { cards, bound, threshold, busy, refresh, actOn }
 }
+
+/** 剧情地图数据源(story/map; 结构资产 + Scene/章节覆盖)。 */
+export function useStoryMap(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  const [data, setData] = useState<StoryMapValue | null>(null)
+  const refresh = useCallback(async () => {
+    const value = await call<StoryMapValue>(connection, ENDPOINTS.storyMap, { sessionId })
+    if (value) setData(value)
+  }, [connection, sessionId])
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+  return { data, refresh }
+}
+
+/** 写作台数据源(writing/desk; 四模式: 守望信号/计划结构/参照对象/评审摘要)。 */
+export function useWritingDesk(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  const [data, setData] = useState<WritingDeskValue | null>(null)
+  const refresh = useCallback(async () => {
+    const value = await call<WritingDeskValue>(connection, ENDPOINTS.writingDesk, { sessionId })
+    if (value) setData(value)
+  }, [connection, sessionId])
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+  return { data, refresh }
+}
+

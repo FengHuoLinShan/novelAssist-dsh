@@ -5,18 +5,26 @@
 // → 本处理器(宿主) → @novelcraft/assistant 确定性函数(文件真相)。
 // 采用类资产写入不在此通道 —— UI 的四动词只记录决定(assistant.act),
 // adopt 由助手 agent 经 DSH approval 执行(§9 fail-closed)。
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
 import { act, inboxView, type InboxAction, type Signal } from '@novelcraft/assistant';
 import { resolvePolicy } from '@novelcraft/llm-step';
+import { rebuildIndex, storyMap } from '@novelcraft/store';
 import type {
   InboxActPayload,
   InboxActValue,
   InboxListPayload,
   InboxListValue,
+  ReviewCard,
   SignalCard,
+  StoryMapPayload,
+  StoryMapValue,
   WatchStatePayload,
   WatchStateValue,
+  WritingDeskPayload,
+  WritingDeskValue,
 } from './wire.js';
 import { ENDPOINTS } from './wire.js';
 
@@ -55,6 +63,32 @@ function card(signal: Signal): SignalCard {
     status: signal.status,
     observed_at: signal.observed_at,
   };
+}
+
+/** 读各章最新语义审查(.assistant/reviews/*.json)的摘要卡(评审台)。 */
+function readReviewCards(root: string): ReviewCard[] {
+  const dir = path.join(root, '.assistant', 'reviews');
+  if (!existsSync(dir)) return [];
+  const out: ReviewCard[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const rec = JSON.parse(readFileSync(path.join(dir, f), 'utf8')) as {
+        review_id?: string; chapter_index?: number; verdict?: string;
+        findings?: unknown[]; reviewed_at?: string;
+      };
+      out.push({
+        review_id: typeof rec.review_id === 'string' ? rec.review_id : f.replace(/\.json$/, ''),
+        chapter_index: typeof rec.chapter_index === 'number' ? rec.chapter_index : 0,
+        verdict: typeof rec.verdict === 'string' ? rec.verdict : '',
+        finding_count: Array.isArray(rec.findings) ? rec.findings.length : 0,
+        reviewed_at: typeof rec.reviewed_at === 'string' ? rec.reviewed_at : '',
+      });
+    } catch {
+      // 非法 JSON 跳过
+    }
+  }
+  return out.sort((a, b) => a.chapter_index - b.chapter_index || a.reviewed_at.localeCompare(b.reviewed_at));
 }
 
 /** 解析 vault 根: sessionId 优先, 其次 workspacePath 向上找; 都不可用 → undefined。 */
@@ -151,6 +185,51 @@ export function createNovelcraftHandlers(ctx: Context) {
           kind: descriptor.kind,
           ...(descriptor.microflow ? { microflow: descriptor.microflow } : {}),
           message: guide,
+        });
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
+    async storyMap(payload: StoryMapPayload): Promise<RpcResult<StoryMapValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcOk({ bound: null, book: '', chapters: [], scenes: [], threads: [], arcs: [], foreshadowing: [], reveals: [] });
+      }
+      try {
+        const m = storyMap(binding.root);
+        return rpcOk({
+          bound: { book: binding.book, root: binding.root },
+          book: m.book,
+          chapters: m.chapters,
+          scenes: m.scenes,
+          threads: m.threads,
+          arcs: m.arcs,
+          foreshadowing: m.foreshadowing,
+          reveals: m.reveals,
+        });
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
+    async writingDesk(payload: WritingDeskPayload): Promise<RpcResult<WritingDeskValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) {
+        return rpcOk({ bound: null, book: '', chapters: [], threads: [], arcs: [], signals: [], objects: [], reviews: [] });
+      }
+      try {
+        const m = storyMap(binding.root);
+        const index = rebuildIndex(binding.root);
+        return rpcOk({
+          bound: { book: binding.book, root: binding.root },
+          book: m.book,
+          chapters: m.chapters,
+          threads: m.threads.map((t) => ({ slug: t.slug, name: t.name, thread_type: t.thread_type, status: t.status })),
+          arcs: m.arcs.map((a) => ({ slug: a.slug, name: a.name, status: a.status })),
+          signals: inboxView(binding.root).map(card),
+          objects: index.objects.map((o) => ({ slug: o.slug, name: o.name, kind: o.kind, status: o.status })),
+          reviews: readReviewCards(binding.root),
         });
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));

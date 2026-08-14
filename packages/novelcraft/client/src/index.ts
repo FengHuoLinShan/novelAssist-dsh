@@ -19,9 +19,16 @@ export type {
   InboxActValue,
   InboxListPayload,
   InboxListValue,
+  ObjectCard,
+  ReviewCard,
   SignalCard,
+  StoryMapAssetCard,
+  StoryMapPayload,
+  StoryMapValue,
   WatchStatePayload,
   WatchStateValue,
+  WritingDeskPayload,
+  WritingDeskValue,
 } from './wire.js';
 export type { NovelcraftHostService } from './rpc.js';
 export { createNovelcraftHandlers } from './rpc.js';
@@ -44,6 +51,10 @@ export function apply(ctx: Context): void {
         return handlers.inboxList(payload as never);
       case ENDPOINTS.inboxAct:
         return handlers.inboxAct(payload as never);
+      case ENDPOINTS.storyMap:
+        return handlers.storyMap(payload as never);
+      case ENDPOINTS.writingDesk:
+        return handlers.writingDesk(payload as never);
       default:
         return { ok: false, error: { code: 'internal', message: `unknown endpoint: ${endpoint}`, details: {} } };
     }

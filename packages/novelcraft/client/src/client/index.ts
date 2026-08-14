@@ -8,6 +8,10 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { PetAction } from './PetAction.tsx'
 import type { PetActionProps } from './PetAction.tsx'
+import { StoryMapAction } from './StoryMapAction.tsx'
+import type { StoryMapActionProps } from './StoryMapAction.tsx'
+import { WritingDeskAction } from './WritingDeskAction.tsx'
+import type { WritingDeskActionProps } from './WritingDeskAction.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -17,9 +21,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export type { PetActionProps }
+export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps }
 export { NS }
 export { PetAction } from './PetAction.tsx'
+export { StoryMapAction } from './StoryMapAction.tsx'
+export { WritingDeskAction } from './WritingDeskAction.tsx'
 
 /** 浏览器侧连接投影(结构面; 与 dsh-client-connection/client 的 ConnectionHandle 对齐)。 */
 export interface RpcCaller {
@@ -38,6 +44,7 @@ export const inject = ['slots', 'locale', 'connection']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'novelcraft: dictionaries')
   const connection = ctx.get('connection') as RpcCaller | undefined
+  const actionSlot = () => ({ connection })
   ctx.slots.inject(
     'conversation.session.header.actions',
     () => ctx.slots.register({
@@ -46,7 +53,27 @@ export function apply(ctx: ClientContext): void {
       // 会话进程类动作之后(job-list order 20; 守望常驻其右)。
       order: 30,
       locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => ({ connection }),
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
     }, PetAction),
+  )
+  ctx.slots.inject(
+    'conversation.session.header.actions',
+    () => ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'novelcraft-story-map',
+      order: 40,
+      locale: NS,
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
+    }, StoryMapAction),
+  )
+  ctx.slots.inject(
+    'conversation.session.header.actions',
+    () => ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'novelcraft-writing-desk',
+      order: 50,
+      locale: NS,
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
+    }, WritingDeskAction),
   )
 }

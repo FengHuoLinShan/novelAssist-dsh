@@ -7,6 +7,8 @@ export const ENDPOINTS = {
   watchState: 'watch/state',
   inboxList: 'inbox/list',
   inboxAct: 'inbox/act',
+  storyMap: 'story/map',
+  writingDesk: 'writing/desk',
 } as const;
 
 export interface WatchStatePayload {
@@ -62,4 +64,79 @@ export interface InboxActValue {
   kind: 'adopt' | 'microflow' | 'record';
   microflow?: string;
   message: string;
+}
+
+export interface StoryMapPayload {
+  sessionId?: string;
+  workspacePath?: string;
+}
+
+export interface StoryMapAssetCard {
+  kind: 'thread' | 'arc' | 'foreshadowing' | 'reveal';
+  slug: string;
+  name: string;
+  status: string;
+  summary?: string;
+  thread_type?: string;
+  start_chapter?: number;
+  end_chapter?: number;
+  chapter_range?: number[];
+  planned_payoff_chapter?: number;
+  planned_payoff_scene?: string;
+  related_thread_ids?: string[];
+  target_type?: string;
+  target_id?: string;
+  secret_summary?: string;
+}
+
+export interface StoryMapSceneCard {
+  slug: string;
+  status: string;
+  chapters: string[];
+  title?: string;
+}
+
+export interface StoryMapValue {
+  bound: { book: string; root: string } | null;
+  book: string;
+  chapters: Array<{ index: number; title?: string }>;
+  scenes: StoryMapSceneCard[];
+  threads: StoryMapAssetCard[];
+  arcs: StoryMapAssetCard[];
+  foreshadowing: StoryMapAssetCard[];
+  reveals: StoryMapAssetCard[];
+}
+
+export interface WritingDeskPayload {
+  sessionId?: string;
+  workspacePath?: string;
+}
+
+export interface ReviewCard {
+  review_id: string;
+  chapter_index: number;
+  verdict: string;
+  finding_count: number;
+  reviewed_at: string;
+}
+
+export interface ObjectCard {
+  slug: string;
+  name: string;
+  kind: string;
+  status: string;
+}
+
+export interface WritingDeskValue {
+  bound: { book: string; root: string } | null;
+  book: string;
+  chapters: Array<{ index: number; title?: string }>;
+  threads: Array<{ slug: string; name: string; thread_type?: string; status: string }>;
+  arcs: Array<{ slug: string; name: string; status: string }>;
+  /** 守望台: 新鲜信号 */
+  signals: SignalCard[];
+  /** 参照台: 已采用/候选对象 */
+  objects: ObjectCard[];
+  /** 评审台: 各章最新语义审查 */
+  reviews: ReviewCard[];
 }

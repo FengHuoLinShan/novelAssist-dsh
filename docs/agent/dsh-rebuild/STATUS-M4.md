@@ -33,8 +33,10 @@
   键盘流 + `/novelcraft` loopback RPC)8 测试全绿 + tsdown 构建链 + 真实 web 端到端
   (boot 清单/bundle 200/playwright 浏览器零错误); 验收快照见
   docs/agent/dsh-rebuild/客户端阶段-验收.md。全仓 **231 测试全绿**。
-- [ ] client 后续迭代: 写作台四模式 / 剧情地图 / 信号主动推送(轮询→mux 事件)
 - [x] **trace contract 测试框架(C)**: `@novelcraft/trace`(trace/assert/mock, 17 测试)+ `imports` 的 `runDeepImport` 编排 seam(11 测试); 全仓 **259 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/trace-contract-验收.md
+- [x] **C 的 DSH 挂载收尾**: `@novelcraft/dsh` 新增 `deepImport` 便捷方法 + `novelcraft_deep_import` 工具(runtime.provider=DshProvider、approve=ApprovalGate fail-closed、trace=ImportTraceSink 落 .assistant/import-trace.jsonl), 3 测试
+- [x] **client 迭代**: 剧情地图(`store.storyMap` + story/map 端点 + StoryMapAction)+ 写作台四模式(writing/desk 端点 + WritingDeskAction, 守望/计划/评审/参照 tab), 4 测试; 全仓 **266 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/client-迭代-验收.md
+- [ ] 信号主动推送(轮询→mux): 阻塞在 DSH 共享层(平台模块不暴露订阅 seam, ConnectionHandle.start 单持有), 需上层 ADR; 现状 5s 轮询 + 动作后即时刷新(见 client/README.md §信号推送)
 - [x] 仓库迁出: codex/m4-dsh-plugin-rewrite → 独立仓库 novelAssist-dsh(annotated tag `dsh`, 2026-08-14)
 - [ ] 旧引擎退役仪式(ai-writing-assist main, 时机另行裁决)
 
