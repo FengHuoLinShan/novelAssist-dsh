@@ -1,18 +1,18 @@
-# 开发模式 profile patch 示例(R7 挂载阶段后可用; 当前为占位结构)。
-# 挂载阶段把各 @novelcraft/* 核心包经 Cordis 服务插件注入 DSH profile;
-# 具体 service key 与 seam 见 packages/novelcraft/README.md「DSH 挂载阶段 seam 契约」。
+# 开发模式 profile patch 示例(挂载阶段 A 已落地, ADR-0017)。
+# @novelcraft/dsh 是唯一 DSH 接触面: 一个 Cordis 服务插件, 内部完成
+# llm/approval/storage-domain/jobs/vault 绑定/工具 六类 seam 适配
+# (见 packages/novelcraft/dsh/README.md「seam 适配矩阵」)。
+# storage/llm/approval/jobs/credentials/tools 等 DSH 官方服务由 profile
+# bundle 提供, 不在此重复列出。
 
-services:
+plugins:
   novelcraft:
-    # 每个包一个服务插件(挂载阶段实现; 此处仅示意结构)
-    vault: "@novelcraft/vault"
-    store: "@novelcraft/store"
-    llmStep: "@novelcraft/llm-step"
-    imports: "@novelcraft/imports"
-    world: "@novelcraft/world"
-    outline: "@novelcraft/outline"
-    writing: "@novelcraft/writing"
-    memory: "@novelcraft/memory"
-    rag: "@novelcraft/rag"
-    context: "@novelcraft/context"
-    assistant: "@novelcraft/assistant"
+    name: "@novelcraft/dsh"
+    config:
+      llm:
+        provider: deepseek          # 内容手默认路由(运行时 DSH 模型切换可覆盖)
+        model: deepseek-chat
+      vaultsDir: ~/Novels           # 每书一个子文件夹(D17)
+      watch:
+        enabled: false              # 雷达低频巡检默认关(D6)
+        intervalMinutes: 60

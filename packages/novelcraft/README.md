@@ -25,19 +25,21 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | R0 Spec 提取 | ✅ specs/(assets/prompts/rules + 两批裁定) | — |
 | R1–R5 核心包 | ✅ 11 包 192 测试全绿 | vault/store/llm-step/writing/imports/world/outline/memory/context/rag/assistant |
 | R6 assistant | ✅ 核心(信号/收件箱/校准/微工作流 6 条) | radar 调度面 = 挂载阶段 |
-| R7 client + 发布 | 📋 preset 已平移 + starter 已备; client UI 待 DSH 源码 checkout | client/README.md、starter/README.md |
+| 挂载阶段(A, ADR-0017) | ✅ `@novelcraft/dsh` 适配包 31 测试全绿 + `scripts/m5-mount-demo.mjs` 全链 | 见 `dsh/README.md` seam 适配矩阵 |
+| R7 client + 发布 | 📋 preset 已平移 + starter 已备; client UI 待 client 阶段(B) | client/README.md、starter/README.md |
 
-## DSH 挂载阶段 seam 契约(R6/R7 前置, 现在定清)
+## DSH 挂载阶段 seam 契约
 
-以下适配器**本阶段不实现**(保持核心零 DSH 依赖), 但接口形状现在定死, 后续
-挂载阶段照此实现, 核心包不得回头改接口:
+以下契约在挂载阶段(A)已由 **`@novelcraft/dsh`** 实现(核心包接口未回头改动),
+实现与测试见 `dsh/README.md` + `dsh/test/`:
 
 | seam | 接口形状 | 归属包 |
 |---|---|---|
-| LLM 真 provider | `Provider`(llm-step 的接口): 实现 `complete(req)` 内部转 DSH `ctx.llm` 调用; model/temperature 取自 ResolvedPolicy | llm-step 适配层 |
-| 凭据 | DSH credentials 子系统读取 Key; `.assistant/llm.yml` 只存预设名与参数, 不存 Key(D13/§22.5) | llm-step 适配层 |
-| 审批 | `ApprovalGate.request({action, summary, items}) → allowed-once/rejected`(包 DSH approval 服务, fail-closed) | store 适配层 |
-| 长任务/守望 | 雷达调度 → DSH `ctx.jobs`(每雷达一轮 = 一个 job)+ `ctx.schedule`(低频巡检, 默认关 D6)+ goal(整体目标) | assistant 适配层 |
-| 会话/工作区绑定 | 每书一个 DSH session 绑定一个 vault 根(D17); 子代理 prompt 注入书名/路径(§14) | vault 适配层 |
-| 存储索引 | `rebuildIndex` 产物 → `ctx.storage` domain KV(sqlite)的可选持久化; 文件仍为唯一真相(§22.2) | store 适配层 |
-| client UI | client-modules 注入: 宠物/收件箱/写作台读 `.assistant/signals/*.json` 与 reviews(§17); 动作回调走核心包的确定性函数 | client 包 |
+| LLM 真 provider | `DshProvider`(llm-step `Provider`): `complete(req)` 内部转 DSH `ctx.llm` 调用; model/temperature 取自 ResolvedPolicy/overrides | `@novelcraft/dsh` llm 适配层 |
+| 凭据 | DSH credentials 子系统读取 Key; `.assistant/llm.yml` 只存预设名与参数, 不存 Key(D13/§22.5) | `@novelcraft/dsh`(消费面) |
+| 审批 | `ApprovalGate.request(agent, {action, summary, items}) → allowed-once/rejected`(包 DSH approval 服务, fail-closed) | `@novelcraft/dsh` 审批门 |
+| 长任务/守望 | 雷达调度 → DSH `ctx.jobs`(每雷达一轮 = 一个 job)+ 可选 interval(D6 默认关); goal 归 DSH 会话级 goal | `@novelcraft/dsh` 雷达调度 |
+| 会话/工作区绑定 | 每书一个 DSH session 绑定一个 vault 根(D17); 子代理 prompt 注入书名/路径(§14) | `@novelcraft/dsh` vault 绑定 |
+| 存储索引 | `rebuildIndex` 产物 → novelcraft domain KV(可选持久化); 文件仍为唯一真相(§22.2) | `@novelcraft/dsh` storage 缓存 |
+| 工具面 | `ctx.tools`: llm_step/store_index/store_adopt(审批门控)/inbox_view/inbox_act/signal_push | `@novelcraft/dsh` tools |
+| client UI | client-modules 注入: 宠物/收件箱/写作台读 `.assistant/signals/*.json` 与 reviews(§17); 动作回调走核心包的确定性函数 | client 包(B 阶段) |

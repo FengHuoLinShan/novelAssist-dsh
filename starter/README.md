@@ -11,22 +11,30 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 ## 安装(发布后)
 
 ```sh
-# 1. 安装插件族(发布后)
-dsh plugin add @novelcraft/vault @novelcraft/store @novelcraft/llm-step \
-  @novelcraft/imports @novelcraft/world @novelcraft/outline @novelcraft/writing \
-  @novelcraft/memory @novelcraft/rag @novelcraft/context @novelcraft/assistant \
-  @novelcraft/preset @novelcraft/client
+# 1. 安装插件族(发布后): dsh 是唯一 DSH 接触面(挂载阶段 A, ADR-0017),
+#    其余核心包是它的纯 TS 依赖, 随 npm 自动拉取。
+dsh plugin add @novelcraft/dsh @novelcraft/preset @novelcraft/client
 
-# 2. 装 agent presets
+# 2. profile patch 加一行(见 dev-profile/cordis.patch.yml):
+#    plugins:
+#      novelcraft: { name: "@novelcraft/dsh", config: { vaultsDir: ~/Novels } }
+
+# 3. 装 agent presets
 #    packages/novelcraft/preset/presets/novelcraft-* → $DSH_HOME/.agent-presets/<name>/
 
-# 3. 开 DSH web, 说「新建一本书」——插件会在 ~/Novels/<书名>/ 建工作区
+# 4. 开 DSH web, 说「新建一本书」——插件会在 ~/Novels/<书名>/ 建工作区
 ```
 
 ## 开发模式(本仓库内)
 
-在 DSH profile 的 `cordis.patch.yml` 注入本仓库各包的源码入口(见 `dev-profile/`
-示例), 即可在 monorepo 内热开发。
+挂载阶段(A)已完成并验证:
+
+- 单元测试: `cd packages/novelcraft/dsh && npm test`(31 条 seam 行为契约,
+  真实 cordis/storage/storage-json/storage-domain/llm + 假 approval/jobs/credentials)。
+- 集成 demo: `node scripts/m5-mount-demo.mjs` 纯 node 跑通挂载全链
+  (vault 初始化 → 索引 → 收件箱 → llm_step → 审批采用 → 雷达 job → 会话回查)。
+- 进 DSH profile 热开发: 在 profile 的 `cordis.patch.yml` 注入 `@novelcraft/dsh`
+  (见 `dev-profile/` 示例); client UI 待 client 阶段(B)。
 
 ## 一句话开始
 
@@ -40,7 +48,8 @@ dsh plugin add @novelcraft/vault @novelcraft/store @novelcraft/llm-step \
 | 依赖面 | 版本 | 备注 |
 |---|---|---|
 | DSH | 0.1.0-rc.6 | 锁版本; 升级窗口随官方破坏性变更公告单独评估 |
-| seam: storage domain / jobs / scope / credentials / approval / client-modules | rc.6 行为 | 挂载阶段依赖; 升级前跑契约门禁(§15) |
+| seam: llm / approval / storage-domain / jobs / credentials / tools | rc.6 行为 | **挂载阶段 A 已实现**于 `@novelcraft/dsh`(peer deps); 升级前跑其 31 条行为契约 |
+| seam: client-modules / schedule | rc.6 行为 | client UI 待 client 阶段(B); 低频巡检默认关(D6) |
 | Node | ≥ 22 | |
 | git | 任意现代版本 | 每书一个 git 仓库(版本真相) |
 
