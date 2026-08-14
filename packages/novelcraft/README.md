@@ -23,11 +23,9 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | 阶段 | 状态 | 计划 |
 |---|---|---|
 | R0 Spec 提取 | ✅ specs/(assets/prompts/rules + 两批裁定) | — |
-| R1 内核 vault/store | ✅ 97 测试全绿 | — |
-| R2 llm-step | 🔄 实现中(重派发: 内置 schema 校验器, 零网络依赖) | — |
-| R3 writing 垂直切片 | 📋 计划 | writing/PLAN.md |
-| R4 imports 六阶段 | 📋 计划 | imports/PLAN.md |
-| R5–R7 | 📋 计划 | 后续阶段-PLAN.md |
+| R1–R5 核心包 | ✅ 11 包 192 测试全绿 | vault/store/llm-step/writing/imports/world/outline/memory/context/rag/assistant |
+| R6 assistant | ✅ 核心(信号/收件箱/校准/微工作流 6 条) | radar 调度面 = 挂载阶段 |
+| R7 client + 发布 | 📋 preset 已平移 + starter 已备; client UI 待 DSH 源码 checkout | client/README.md、starter/README.md |
 
 ## DSH 挂载阶段 seam 契约(R6/R7 前置, 现在定清)
 
