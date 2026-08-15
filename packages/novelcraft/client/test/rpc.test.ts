@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
 import { pushSignal } from '@novelcraft/assistant';
+import { writeAtlasNode, writeAtlasPage } from '@novelcraft/world';
 import { initVault } from '@novelcraft/vault';
 import { describe, expect, it } from 'vitest';
 import { createNovelcraftHandlers, type NovelcraftHostService } from '../src/index.js';
@@ -561,3 +562,76 @@ describe('novelcraft RPC 处理器', () => {
   });
 });
 
+describe('atlas 端点(Phase 6)', () => {
+  it('atlas/view: 未绑定 → 空态; 绑定后读树 + run + 队列状态', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    let r = await h.atlasView({ sessionId: 'unknown' });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.bound).toBeNull();
+      expect(r.value.adopted.nodes.length).toBe(0);
+    }
+    // 候选 + adopted 树投影
+    writeAtlasNode(env.root, {
+      id: 'n1', parent_ref: null, location_ref: null, semantic_key: 'entity:n1',
+      level: 'world', title: '临水城', status: 'provisional', sort_order: 0,
+    });
+    writeAtlasPage(env.root, {
+      id: 'pg1', run_ref: 'run-t', node_ref: 'n1', generation_status: 'prompt_only',
+      review_status: 'candidate', title: '临水城', visual_brief: 'v', prompt: 'p',
+      evidence: { supported: [], visual_fill: [], conflicts: [] },
+      source_manifest: [], annotations: [], review_note: null,
+      adopted_at: null, rejected_at: null, deprecated_at: null, content_hash: 'h-pg1',
+    });
+    r = await h.atlasView({ sessionId: 's1' });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.bound?.book).toBe('测试书');
+      expect(r.value.pending.nodes[0]?.title).toBe('临水城');
+      expect(r.value.pending.pages[0]?.generation_status).toBe('prompt_only');
+      expect(r.value.pending.pages[0]?.image_missing).toBe(false);
+    }
+    env.cleanup();
+  });
+
+  it('atlas/annotation-request: 只落队列 + 信号, 不写 page 资产(铁律 3); 坐标越界拒', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    writeAtlasPage(env.root, {
+      id: 'pg1', run_ref: 'run-t', node_ref: 'n1', generation_status: 'prompt_only',
+      review_status: 'candidate', title: '临水城', visual_brief: 'v', prompt: 'p',
+      evidence: { supported: [], visual_fill: [], conflicts: [] },
+      source_manifest: [], annotations: [], review_note: null,
+      adopted_at: null, rejected_at: null, deprecated_at: null, content_hash: 'h-pg1',
+    });
+    // 越界坐标拒
+    let r = await h.atlasAnnotationRequest({
+      sessionId: 's1', page_ref: 'pg1', base_content_hash: 'h-pg1',
+      ops: [{ op: 'add', label: 'x', position_x: 1.5, position_y: 0 }],
+    });
+    expect(r.ok).toBe(false);
+    // 合法: 队列文件落盘 + page 文件未变(无 git 提交由本端点产生)
+    const { execFileSync } = await import('node:child_process');
+    const before = execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: env.root, encoding: 'utf8' }).trim();
+    r = await h.atlasAnnotationRequest({
+      sessionId: 's1', page_ref: 'pg1', base_content_hash: 'h-pg1',
+      ops: [{ op: 'add', id: 'ann-9', label: '洛阳', position_x: 0.2, position_y: 0.8 }],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.queued).toBe(1);
+      const { existsSync, readFileSync } = await import('node:fs');
+      expect(existsSync(r.value.file)).toBe(true);
+      const payload = JSON.parse(readFileSync(r.value.file, 'utf8'));
+      expect(payload.base_content_hash).toBe('h-pg1');
+      expect(payload.ops[0].position_x).toBe(0.2);
+    }
+    const after = execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: env.root, encoding: 'utf8' }).trim();
+    expect(after).toBe(before); // 队列不 git commit(记录面, 非资产)
+    // page 资产未被改(annotations 仍空)
+    const tree = (await import('@novelcraft/world')).readAtlasTree(env.root);
+    expect(tree.pendingPages[0]?.annotations.length).toBe(0);
+    env.cleanup();
+  });
+});

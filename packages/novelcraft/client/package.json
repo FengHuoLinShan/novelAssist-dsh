@@ -42,6 +42,8 @@
     "@novelcraft/assistant": "*",
     "@novelcraft/llm-step": "*",
     "@novelcraft/store": "*",
+    "@novelcraft/vault": "*",
+    "@novelcraft/world": "*",
     "@novelcraft/writing": "*"
   },
   "peerDependencies": {

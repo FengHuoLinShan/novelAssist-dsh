@@ -7,6 +7,7 @@ export type NovelcraftKey =
   | 'pet.busy'
   | 'pet.attention'
   | 'pet.title'
+  | 'atlas.title'
   | 'pet.plot'
   | 'inbox.title'
   | 'inbox.empty'
@@ -110,6 +111,7 @@ export const zh: Record<NovelcraftKey, string> = {
   'pet.busy': '忙碌',
   'pet.attention': '待确认',
   'pet.title': 'NovelCraft 守望',
+  'atlas.title': '地图册',
   'pet.plot': '当前剧情',
   'inbox.title': '收件箱',
   'inbox.empty': '没有待处理信号。',
@@ -214,6 +216,7 @@ export const en: Record<NovelcraftKey, string> = {
   'pet.busy': 'Busy',
   'pet.attention': 'Needs you',
   'pet.title': 'NovelCraft Watch',
+  'atlas.title': 'Map atlas',
   'pet.plot': 'Current plot',
   'inbox.title': 'Inbox',
   'inbox.empty': 'No open signals.',

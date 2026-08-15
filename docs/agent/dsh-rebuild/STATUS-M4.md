@@ -89,6 +89,34 @@
 - 裁定: specs/adjudications.md 第六批 N23–N31(M7 占 N23/N24/N25/N26/N27/N30/N31;
   N28/N29 属并行的第七批 map-atlas 批次); 全仓测试 **517 全绿**, typecheck 零错误(HEAD 15e6c166)
 
+## M7 map-atlas(世界地图册文件模型迁移, 提交区间 ddce06fe..Phase 6)
+
+- [x] **Phase 0 契约**(ddce06fe): ADR-0020 + specs/assets/map-atlas.md + catalog §4.11(无生图)/
+  §4.12(map_spatial_facts) + policy §9 + 裁定第七批 N28(不生图/prompt_only 不可 adopt/空页占位可 adopt)/
+  N29(本地图片路径导入写边界, 图片 gitignore) + skills 预告 + 实施计划/移植锚点。
+- [x] **Phase 1 文件基建**(ea251ed8): vault world.atlas/assistant.atlas 路径组 + gitignore images/;
+  world map-atlas types/read/write(nodes/pages/pending/images/runs, guardPath+单 commit); 66 测试。
+- [x] **Phase 2 上下文+空间事实**(5825baf1 + review 修复 4f765282): compileAtlasContext(canonical 地点 ≤20 /
+  8000 字预算 / 确定性 context_hash) + extractSpatialFacts(批 5 / 白名单逐条丢 / 三桶分区 / 指纹复用 +
+  checkpoint 续跑); catalog §4.12 精确口径。
+- [x] **Phase 3 AtlasPlan 编排**(3b275244): planMapAtlas orchestrator(7 步 / update 无变化短路不调 LLM /
+  fail-closed plan_validation_failed) + 校验器纯函数族(结构 8 条含⑦ M4 翻转父 rank>子 / 来源白名单 +
+  open_target 逐字段 + working 不独撑 / 语义键 entity:{slug}+path:{父}:{sha256前20} / update 三规则);
+  review 修 H1(prevManifest 排除本轮 run)/M3(budgetTokens=0 输入主导豁免, N27)。
+- [x] **Phase 4 生命周期**(5f20c065 + d67be28f): adoptAtlasPage(CAS+有图门禁+conflicts 确认+祖先链原子
+  adopt+approve fail-closed+单 commit) / adoptAtlasPlaceholder 空占位 / reject(review_ready 限定,
+  prompt_only 拒) / archive(不硬删) / restore(祖先补齐+刷新 adopted_at) / updateAtlasPrompt /
+  updateAtlasNode(新父必须 adopted); importAtlasImage(magic bytes PNG/JPEG+≤50MB+16~8192px+sha256,
+  图片永不 git add); annotation CRUD(ann- 前缀/坐标 0–1/target 仅 adopted/hash 重算)。
+- [x] **Phase 5 DSH 工具**(805a37a0): 6 新工具(14→20) map_atlas_plan(timeout 3600s, evidence_summary)/
+  view/upload(附录 A.2 provisional 节点)/review(5 action 枚举收窄, adopt 类 ApprovalGate)/
+  annotation(队列主路径 + base_content_hash CAS + 单 commit 原子, 规则 11)/update_prompt;
+  FakeApproval 三态端到端。
+- [x] **Phase 6 客户端+交付**: client wire/rpc atlas/view(读)+atlas/annotation-request(只落队列+信号,
+  不写资产, 铁律 3) + MapAtlasAction(本次规划/我的地图册双 tab, 空页占位可点, 缺图态不渲染标签层,
+  标签双击加/拖动/改名/删除 → 保存入队, 坐标恒 0–1) + scripts/m7-map-atlas-demo.mjs(全环可复现)。
+- 全仓测试 **589 全绿**, typecheck 零错误; 每 Phase 独立 commit + 独立 review(发现均修复后提交)。
+
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面

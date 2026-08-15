@@ -5,13 +5,21 @@
 // → 本处理器(宿主) → @novelcraft/assistant 确定性函数(文件真相)。
 // 采用类资产写入不在此通道 —— UI 的四动词只记录决定(assistant.act),
 // adopt 由助手 agent 经 DSH approval 执行(§9 fail-closed)。
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
-import { act, inboxView, plotSummaryLine, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
+import { act, inboxView, plotSummaryLine, pushSignal, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
 import { DEFAULT_CONTENT_PRESETS, resolvePolicy, selectPresetInLlmYml } from '@novelcraft/llm-step';
 import { chapterDossier, rebuildIndex, storyMap } from '@novelcraft/store';
+import { paths as vaultPaths, guardPath } from '@novelcraft/vault';
+import {
+  latestAtlasRun,
+  readAtlasRun,
+  readAtlasTree,
+  type AtlasNodeView,
+  type AtlasPageView,
+} from '@novelcraft/world';
 import { latestProposal, type ProposalRecord } from '@novelcraft/writing';
 import type {
   ChapterDossierAsset,
@@ -24,6 +32,13 @@ import type {
   InboxListValue,
   PresetsListPayload,
   PresetsListValue,
+  AtlasAnnotationRequestPayload,
+  AtlasAnnotationRequestValue,
+  AtlasLabelCard,
+  AtlasNodeCard,
+  AtlasPageCard,
+  AtlasViewPayload,
+  AtlasViewValue,
   PresetsSelectPayload,
   PresetsSelectValue,
   ReviewCard,
@@ -192,6 +207,9 @@ function presetCard(p: PresetLike, seedNames: ReadonlySet<string>): ContentPrese
     source: seedNames.has(p.name) ? 'seed' : 'stored',
   };
 }
+
+/** 图片预览上限: ≤2MB 给 base64 data URL, 大图只回元数据与相对路径(计划 Phase 6)。 */
+const ATLAS_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 已注册 provider 路由 id 列表(ctx.llm); 服务缺省/抛错 → 空数组, 不炸。 */
 function listAvailableProviders(ctx: Context): string[] {
@@ -453,6 +471,169 @@ export function createNovelcraftHandlers(ctx: Context) {
         active: resolvePolicy(binding.root).llm.preset ?? null,
         message: '已恢复默认(内容手继承助手配置)',
       });
+    },
+
+    // ---- map-atlas(Phase 6; 只读视图 + 标注队列请求, 不写资产; 铁律 3) ----
+    async atlasView(payload: AtlasViewPayload): Promise<RpcResult<AtlasViewValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      const empty: AtlasViewValue = {
+        bound: binding ? { book: binding.book, root: binding.root } : null,
+        run: null,
+        adopted: { nodes: [], pages: [] },
+        pending: { nodes: [], pages: [] },
+        queue: { files: 0, ops: 0, pages: [] },
+      };
+      if (!binding) return rpcOk(empty);
+      try {
+        const root = binding.root;
+        const tree = readAtlasTree(root);
+        const run = payload.runId ? readAtlasRun(root, payload.runId) : latestAtlasRun(root);
+        const atlasDir = vaultPaths(root).world.atlas.dir;
+        const toLabels = (pg: AtlasPageView): AtlasLabelCard[] =>
+          pg.annotations.map((a) => ({
+            id: a.id,
+            label: a.label,
+            position_x: a.position_x,
+            position_y: a.position_y,
+            ...(a.target_node_ref !== undefined ? { target_node_ref: a.target_node_ref } : {}),
+            ...(a.sort_order !== undefined ? { sort_order: a.sort_order } : {}),
+          }));
+        const toPageCard = (pg: AtlasPageView, level: string): AtlasPageCard => {
+          let image: AtlasPageCard['image'];
+          if (pg.image) {
+            let preview: string | undefined;
+            try {
+              const abs = guardPath(root, path.join(atlasDir, pg.image.file));
+              if (existsSync(abs) && pg.image.byte_size <= ATLAS_PREVIEW_MAX_BYTES) {
+                preview = `data:${pg.image.media_type};base64,${readFileSync(abs).toString('base64')}`;
+              }
+            } catch {
+              preview = undefined; // 预览失败只回元数据(不炸)。
+            }
+            image = {
+              file: pg.image.file,
+              media_type: pg.image.media_type,
+              width: pg.image.width,
+              height: pg.image.height,
+              byte_size: pg.image.byte_size,
+              ...(preview !== undefined ? { preview_data_url: preview } : {}),
+            };
+          }
+          return {
+            id: pg.id,
+            node_ref: pg.node_ref,
+            title: pg.title,
+            level,
+            generation_status: pg.generation_status,
+            review_status: pg.review_status,
+            visual_brief: pg.visual_brief,
+            prompt: pg.prompt,
+            evidence: pg.evidence,
+            ...(image ? { image } : {}),
+            image_missing: pg.image_missing,
+            annotations: toLabels(pg),
+            content_hash: pg.content_hash,
+          };
+        };
+        const toNodeCard = (n: AtlasNodeView): AtlasNodeCard => ({
+          id: n.id,
+          parent_ref: n.parent_ref,
+          title: n.title,
+          level: n.level,
+          status: n.status,
+          is_placeholder: n.is_placeholder,
+        });
+        const levelOf = (nodeRef: string): string =>
+          [...tree.nodes, ...tree.pendingNodes].find((n) => n.id === nodeRef)?.level ?? 'world';
+        const queueDir = vaultPaths(root).assistant.atlas.annotationQueue;
+        const queueFiles = existsSync(queueDir) ? readdirSync(queueDir).filter((f) => f.endsWith('.json')) : [];
+        const queuePages: string[] = [];
+        let queueOps = 0;
+        for (const f of queueFiles) {
+          try {
+            const q = JSON.parse(readFileSync(path.join(queueDir, f), 'utf8')) as { page_ref?: string; ops?: unknown[] };
+            if (q.page_ref) queuePages.push(q.page_ref);
+            if (Array.isArray(q.ops)) queueOps += q.ops.length;
+          } catch {
+            // 非法队列文件跳过(容错)。
+          }
+        }
+        return rpcOk({
+          bound: { book: binding.book, root },
+          run: run
+            ? {
+                id: run.id,
+                run_kind: run.run_kind,
+                status: run.status,
+                planned_page_count: run.planned_page_count,
+                error_code: run.error_code,
+                error_message: run.error_message,
+                created_at: run.created_at ?? '',
+              }
+            : null,
+          adopted: {
+            nodes: tree.nodes.map(toNodeCard),
+            pages: tree.pages.map((pg) => toPageCard(pg, levelOf(pg.node_ref))),
+          },
+          pending: {
+            nodes: tree.pendingNodes.map(toNodeCard),
+            pages: tree.pendingPages.map((pg) => toPageCard(pg, levelOf(pg.node_ref))),
+          },
+          queue: { files: queueFiles.length, ops: queueOps, pages: queuePages },
+        });
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
+    /**
+     * 标注请求(计划 Phase 6 L1+快捷编辑桥): 不写 page 资产 —— 只把精确 ops 落盘
+     * .assistant/atlas/annotation-queue/<page_ref>.json 并 push 一条信号(铁律 3: RPC 只记录)。
+     * 应用由助手 agent 调 novelcraft_map_atlas_annotation 工具(CAS + 单 commit + 清队列)。
+     */
+    async atlasAnnotationRequest(payload: AtlasAnnotationRequestPayload): Promise<RpcResult<AtlasAnnotationRequestValue>> {
+      const binding = await resolveRoot(novelcraft, payload);
+      if (!binding) return rpcFail('未绑定 vault');
+      try {
+        if (!payload.page_ref?.trim()) return rpcFail('page_ref 必填');
+        if (!Array.isArray(payload.ops) || payload.ops.length === 0) return rpcFail('ops 至少一条');
+        // 只收精确结构化 ops; 坐标恒为归一化 0–1(规则 11), 不做任何自然语言换算。
+        for (const op of payload.ops) {
+          if (!['add', 'update', 'delete'].includes(op.op)) return rpcFail(`非法 op: ${op.op}`);
+          if (op.position_x !== undefined && (op.position_x < 0 || op.position_x > 1)) return rpcFail('position_x 必须 0–1');
+          if (op.position_y !== undefined && (op.position_y < 0 || op.position_y > 1)) return rpcFail('position_y 必须 0–1');
+        }
+        const root = binding.root;
+        const queueDir = vaultPaths(root).assistant.atlas.annotationQueue;
+        const file = guardPath(root, path.join(queueDir, `${payload.page_ref}.json`));
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(
+          file,
+          JSON.stringify(
+            { page_ref: payload.page_ref, base_content_hash: payload.base_content_hash, ops: payload.ops },
+            null,
+            2,
+          ),
+          'utf8',
+        );
+        pushSignal(root, {
+          radar: 'suggest',
+          severity: 'hint',
+          title: `地图页「${payload.page_ref}」有 ${payload.ops.length} 个标签修改待应用`,
+          evidence: [file],
+          proposed_action: `调用 novelcraft_map_atlas_annotation(root, page_ref=${payload.page_ref}) 应用标签修改(只消费队列, 不生成坐标)`,
+          reversibility: true,
+          expires_when_draft_changes: false,
+        });
+        return rpcOk({
+          ok: true,
+          queued: payload.ops.length,
+          file,
+          message: `已入队 ${payload.ops.length} 个标签修改; 助手将按队列应用(坐标级, 不经自然语言)。`,
+        });
+      } catch (err) {
+        return rpcFail(err instanceof Error ? err.message : String(err));
+      }
     },
   };
 }

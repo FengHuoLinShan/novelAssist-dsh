@@ -12,6 +12,8 @@ export const ENDPOINTS = {
   chapterDossier: 'chapter/dossier',
   presetsList: 'presets/list',
   presetsSelect: 'presets/select',
+  atlasView: 'atlas/view',
+  atlasAnnotationRequest: 'atlas/annotation-request',
 } as const;
 
 export interface WatchStatePayload {
@@ -260,5 +262,87 @@ export interface PresetsSelectValue {
   /** 写入后生效的预设名(null = 默认/继承助手配置)。 */
   active: string | null;
   /** 作者语言结果消息。 */
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// map-atlas(Phase 6; 计划 §4 Phase 6)
+// ---------------------------------------------------------------------------
+
+export interface AtlasViewPayload {
+  sessionId?: string;
+  workspacePath?: string;
+  runId?: string;
+}
+
+/** 文字标签卡(坐标恒为归一化 0–1; spec §2.2)。 */
+export interface AtlasLabelCard {
+  id: string;
+  label: string;
+  position_x: number;
+  position_y: number;
+  target_node_ref?: string;
+  sort_order?: number;
+}
+
+/** 页面卡(预览仅 ≤2MB 小图给 base64; 大图只回元数据与本地相对路径)。 */
+export interface AtlasPageCard {
+  id: string;
+  node_ref: string;
+  title: string;
+  level: string;
+  generation_status: string;
+  review_status: string;
+  visual_brief: string;
+  prompt: string;
+  evidence: { supported: string[]; visual_fill: string[]; conflicts: string[] };
+  image?: { file: string; media_type: string; width: number; height: number; byte_size: number; preview_data_url?: string };
+  /** 有 image 元数据但本地文件缺失。 */
+  image_missing: boolean;
+  annotations: AtlasLabelCard[];
+  content_hash: string;
+}
+
+/** 节点卡(树渲染; is_placeholder = 已采用且无 adopted 页, N28)。 */
+export interface AtlasNodeCard {
+  id: string;
+  parent_ref: string | null;
+  title: string;
+  level: string;
+  status: string;
+  is_placeholder: boolean;
+}
+
+export interface AtlasViewValue {
+  bound: { book: string; root: string } | null;
+  run: { id: string; run_kind: string; status: string; planned_page_count: number; error_code: string | null; error_message: string | null; created_at: string } | null;
+  adopted: { nodes: AtlasNodeCard[]; pages: AtlasPageCard[] };
+  pending: { nodes: AtlasNodeCard[]; pages: AtlasPageCard[] };
+  /** 标注队列状态(.assistant/atlas/annotation-queue/ 未消费; ops = 各文件 op 数合计)。 */
+  queue: { files: number; ops: number; pages: string[] };
+}
+
+/** 标注请求载荷(UI 落盘队列; 机器生成机器消费, 不经自然语言)。 */
+export interface AtlasAnnotationOpInput {
+  op: 'add' | 'update' | 'delete';
+  id?: string;
+  label?: string;
+  position_x?: number;
+  position_y?: number;
+  target_node_ref?: string | null;
+}
+
+export interface AtlasAnnotationRequestPayload {
+  sessionId?: string;
+  workspacePath?: string;
+  page_ref: string;
+  base_content_hash: string;
+  ops: AtlasAnnotationOpInput[];
+}
+
+export interface AtlasAnnotationRequestValue {
+  ok: boolean;
+  queued: number;
+  file: string;
   message: string;
 }

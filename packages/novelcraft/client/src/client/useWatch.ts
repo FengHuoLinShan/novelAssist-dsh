@@ -13,6 +13,9 @@ import type {
   StoryMapValue,
   WatchStateValue,
   WritingDeskValue,
+  AtlasAnnotationOpInput,
+  AtlasViewValue,
+  AtlasAnnotationRequestValue,
 } from '../wire.ts'
 import { ENDPOINTS, RPC_CHANNEL } from '../wire.ts'
 
@@ -169,6 +172,35 @@ export function useInbox(connection: RpcCaller | undefined, sessionId: string | 
   }, [connection, refresh])
 
   return { cards, bound, threshold, busy, refresh, actOn }
+}
+
+/** 地图册数据源(atlas/view; Phase 6: 规划 run + adopted/pending 树 + 标注队列)。 */
+export function useAtlasView(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  const [data, setData] = useState<AtlasViewValue | null>(null)
+  const refresh = useCallback(async () => {
+    const value = await call<AtlasViewValue>(connection, ENDPOINTS.atlasView, { sessionId })
+    if (value) setData(value)
+  }, [connection, sessionId])
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+  return { data, refresh }
+}
+
+/** 标注请求(atlas/annotation-request; 落队列 + 信号, 不写资产)。 */
+export async function requestAtlasAnnotations(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  pageRef: string,
+  baseContentHash: string,
+  ops: AtlasAnnotationOpInput[],
+): Promise<AtlasAnnotationRequestValue | null> {
+  return call<AtlasAnnotationRequestValue>(connection, ENDPOINTS.atlasAnnotationRequest, {
+    sessionId,
+    page_ref: pageRef,
+    base_content_hash: baseContentHash,
+    ops,
+  })
 }
 
 /** 剧情地图数据源(story/map; 结构资产 + Scene/章节覆盖)。 */
