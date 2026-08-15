@@ -83,9 +83,9 @@ const SAMPLE = [
 ].join('\n');
 
 describe('novelcraft_rag_search(M6 Track A3 语义检索)', () => {
-  it('注册: 共 13 个工具且 novelcraft_rag_search 存在(输出 schema 开放)', async () => {
+  it('注册: 共 20 个工具且 novelcraft_rag_search 存在(输出 schema 开放)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(14); // 13 → 14: M6 Track B 新增 novelcraft_rag_embed
+    expect(env.tools.length).toBe(20); // 14 → 20: M7 map-atlas Phase 5 新增 6 工具
     const t = tool(env, 'novelcraft_rag_search');
     expect(t.name).toBe('novelcraft_rag_search');
     const schema = t.output?.schema as { type: string; additionalProperties?: boolean };

@@ -74,6 +74,12 @@ export interface AtlasAnnotation {
   sort_order?: number;
 }
 
+/** 标注 ops(Phase 5 工具/队列载荷; add=新增, update=按 id 补丁, delete=按 id 删除)。 */
+export type AtlasAnnotationOp =
+  | { op: 'add'; label: string; position_x: number; position_y: number; target_node_ref?: string | null }
+  | { op: 'update'; id: string; label?: string; position_x?: number; position_y?: number; target_node_ref?: string | null }
+  | { op: 'delete'; id: string };
+
 /** 页面证据分区(§2.2 evidence)。 */
 export interface AtlasEvidence {
   supported: string[];

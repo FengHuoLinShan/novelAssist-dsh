@@ -67,9 +67,9 @@ const call = async (env: TestEnv, name: string, args: Record<string, unknown>) =
   (await tool(env, name).execute(args as never, env.exec as never)) as Record<string, unknown>;
 
 describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
-  it('注册: 共 14 个工具且 novelcraft_rag_embed 存在(输出 schema 开放)', async () => {
+  it('注册: 共 20 个工具且 novelcraft_rag_embed 存在(输出 schema 开放)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(14); // 13 → 14: 新增 novelcraft_rag_embed
+    expect(env.tools.length).toBe(20); // 14 → 20: M7 map-atlas Phase 5 新增 6 工具
     const t = tool(env, 'novelcraft_rag_embed');
     const schema = t.output?.schema as { type: string; additionalProperties?: boolean };
     expect(schema.type).toBe('object');

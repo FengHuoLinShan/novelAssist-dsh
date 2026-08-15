@@ -8,7 +8,7 @@ import { guardPath, paths } from "@novelcraft/vault";
 import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError } from "@novelcraft/store";
 import { readAtlasTree } from "./read.js";
 import { computeAtlasPageContentHash } from "./write.js";
-import type { AtlasAnnotation, AtlasPage } from "./types.js";
+import type { AtlasAnnotation, AtlasAnnotationOp, AtlasPage } from "./types.js";
 
 /** 坐标 0–1 闭区间(spec §2.2)。 */
 function assertCoord(value: number, name: string): void {
@@ -150,6 +150,64 @@ export function updateAtlasAnnotation(
   const next: AtlasPage = { ...base, content_hash: computeAtlasPageContentHash(base) };
   writePageCommit(root, file, next, `atlas: update annotation ${pageId}#${annotationId}`);
   return nextAnn;
+}
+
+/**
+ * 批量应用标注 ops(计划 Phase 5 工具 5 / 规则 11):
+ * 全部 op 先在内存工作副本上校验并应用 → 单 commit; 中途任何 op 非法 → 零提交零残留。
+ * expectedContentHash = 队列载荷 base_content_hash 的 CAS(防 stale 覆盖)。
+ */
+export function applyAtlasAnnotationOps(
+  root: string,
+  pageId: string,
+  ops: AtlasAnnotationOp[],
+  opts?: { expectedContentHash?: string },
+): { applied: number; content_hash: string } {
+  const { page, file } = loadPageFile(root, pageId);
+  assertAnnotatable(page);
+  if (opts?.expectedContentHash !== undefined && opts.expectedContentHash !== page.content_hash) {
+    throw new StoreError("CONFLICT", `content_hash 失配(队列 base=${opts.expectedContentHash}, 实际 ${page.content_hash})`);
+  }
+  let anns = [...page.annotations];
+  for (const op of ops) {
+    if (op.op === "add") {
+      validateAnnotation(root, op);
+      anns = [
+        ...anns,
+        {
+          id: `ann-${randomBytes(4).toString("hex")}`,
+          label: op.label.trim(),
+          position_x: op.position_x,
+          position_y: op.position_y,
+          sort_order: anns.length,
+          ...(op.target_node_ref != null ? { target_node_ref: op.target_node_ref } : {}),
+        },
+      ];
+    } else if (op.op === "update") {
+      const found = anns.find((a) => a.id === op.id);
+      if (!found) throw new StoreError("NOT_FOUND", `标注不存在: ${op.id}`);
+      validateAnnotation(root, op);
+      const merged: AtlasAnnotation = {
+        ...found,
+        ...(op.label !== undefined ? { label: op.label.trim() } : {}),
+        ...(op.position_x !== undefined ? { position_x: op.position_x } : {}),
+        ...(op.position_y !== undefined ? { position_y: op.position_y } : {}),
+        ...(op.target_node_ref !== undefined
+          ? op.target_node_ref === null
+            ? { target_node_ref: undefined }
+            : { target_node_ref: op.target_node_ref }
+          : {}),
+      };
+      anns = anns.map((a) => (a.id === op.id ? merged : a));
+    } else {
+      if (!anns.some((a) => a.id === op.id)) throw new StoreError("NOT_FOUND", `标注不存在: ${op.id}`);
+      anns = anns.filter((a) => a.id !== op.id);
+    }
+  }
+  const base: Omit<AtlasPage, "content_hash"> = { ...page, annotations: anns };
+  const next: AtlasPage = { ...base, content_hash: computeAtlasPageContentHash(base) };
+  writePageCommit(root, file, next, `atlas: apply annotations ${pageId}(${ops.length} ops)`);
+  return { applied: ops.length, content_hash: next.content_hash };
 }
 
 /** 删除标注。 */

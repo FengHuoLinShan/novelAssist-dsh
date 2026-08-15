@@ -2,7 +2,7 @@
 // 组装全部 seam 适配器, 以 ctx.novelcraft 服务暴露给 agent 组合/其他插件;
 // 并把核心包 facade 命名空间挂在此处(供 client module、skills、子代理组合消费)。
 // 依据: 设计文档 §22.3(插件族, 经 DSH seam 互连)、seam 契约(packages/novelcraft/README.md)。
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync as existsSyncLocal, readdirSync as readdirSyncLocal, readFileSync, rmSync as rmFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
@@ -13,7 +13,7 @@ import * as memory from '@novelcraft/memory';
 import * as outline from '@novelcraft/outline';
 import * as rag from '@novelcraft/rag';
 import * as store from '@novelcraft/store';
-import { ensureVaultGitignore } from '@novelcraft/vault';
+import { ensureVaultGitignore, paths as pathsFor } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import { ApprovalGate, GateRequiredError } from './approval/gate.js';
@@ -199,6 +199,166 @@ export class NovelCraftService extends Service {
       summary: note ?? `vault ${root} 中的 ${slug}`,
       items: [slug],
     }, async () => world.updateObject(root, slug, patch));
+  }
+
+  // ------------------------------------------------------------------
+  // map-atlas(Phase 5; 计划 §4 Phase 5; catalog §4.11)
+  // ------------------------------------------------------------------
+
+  /** 便捷: 地图册规划(contentProvider + world.planMapAtlas; 工具级 timeout 3600s)。 */
+  async planMapAtlas(root: string, opts: world.PlanMapAtlasOptions): Promise<world.PlanMapAtlasResult> {
+    return world.planMapAtlas(root, await this.contentProviderFor(root), opts);
+  }
+
+  /** 便捷: 地图册只读视图(tree + 指定/最近 run; 只读直通不过审批)。 */
+  viewMapAtlas(root: string, runId?: string): { tree: world.AtlasTree; run: world.AtlasRun | null } {
+    return {
+      tree: world.readAtlasTree(root),
+      run: runId ? world.readAtlasRun(root, runId) : world.latestAtlasRun(root),
+    };
+  }
+
+  /** 便捷: 本机图片导入候选(候选写入不过 approval, N29; adopt 另行审批)。 */
+  importAtlasImage(
+    root: string,
+    filePath: string,
+    target: { nodeRef: string },
+    opts?: world.ImportAtlasImageOptions,
+  ): { page: world.AtlasPage; run?: world.AtlasRun } {
+    return world.importAtlasImage(root, filePath, target, opts);
+  }
+
+  /**
+   * 便捷: 地图页/节点生命周期(审批门控, 铁律 3 fail-closed):
+   * adopt / adopt_placeholder / restore 经 ApprovalGate; reject / archive 为候选/历史面操作, 直执行。
+   */
+  async reviewMapAtlasGuarded(
+    agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
+    root: string,
+    target: { pageRef?: string; nodeRef?: string },
+    action: 'adopt' | 'adopt_placeholder' | 'reject' | 'archive' | 'restore',
+    opts: { confirmConflicts?: boolean; expectedContentHash?: string; note?: string } = {},
+  ): Promise<{ ok: true; detail: string }> {
+    const approve: world.AtlasApprove = async (a, summary, items) => {
+      const decision = await this.approval.request(agent, { action: a, summary, items });
+      // ApprovalDecision 无 cancelled: 一切非 allowed-once 均 fail-closed。
+      return decision === 'allowed-once' ? 'allowed-once' : 'rejected';
+    };
+    switch (action) {
+      case 'adopt': {
+        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'adopt 需要 page_ref');
+        const r = await world.adoptAtlasPage(root, target.pageRef, {
+          confirmConflicts: opts.confirmConflicts,
+          expectedContentHash: opts.expectedContentHash,
+          note: opts.note,
+        }, approve);
+        return { ok: true, detail: `已采用地图页 ${r.page.id}(连带节点 ${r.adoptedNodeIds.join('/') || '无'})` };
+      }
+      case 'adopt_placeholder': {
+        if (!target.nodeRef) throw new store.StoreError('VALIDATION_FAILED', 'adopt_placeholder 需要 node_ref');
+        const r = await world.adoptAtlasPlaceholder(root, target.nodeRef, approve);
+        return { ok: true, detail: `已采用空页占位节点 ${r.adoptedNodeIds.join('/')}` };
+      }
+      case 'reject': {
+        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'reject 需要 page_ref');
+        const page = world.rejectAtlasPage(root, target.pageRef, { note: opts.note, expectedContentHash: opts.expectedContentHash });
+        return { ok: true, detail: `已驳回地图页 ${page.id}(终态 rejected)` };
+      }
+      case 'archive': {
+        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'archive 需要 page_ref');
+        const page = world.archiveAtlasPage(root, target.pageRef, { expectedContentHash: opts.expectedContentHash });
+        return { ok: true, detail: `已归档地图页 ${page.id}(deprecated, 可 restore)` };
+      }
+      case 'restore': {
+        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'restore 需要 page_ref');
+        const r = await world.restoreAtlasPage(root, target.pageRef, approve, { expectedContentHash: opts.expectedContentHash });
+        return { ok: true, detail: `已恢复地图页 ${r.page.id}(祖先链补齐 ${r.adoptedNodeIds.join('/') || '无'})` };
+      }
+    }
+  }
+
+  /** 便捷: 地图页标注 ops(作者内容编辑, 不过 ApprovalGate; 校验+hash 重算在 world 层)。 */
+  applyAtlasAnnotations(
+    root: string,
+    pageRef: string,
+    ops: world.AtlasAnnotationOp[],
+    opts?: { expectedContentHash?: string },
+  ): { applied: number; content_hash: string } {
+    // 批量 = 全量校验先行 + 单 commit + CAS(计划 Phase 5 工具 5 / 规则 11; 中途失败零残留, 重试不重复)。
+    return world.applyAtlasAnnotationOps(root, pageRef, ops, opts);
+  }
+
+  /** 便捷: 改 prompt_only 候选页 prompt(候选面, 不过审批)。 */
+  updateAtlasPrompt(root: string, pageRef: string, prompt: string, expectedContentHash?: string): world.AtlasPage {
+    return world.updateAtlasPrompt(root, pageRef, prompt, expectedContentHash);
+  }
+
+  /** 便捷: 上传新位置 → provisional 候选节点(附录 A.2; 候选面不过审批)。 */
+  async createAtlasUploadNode(
+    root: string,
+    input: { title: string; level: string; parent_ref?: string },
+  ): Promise<string> {
+    const title = input.title.trim();
+    if (title.length === 0) throw new store.StoreError('VALIDATION_FAILED', '节点标题必填且非空');
+    if (!(world.ATLAS_LEVELS as readonly string[]).includes(input.level)) {
+      throw new store.StoreError('VALIDATION_FAILED', `非法层级 ${input.level}(白名单 ${world.ATLAS_LEVELS.join('/')})`);
+    }
+    // F4: semantic_key = path:{父语义|root}:{sha256(title)前20}(ADR-0020 §6 确定性口径)。
+    let parentSemantic = 'root';
+    if (input.parent_ref) {
+      const tree = world.readAtlasTree(root);
+      const parent = [...tree.nodes, ...tree.pendingNodes].find((n) => n.id === input.parent_ref);
+      if (!parent) throw new store.StoreError('NOT_FOUND', `父节点不存在: ${input.parent_ref}`);
+      parentSemantic = parent.semantic_key || 'root';
+    }
+    const slug = `up-${world.semanticPart(title)}-${Math.random().toString(36).slice(2, 6)}`;
+    world.writeAtlasNode(root, {
+      id: slug,
+      parent_ref: input.parent_ref ?? null,
+      location_ref: null,
+      semantic_key: `path:${parentSemantic}:${world.semanticPart(title)}`,
+      level: input.level as world.AtlasLevel,
+      title,
+      status: 'provisional',
+      sort_order: 0,
+    });
+    return slug;
+  }
+
+  /**
+   * 便捷: 消费标注队列(主路径; 计划 Phase 5 工具 5):
+   * 读 .assistant/atlas/annotation-queue/*.json({page_ref, ops[]}), 逐文件应用, 成功后删除队列文件;
+   * 单文件失败不阻塞其余(错误汇总返回)。标注 = 作者内容编辑, 不过审批。
+   */
+  applyAtlasAnnotationQueue(root: string): { files: number; applied: number; failed: number; errors: string[] } {
+    const dir = pathsFor(root).assistant.atlas.annotationQueue;
+    if (!existsSyncLocal(dir)) return { files: 0, applied: 0, failed: 0, errors: [] };
+    const files = readdirSyncLocal(dir).filter((f) => f.endsWith('.json')).sort();
+    let applied = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    for (const file of files) {
+      const abs = path.join(dir, file);
+      try {
+        const payload = JSON.parse(readFileSync(abs, 'utf8')) as {
+          page_ref?: string;
+          ops?: world.AtlasAnnotationOp[];
+          base_content_hash?: string;
+        };
+        if (!payload.page_ref || !Array.isArray(payload.ops)) {
+          throw new Error('队列文件需 {page_ref, ops[], base_content_hash?}');
+        }
+        const r = this.applyAtlasAnnotations(root, payload.page_ref, payload.ops, {
+          expectedContentHash: payload.base_content_hash, // CAS: 防 stale 覆盖(Phase 6 队列载荷)
+        });
+        applied += r.applied;
+        rmFileSync(abs); // 成功后清队列(计划: 应用后清队列)。
+      } catch (err) {
+        failed += 1;
+        errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return { files: files.length, applied, failed, errors };
   }
 
   /** 便捷: 重建派生索引并把结果写入 domain 缓存(文件仍是唯一真相)。 */

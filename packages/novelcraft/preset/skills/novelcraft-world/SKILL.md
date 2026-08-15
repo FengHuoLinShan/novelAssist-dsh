@@ -32,7 +32,7 @@ whenToUse: 操作世界对象、复核待处理建议、生成中心对话/收�
 - 待处理建议 → 收件箱信号卡(四动词: 采纳/打回/改一改/先放着); 采纳必过 approval。
 - 打回必带理由(进 calibration.md); 低置信/冲突保持待处理。
 
-## 世界地图册 map atlas(无生图; 随 Phase 5 落地)
+## 世界地图册 map atlas(无生图; Phase 5 已落地 6 工具)
 
 - 落点: `world/atlas/{nodes,pages,pending/nodes,pending/pages,images}/` + `.assistant/atlas/runs/*.json`
   (文件真相, ADR-0020); 图片目录 `world/atlas/images/` 写入 vault `.gitignore`。

@@ -42,4 +42,4 @@ whenToUse: 涉及地图状态、空间事实、剧情地图(Story Map)展示、�
 5. `novelcraft_map_atlas_annotation` — 应用 UI 队列或精确 ops(标签编辑不过 approval)。
 6. (可选)`novelcraft_map_atlas_update_prompt` — 仅 prompt_only 候选可改 Prompt。
 
-> 上述工具尚未实现, 属 Phase 5 交付范围; 挂载前不承诺可直接调用, 仅作能力口径预告。
+> 上述 6 工具已随 Phase 5 落地(`@novelcraft/dsh` tools.ts, 共 20 工具); adopt 类动作经 ApprovalGate fail-closed。
