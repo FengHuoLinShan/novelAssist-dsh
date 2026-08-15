@@ -16,15 +16,18 @@ import type {
   SourceRef,
 } from "./types.js";
 
-/** 预算常量(policy-defaults §9)。 */
+/** 预算常量(policy-defaults §9)。
+ *  批预算口径(review F1): 每批 = 5 地点(spatial.ts ATLAS_SPATIAL_BATCH_SIZE),
+ *  每地点已限 8000 → 5×8000=40000 结构性满足, 编译侧无需全局二次截断。 */
 export const ATLAS_MAX_LOCATIONS = 20;
 export const ATLAS_WIKI_PER_LOCATION = 3;
 export const ATLAS_CHARS_PER_LOCATION = 8000;
-export const ATLAS_CHARS_PER_BATCH = 40000;
+export const ATLAS_CHARS_PER_BATCH = ATLAS_CHARS_PER_LOCATION * 5;
 export const ATLAS_RAG_TOPK = 5;
 
-/** 确定性空间查询词表(旧引擎 _spatial_query 同语义; 不注入 provider, 仅 L0 BM25)。 */
-const SPATIAL_TERMS = "位置 方向 距离 路线 相邻 地标 地形 入口 布局 规模";
+/** 确定性空间查询词表(逐字对齐旧引擎 _SPATIAL_TERMS, workflow.py:60; 不注入 provider, 仅 L0 BM25)。
+ *  计划提到的 purpose=map_atlas 为旧引擎口径: M4 searchRag 无 purpose 参数(单索引), 此处留痕。 */
+const SPATIAL_TERMS = "方位、距离或行程、邻接、道路、河流、山脉、入口、地标、内部布局";
 
 function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -165,22 +168,6 @@ function trimLocationEvidence(
   return { wiki: wiki.length > 0 ? out : [], rag: rag.length > 0 ? out : [] };
 }
 
-/** 整批预算(≤40000 字): 按地点排序顺序累计, 超额的后续证据只截 text(保留 source_keys/manifest)。 */
-function enforceBatchBudget(packets: AtlasContextPacket[]): void {
-  let used = 0;
-  for (const p of packets) {
-    for (const item of [...p.wiki, ...p.rag]) {
-      const remaining = ATLAS_CHARS_PER_BATCH - used;
-      if (remaining <= 0) {
-        item.text = "";
-        continue;
-      }
-      if (item.text.length > remaining) item.text = item.text.slice(0, remaining);
-      used += item.text.length;
-    }
-  }
-}
-
 /**
  * 地图册来源上下文编译(确定性; 计划 §4 Phase 2 步骤 1-3)。
  * 产出 packets(LLM 输入)/source_manifest(校验白名单)/location_source_hashes + context_hash(指纹输入)。
@@ -192,8 +179,9 @@ export async function compileAtlasContext(
   const includeDrafts = opts?.include_working_drafts === true;
   const biblePages = readBiblePages(root, includeDrafts);
   const tree = readAtlasTree(root);
+  // "已有 atlas 节点"口径定死: 只算 nodes/(已采用+暂存), 不算 pending 候选(review F5)。
   const atlasLocationRefs = new Set(
-    [...tree.nodes, ...tree.pendingNodes]
+    tree.nodes
       .map((n) => n.location_ref)
       .filter((x): x is string => typeof x === "string" && x.length > 0),
   );
@@ -224,7 +212,8 @@ export async function compileAtlasContext(
       .filter(
         (p) => p.linkedSlugs.has(loc.slug) || nameKeys.some((n) => p.title.includes(n)),
       )
-      .sort((a, b) => cmpStr(a.slug, b.slug))
+      // 显式链接页优先于标题命中页(对齐旧引擎 linked-first; review F4), 组内按 slug 确定性排序。
+      .sort((a, b) => Number(b.linkedSlugs.has(loc.slug)) - Number(a.linkedSlugs.has(loc.slug)) || cmpStr(a.slug, b.slug))
       .slice(0, ATLAS_WIKI_PER_LOCATION);
     const wikiFull: AtlasEvidenceItem[] = wikiPages.map((p) => ({
       source_key: `wiki:${p.slug}`,
@@ -273,8 +262,6 @@ export async function compileAtlasContext(
     });
     locationSourceHashes[loc.slug] = hashes;
   }
-
-  enforceBatchBudget(packets);
 
   const contextHash = sha256Hex(
     JSON.stringify({

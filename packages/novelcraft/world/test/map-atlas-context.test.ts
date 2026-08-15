@@ -178,8 +178,8 @@ describe("compileAtlasContext 世界书证据(计划 §2/§4 Phase 2)", () => {
     const keys = r.packets[0].wiki.map((w) => w.source_key);
     expect(keys.length).toBe(ATLAS_WIKI_PER_LOCATION);
     expect(ATLAS_WIKI_PER_LOCATION).toBe(3);
-    // 确定性按 slug 排序取前 3: bp-alias < bp-link < bp-t0。
-    expect(keys).toEqual(["wiki:bp-alias", "wiki:bp-link", "wiki:bp-t0"]);
+    // 显式链接页优先(对齐旧引擎 linked-first; review F4), 其余按 slug: bp-link, bp-alias, bp-t0。
+    expect(keys).toEqual(["wiki:bp-link", "wiki:bp-alias", "wiki:bp-t0"]);
     expect(keys).not.toContain("wiki:bp-miss");
   });
 });
@@ -196,6 +196,22 @@ describe("compileAtlasContext 预算与确定性(计划 §4 Phase 2 预算; 规�
     // 截断不影响 source_keys/manifest(只截 text)。
     expect(r.packets[0].source_keys).toEqual(["wiki:bp-big"]);
     expect(r.source_manifest.length).toBe(1);
+  });
+
+  it("review F1 回归: 8 个地点各近 8000 字, 证据不被批预算清空(批预算=5×8000 结构性满足)", async () => {
+    const root = makeRoot();
+    for (let i = 0; i < 8; i++) {
+      const slug = `loc-${String(i).padStart(2, "0")}`;
+      writeObject(root, { id: slug, name: `地点${String(i).padStart(2, "0")}` });
+      writeBiblePage(root, { slug: `bp-${String(i).padStart(2, "0")}`, title: `地点${String(i).padStart(2, "0")}志` }, "字".repeat(7900));
+    }
+    const r = await compileAtlasContext(root);
+    expect(r.packets.length).toBe(8);
+    for (const p of r.packets) {
+      const total = p.wiki.reduce((s, w) => s + w.text.length, 0);
+      expect(total).toBeGreaterThan(7000); // 第 6~8 地点证据仍在(F1 修复前会被清空)。
+      expect(total).toBeLessThanOrEqual(ATLAS_CHARS_PER_LOCATION);
+    }
   });
 
   it("同输入两次编译 context_hash 相同(确定性)", async () => {
