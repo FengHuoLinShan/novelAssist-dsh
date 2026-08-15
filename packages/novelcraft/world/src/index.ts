@@ -7,3 +7,4 @@ export * from "./map-atlas/read.js";
 export * from "./map-atlas/write.js";
 export * from "./map-atlas/context.js";
 export * from "./map-atlas/spatial.js";
+export * from "./map-atlas/plan.js";

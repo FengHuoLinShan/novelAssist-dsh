@@ -23,6 +23,8 @@ import type {
   AtlasPage,
   AtlasPageView,
   AtlasPlan,
+  AtlasPlanAnnotation,
+  AtlasPlanNode,
   AtlasRun,
   AtlasTreeNode,
   AtlasTree,
@@ -143,6 +145,39 @@ function toNode(slug: string, data: Record<string, unknown>): AtlasNode {
     ...(data.summary !== undefined ? { summary: asStr(data.summary) } : {}),
     status: asEnum<AtlasNodeStatus>(data.status, NODE_STATUSES, 'provisional'),
     sort_order: asInt(data.sort_order, 0),
+  };
+}
+
+/** run 内 atlas_plan 的规划节点归一化(Phase 3; 宽松读面, 缺省填空)。 */
+function toPlanNode(data: Record<string, unknown>): AtlasPlanNode {
+  const evidenceRaw = (data.evidence && typeof data.evidence === 'object' && !Array.isArray(data.evidence)
+    ? data.evidence
+    : {}) as Record<string, unknown>;
+  const asStrList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+  return {
+    plan_key: asStr(data.plan_key),
+    parent_plan_key:
+      data.parent_plan_key === undefined || data.parent_plan_key === null
+        ? null
+        : asStr(data.parent_plan_key),
+    existing_parent_node_id:
+      data.existing_parent_node_id === undefined || data.existing_parent_node_id === null
+        ? null
+        : asStr(data.existing_parent_node_id),
+    location_ref:
+      data.location_ref === undefined || data.location_ref === null ? null : asStr(data.location_ref),
+    title: asStr(data.title),
+    level: asEnum<AtlasLevel>(data.level, ATLAS_LEVELS, 'world'),
+    summary: asStr(data.summary),
+    visual_brief: asStr(data.visual_brief),
+    prompt: asStr(data.prompt),
+    evidence: {
+      supported: asStrList(evidenceRaw.supported),
+      visual_fill: asStrList(evidenceRaw.visual_fill),
+      conflicts: asStrList(evidenceRaw.conflicts),
+    },
+    sources: Array.isArray(data.sources) ? (data.sources as SourceRef[]) : [],
+    annotations: Array.isArray(data.annotations) ? (data.annotations as AtlasPlanAnnotation[]) : [],
   };
 }
 
@@ -327,7 +362,7 @@ function parseRun(raw: unknown, id: string): AtlasRun {
   const atlasPlan: AtlasPlan = {
     style_brief: asStr(planRaw.style_brief),
     nodes: Array.isArray(planRaw.nodes)
-      ? planRaw.nodes.map((n) => toNode(asStr((n as Record<string, unknown>).id), n as Record<string, unknown>))
+      ? planRaw.nodes.map((n) => toPlanNode(n as Record<string, unknown>))
       : [],
   };
   return {
@@ -383,8 +418,9 @@ export function listAtlasHistory(root: string): AtlasRun[] {
     });
 }
 
-/** 最近一次 run; 无 run 时返回 null。 */
-export function latestAtlasRun(root: string): AtlasRun | null {
+/** 最近一次 run; 无 run 时返回 null。opts.excludeId: 跳过指定 run(指纹复用回避本轮 planning run)。 */
+export function latestAtlasRun(root: string, opts?: { excludeId?: string }): AtlasRun | null {
   const history = listAtlasHistory(root);
-  return history.length > 0 ? history[0] : null;
+  const found = opts?.excludeId ? history.find((r) => r.id !== opts.excludeId) : history[0];
+  return found ?? null;
 }

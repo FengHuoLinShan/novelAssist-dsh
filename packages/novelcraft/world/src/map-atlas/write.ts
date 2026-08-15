@@ -107,6 +107,34 @@ export function writeAtlasRun(root: string, run: AtlasRun): void {
 }
 
 /**
+ * 批量写候选(Phase 3 materialize): pending nodes + pending pages 一次写完, **单 git commit**。
+ * 逐文件 guardPath; 任一失败抛错前不写 git(失败零残留的 git 面; 文件残留由调用方重试覆盖)。
+ */
+export function writeAtlasCandidates(
+  root: string,
+  nodes: AtlasNode[],
+  pages: AtlasPage[],
+  message: string,
+): void {
+  const p = paths(root);
+  const files: Array<{ abs: string; content: string }> = [];
+  for (const node of nodes) {
+    const abs = guardPath(root, p.world.atlas.pendingNodeFile(node.id));
+    files.push({ abs, content: serializeFrontmatter(nodeFrontmatter(node), `# ${node.title}\n`) });
+  }
+  for (const page of pages) {
+    const abs = guardPath(root, p.world.atlas.pendingPageFile(page.id));
+    files.push({ abs, content: serializeFrontmatter(pageFrontmatter(page), `# ${page.title}\n`) });
+  }
+  for (const f of files) {
+    mkdirSync(path.dirname(f.abs), { recursive: true });
+    writeFileSync(f.abs, f.content, 'utf8');
+  }
+  gitAdd(root);
+  gitCommit(root, message);
+}
+
+/**
  * 写本地图片字节到 `world/atlas/images/<page-slug>/<attempt>.<ext>`。
  * - 绝不 gitAdd 图片路径(N29): 图片只存本地 gitignore 目录, 不进入 git 历史。
  * - `input` 为 Uint8Array(Buffer)时直接写字节; 为 string 时按本机 sourcePath 复制。

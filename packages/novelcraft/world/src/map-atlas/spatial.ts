@@ -66,7 +66,7 @@ export function registerMapAtlasSpecsOnce(): void {
         required: ["locations"],
         additionalProperties: true,
       },
-      budgetTokens: 4000,
+      budgetTokens: 0, // N27 输入主导豁免: 输入 = 5 地点 × ≤8000 字, 必超 4000; catalog max_tokens 4000 是输出口径。
       temperature: 0,
       timeoutMs: 900_000,
       degradationNote: "批失败只降级该批; 非法 location_key/source_keys 逐条丢弃; 全批失败 all_batches_failed。",
@@ -125,9 +125,15 @@ function asSpatialEvidence(raw: unknown): SpatialEvidence | null {
   return ev as SpatialEvidence;
 }
 
-/** 指纹复用条件(计划 Phase 2 步骤 5): 同指纹 + 非降级 + 非全败 + 旧 facts 来源 ⊆ 当前 manifest。 */
-function tryReuseEvidence(root: string, ctx: AtlasContextResult, fingerprint: string): SpatialEvidence | null {
-  const prev = latestAtlasRun(root);
+/** 指纹复用条件(计划 Phase 2 步骤 5): 同指纹 + 非降级 + 非全败 + 旧 facts 来源 ⊆ 当前 manifest。
+ *  excludeRunId: orchestrator 先落 planning run 再提取(计划 Phase 3 步骤 1), 复用必须跳过本轮自身。 */
+function tryReuseEvidence(
+  root: string,
+  ctx: AtlasContextResult,
+  fingerprint: string,
+  excludeRunId?: string,
+): SpatialEvidence | null {
+  const prev = latestAtlasRun(root, excludeRunId ? { excludeId: excludeRunId } : undefined);
   const ev = asSpatialEvidence(prev?.spatial_evidence);
   if (!ev) return null;
   if (ev.schema_version !== ATLAS_SPATIAL_SCHEMA_VERSION) return null;
@@ -198,6 +204,8 @@ export function partitionSpatialFacts(facts: SpatialFact[]): Pick<SpatialEvidenc
 export interface ExtractSpatialFactsOptions {
   /** checkpoint 续跑: 从第 N 批开始(默认 0; Phase 3 run 落盘消费)。 */
   startBatch?: number;
+  /** 指纹复用回避的 run id(orchestrator 的本轮 planning run)。 */
+  excludeRunId?: string;
 }
 
 /**
@@ -219,7 +227,7 @@ export async function extractSpatialFacts(
     };
   }
 
-  const reused = tryReuseEvidence(root, ctx, fingerprint);
+  const reused = tryReuseEvidence(root, ctx, fingerprint, opts?.excludeRunId);
   if (reused) return reused;
 
   const batches: AtlasContextPacket[][] = [];
@@ -228,6 +236,7 @@ export async function extractSpatialFacts(
   }
 
   const facts: SpatialFact[] = [];
+  const journals: unknown[] = []; // L1: 收集各批 llm_step journal(计划 Phase 3 步骤 6 审计)。
   let invalidCount = 0;
   let failedBatches = 0;
   let nextCheckpoint: number | null = null;
@@ -252,6 +261,7 @@ export async function extractSpatialFacts(
     } catch {
       step = null;
     }
+    if (step) journals.push({ specRef: "map_spatial_facts", batch: bi, journal: step.journal, usage: step.usage, ok: step.ok });
     if (!step || !step.ok || typeof step.result !== "object" || step.result === null) {
       failedBatches += 1; // 批失败只降级, 继续下一批(计划 Phase 2 降级)。
       if (nextCheckpoint === null) nextCheckpoint = bi; // 续跑游标 = 首个失败批号。
@@ -305,6 +315,7 @@ export async function extractSpatialFacts(
     schema_version: ATLAS_SPATIAL_SCHEMA_VERSION,
     facts,
     ...partition,
+    journal: journals,
     source_fingerprint: fingerprint,
     locations_checked: ctx.packets.length,
     locations_with_facts: locationsWithFacts,

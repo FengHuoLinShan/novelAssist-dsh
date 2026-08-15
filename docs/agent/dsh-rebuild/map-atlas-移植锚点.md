@@ -25,7 +25,7 @@
 | 层级 rank | schemas.py 12-20 | 旧引擎 cover=0..interior=6; **M4 已翻转(计划 §5 规则 1 权威)**: cover=6 world=5 region=4 city=3 district=2 street=1 interior=0, 父 rank 严格**大于**子(代码 ATLAS_LEVEL_RANK, Phase 1 已修) |
 | AtlasPlan 校验器 | schemas.py 182-230 | ①location 唯一 ②plan_key 唯一 ③supported 必须有 retained source ④parent_plan_key 与 existing_parent_node_id 互斥 ⑤cover/world 必根 ⑥父必须先出现(seen 集) ⑦父 rank 严格**大于**子(M4 翻转, 勿抄旧引擎方向) ⑧annotation target_plan_key 必须在 plan 内 |
 | `_validate_plan_sources` | 934-981 | 每条 source 必须命中 manifest(source_type+source_id); open_target 必须与 canonical 逐字段一致(除 novel_id); working 不能单独支撑 supported; 校验后回填 canonical title/summary/hash/status |
-| `_plan_semantic_keys` | 982-1007 | `entity:{location_id}` 或 `path:{parent_semantic}:{slug(title)}`; M4 改为 location_slug |
+| `_plan_semantic_keys` | 982-1007 | `entity:{location_slug}` 或 `path:{parent_semantic}:{hash}`——path 段 = sha256(title 去空白小写)前 20 hex(旧 `_semantic_part`; 计划 §2.1/§3 权威, 本表此前误写 slug(title), Phase 3 review M1 已正) |
 | `_validate_update_targets` | 1008-1046 | update run: 新 location 必须在 missing 集; 新 path 节点必须有新 formal source; 已存在 semantic_key 必须在 changed 集否则拒 |
 | `_changed_update_targets` / `_new_source_identities` | 1047-1106 | changed = 来源 hash 变化的 semantic_key(含同 source 牵连节点); new = 当前 manifest 中新增/hash 变/status 变的 formal source |
 | 预算 | catalog §4.11 | temp 0 / max_tokens 4000(旧 12000 暂不提); run 同步执行 timeout 3600s(deep_import 同构) |

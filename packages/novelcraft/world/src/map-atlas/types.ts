@@ -136,6 +136,8 @@ export interface SpatialEvidence {
   reused?: boolean;
   /** checkpoint 续跑游标(降级时 = 下一待跑批号)。 */
   next_checkpoint?: number;
+  /** 各批 llm_step journal/usage 汇总(L1; run.journal 审计来源)。 */
+  journal?: unknown[];
   message?: string;
 }
 
@@ -189,9 +191,43 @@ export interface AtlasRunOptions {
   full_rebuild: boolean;
 }
 
+// ============================================================================
+// Phase 3: AtlasPlan(规划产物; catalog §4.11; 校验 = validateAtlasPlan 纯函数)
+// ============================================================================
+
+/** 规划期标注(旧 AtlasAnnotationPlan; adopt 时 target_plan_key 解析为 node id)。 */
+export interface AtlasPlanAnnotation {
+  label: string;
+  position_x: number;
+  position_y: number;
+  target_plan_key?: string | null;
+  source_ref?: SourceRef | null;
+}
+
+/** 规划节点(旧 AtlasNodePlan; M4: location_entity_id→location_ref 存 location slug)。 */
+export interface AtlasPlanNode {
+  /** `^[a-z0-9][a-z0-9_-]{0,127}$`, plan 内唯一。 */
+  plan_key: string;
+  parent_plan_key?: string | null;
+  /** 引用已采用节点作父(update 已有地点子图); 与 parent_plan_key 互斥。 */
+  existing_parent_node_id?: string | null;
+  /** 关联世界地点对象 slug; 同 plan 内唯一。 */
+  location_ref?: string | null;
+  title: string;
+  level: AtlasLevel;
+  summary: string;
+  /** 语义锚点: 地点完整名称必须出现(旧引擎 prompt 规则)。 */
+  visual_brief: string;
+  /** 外部生图参考文本(N28: M4 不生图, prompt 仅为参考产物)。 */
+  prompt: string;
+  evidence: AtlasEvidence;
+  sources: SourceRef[];
+  annotations: AtlasPlanAnnotation[];
+}
+
 export interface AtlasPlan {
   style_brief: string;
-  nodes: AtlasNode[];
+  nodes: AtlasPlanNode[];
 }
 
 export interface AtlasRun {
