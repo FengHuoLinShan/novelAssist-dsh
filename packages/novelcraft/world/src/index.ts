@@ -8,3 +8,6 @@ export * from "./map-atlas/write.js";
 export * from "./map-atlas/context.js";
 export * from "./map-atlas/spatial.js";
 export * from "./map-atlas/plan.js";
+export * from "./map-atlas/review.js";
+export * from "./map-atlas/image.js";
+export * from "./map-atlas/annotation.js";

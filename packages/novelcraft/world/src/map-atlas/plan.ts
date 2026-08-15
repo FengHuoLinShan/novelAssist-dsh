@@ -24,7 +24,7 @@ import {
   type SourceRef,
   type SpatialEvidence,
 } from "./types.js";
-import { writeAtlasCandidates, writeAtlasRun } from "./write.js";
+import { computeAtlasPageContentHash, writeAtlasCandidates, writeAtlasRun } from "./write.js";
 
 /** 计划/catalog §4.11 上限与口径。 */
 export const ATLAS_PLAN_MAX_NODES = 20;
@@ -579,20 +579,7 @@ function failRun(run: AtlasRun, code: string, message: string, checkpoint: strin
   run.checkpoint = checkpoint;
 }
 
-/** 候选页 content_hash(稳定字段确定性 sha256; adopt CAS 用)。 */
-function pageContentHash(page: Omit<AtlasPage, "content_hash">): string {
-  return sha256Hex(
-    JSON.stringify({
-      node_ref: page.node_ref,
-      title: page.title,
-      visual_brief: page.visual_brief,
-      prompt: page.prompt,
-      evidence: page.evidence,
-      sources: page.source_manifest.map((s) => `${s.source_type}:${s.source_id}:${s.source_hash ?? ""}`),
-      annotations: page.annotations,
-    }),
-  );
-}
+// 候选页 content_hash 统一走 write.ts 的 computeAtlasPageContentHash(Phase 3/4 共享口径, 含 image 字段)。
 
 /**
  * 地图册规划编排(计划 Phase 3):
@@ -765,7 +752,7 @@ export async function planMapAtlas(
       rejected_at: null,
       deprecated_at: null,
     };
-    return { ...base, content_hash: pageContentHash(base) };
+    return { ...base, content_hash: computeAtlasPageContentHash(base) };
   });
   writeAtlasCandidates(root, pendingNodes, pendingPages, `atlas: plan ${run.id} candidates`);
 

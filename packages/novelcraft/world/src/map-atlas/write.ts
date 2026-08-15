@@ -1,11 +1,31 @@
 // world/map-atlas · 写面(guardPath 校验 + 文本 git add/commit; 图片只写本地 gitignore 目录)。
 // 依据: map-atlas 实施计划 §2/§4 Phase 1/附录 A.2(N28/N29)。
 // 铁律: 图片字节绝不 git add; 文本资产(page/node/run)每次写 = guardPath + gitAdd + 单 gitCommit。
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ensureVaultGitignore, guardPath, paths } from '@novelcraft/vault';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
 import type { AtlasNode, AtlasPage, AtlasRun } from './types.js';
+
+/** 候选页 content_hash(稳定字段确定性 sha256; adopt CAS/标注更新用; Phase 3/4 共享)。 */
+export function computeAtlasPageContentHash(page: Omit<AtlasPage, 'content_hash'>): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        node_ref: page.node_ref,
+        title: page.title,
+        visual_brief: page.visual_brief,
+        prompt: page.prompt,
+        evidence: page.evidence,
+        sources: page.source_manifest.map((s) => `${s.source_type}:${s.source_id}:${s.source_hash ?? ''}`),
+        annotations: page.annotations,
+        image: page.image ?? null,
+      }),
+      'utf8',
+    )
+    .digest('hex');
+}
 
 /** 允许的图片扩展名(A.3: 首版原样接受 PNG/JPEG; 扩展名必须与 magic bytes 一致, 本阶段仅白名单)。 */
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg'] as const;
@@ -115,7 +135,12 @@ export function writeAtlasCandidates(
   nodes: AtlasNode[],
   pages: AtlasPage[],
   message: string,
+  opts?: { images?: Array<{ pageSlug: string; attempt: string; bytes: Uint8Array; ext: string }> },
 ): void {
+  // 图片字节先行落盘(writeAtlasImage 内部: 永不 git add, N29); 文本写面仍单 commit。
+  for (const img of opts?.images ?? []) {
+    writeAtlasImage(root, img.pageSlug, img.attempt, img.bytes, img.ext);
+  }
   const p = paths(root);
   const files: Array<{ abs: string; content: string }> = [];
   for (const node of nodes) {
