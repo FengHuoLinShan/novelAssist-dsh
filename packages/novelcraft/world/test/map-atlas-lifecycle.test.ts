@@ -338,12 +338,12 @@ describe("importAtlasImage 本机导入(附录 A.3; N29)", () => {
     unlinkSync(join(paths(root).world.atlas.dir, "images/pg1/v1.png"));
     writeAtlasPage(root, page("pg2", { node_ref: "n1" }));
     const src2 = writeTmpImage(root, "b.png", pngBytes(64, 64));
-    const r2 = importAtlasImage(root, src2, { nodeRef: "n1", pageRef: "pg2" });
+    const r2 = importAtlasImage(root, src2, { nodeRef: "n1" }, { pageRef: "pg2" });
     expect(r2.page.image?.file).toBe("images/pg2/v1.png"); // 新页自目录, v1 起
     // 同页两次上传: pg2 已 review_ready 不再匹配; 用 pg3 连传两次走 upload run 路径验证目录内 max+1
     writeAtlasPage(root, page("pg3", { node_ref: "n1" }));
     const src3 = writeTmpImage(root, "c.png", pngBytes(64, 64));
-    const r3 = importAtlasImage(root, src3, { nodeRef: "n1", pageRef: "pg3" });
+    const r3 = importAtlasImage(root, src3, { nodeRef: "n1" }, { pageRef: "pg3" });
     expect(r3.page.image?.file).toBe("images/pg3/v1.png");
     const src4 = writeTmpImage(root, "d.png", pngBytes(64, 64));
     const r4 = importAtlasImage(root, src4, { nodeRef: "n1" }); // pg3 已 review_ready → 新建页目录独立
