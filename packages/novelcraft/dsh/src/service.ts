@@ -2,6 +2,7 @@
 // 组装全部 seam 适配器, 以 ctx.novelcraft 服务暴露给 agent 组合/其他插件;
 // 并把核心包 facade 命名空间挂在此处(供 client module、skills、子代理组合消费)。
 // 依据: 设计文档 §22.3(插件族, 经 DSH seam 互连)、seam 契约(packages/novelcraft/README.md)。
+import { createHash } from 'node:crypto';
 import { existsSync as existsSyncLocal, readdirSync as readdirSyncLocal, readFileSync, rmSync as rmFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
@@ -17,11 +18,17 @@ import { ensureVaultGitignore, paths as pathsFor } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import { ApprovalGate, GateRequiredError } from './approval/gate.js';
+import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './capabilities.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
-import { RadarScheduler } from './jobs/radar.js';
+import { DshRadarJobHost, RadarScheduler } from './jobs/radar.js';
+import { ActiveVaultWatchScheduler, TransactionWatchStatePersistence } from './jobs/watch-state.js';
+import { NovelcraftNodeRuntime } from './lifecycle/node-runtime.js';
 import { DshProvider } from './llm/provider.js';
-import { ContentPresetRegistry, mergeStepOverrides, withResolvedDefaults } from './llm/preset.js';
+import { ContentPresetRegistry, mergeStepOverrides, withAbortSignal, withResolvedDefaults } from './llm/preset.js';
+import { resolveExecutionProfile, requireTrustedExecutionProfile, type ExecutionProfile } from './llm/execution-profile.js';
+import type { ResolveExecutionProfileOptions } from './llm/execution-profile.js';
+import { optionalBgeLoader } from './optional-bge.js';
 import { NovelcraftCache } from './storage/domain.js';
 import { registerNovelcraftTools } from './tools.js';
 import { SessionVaultBinder } from './vault/binding.js';
@@ -34,7 +41,7 @@ declare module '@deepseek-ai/cordis' {
 
 /** 核心包 facade 命名空间(与 13 包一一对应; 无 DSH 依赖, 可被组合代码直接消费)。 */
 export interface NovelcraftFacades {
-  store: typeof store;
+  store: StoreFacade;
   llmStep: typeof llmStep;
   writing: typeof writing;
   imports: typeof imports;
@@ -45,6 +52,14 @@ export interface NovelcraftFacades {
   context: typeof context;
   assistant: typeof assistant;
 }
+
+/** store canonical 写面不通过 facade 暴露；外部只能走 capabilities.adoptGuarded。 */
+type StoreWriterName =
+  | 'adopt' | 'softDelete'
+  | 'mergeEntities' | 'merge_entities'
+  | 'splitMerge' | 'split_merge'
+  | 'attachAlias' | 'attach_alias';
+export type StoreFacade = Omit<typeof store, StoreWriterName> & Record<StoreWriterName, (...args: never[]) => never>;
 
 /** world.createObject 输入(与 @novelcraft/world 同形)。 */
 export interface WorldCreateInput {
@@ -85,8 +100,20 @@ export const WORLD_FACADE: WorldFacade = {
   updateObject: (root, slug) => worldWriteStub(`world.updateObject(${root}, ${slug})`),
 };
 
+export const STORE_FACADE: StoreFacade = Object.freeze({
+  ...store,
+  adopt: () => worldWriteStub('store.adopt'),
+  softDelete: () => worldWriteStub('store.softDelete'),
+  mergeEntities: () => worldWriteStub('store.mergeEntities'),
+  merge_entities: () => worldWriteStub('store.merge_entities'),
+  splitMerge: () => worldWriteStub('store.splitMerge'),
+  split_merge: () => worldWriteStub('store.split_merge'),
+  attachAlias: () => worldWriteStub('store.attachAlias'),
+  attach_alias: () => worldWriteStub('store.attach_alias'),
+}) as unknown as StoreFacade;
+
 export const FACADES: NovelcraftFacades = {
-  store,
+  store: STORE_FACADE,
   llmStep,
   writing,
   imports,
@@ -118,8 +145,11 @@ export class NovelCraftService extends Service {
   readonly presets: ContentPresetRegistry;
   /** 雷达巡检调度(ctx.jobs) */
   readonly radars: RadarScheduler;
-  /** 核心包 facade(agent 组合/其他插件经此消费, 不互相绕过 seam) */
-  readonly facades: NovelcraftFacades = FACADES;
+  /** N34 Node-hosted one-timer-per-vault scheduler and real session lifecycle composition. */
+  readonly watchScheduler: ActiveVaultWatchScheduler;
+  readonly nodeRuntime: NovelcraftNodeRuntime;
+  /** N35 防误用能力面；新插件只能按 read/propose/adoptGuarded 语义消费。 */
+  readonly capabilities: NovelCraftCapabilities;
   private readonly toolDisposers: Array<() => void>;
 
   constructor(ctx: Context, config: ConfigType) {
@@ -136,24 +166,102 @@ export class NovelCraftService extends Service {
     this.presets = new ContentPresetRegistry(this.cache);
     this.vaults = new SessionVaultBinder(config, this.cache);
     this.radars = new RadarScheduler(ctx);
-    this.toolDisposers = registerNovelcraftTools(ctx, this);
-    ctx.effect(() => () => {
+    const watchFingerprint = createHash('sha256').update(JSON.stringify({
+      version: 1,
+      enabled: config.watch.enabled,
+      intervalMinutes: config.watch.intervalMinutes,
+      radars: ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'],
+    })).digest('hex');
+    const radarHost = new DshRadarJobHost(this.radars, async (binding, radar) =>
+      JSON.stringify(assistant.runRadarSweep(binding.root, { radars: [radar] })));
+    const reportRuntimeError = (scope: string, error: unknown) => {
+      console.error(`[novelcraft] ${scope}:`, error);
+    };
+    this.watchScheduler = new ActiveVaultWatchScheduler(
+      new TransactionWatchStatePersistence(),
+      radarHost,
+      {
+        enabled: config.watch.enabled,
+        intervalMs: config.watch.intervalMinutes * 60_000,
+        configFingerprint: watchFingerprint,
+        onError: (root, error) => reportRuntimeError(`watch:${root}`, error),
+      },
+    );
+    this.nodeRuntime = new NovelcraftNodeRuntime(
+      ctx,
+      this.vaults,
+      this.watchScheduler,
+      (operation, error) => reportRuntimeError(`session:${operation}`, error),
+    );
+    this.toolDisposers = [];
+    // Establish rollback ownership before start/scan/tool registration can throw. Cordis awaits this
+    // async disposer during normal unload and constructor rollback.
+    ctx.effect(() => async () => {
+      await this.nodeRuntime.stop();
       for (const dispose of this.toolDisposers) dispose();
+      await this.cache.close();
     });
+    this.nodeRuntime.start();
+    this.capabilities = createNovelCraftCapabilities(this);
+    this.toolDisposers.push(...registerNovelcraftTools(ctx, this));
   }
 
-  /** 便捷: 内容手一步调用(默认 = Config.llm ← 该书预设(N20)/llm.yml 直键; 调用方 overrides 优先)。 */
-  async runStep(req: llmStep.StepRequest, root?: string): Promise<llmStep.StepResult> {
-    const defaults = await this.presets.resolveDefaults(root);
-    return llmStep.runStep(this.llmProvider, {
-      ...req,
-      overrides: mergeStepOverrides(defaults, req.overrides),
-    });
+  /** 解析一次不可变 ExecutionProfile(N34 / ADR-0023 §6): 组合 Config.llm +
+   *  ContentPresetRegistry(该书 preset 卡)+ resolvePolicy(llm.yml 直键), 冻结后返回;
+   *  非法 preset/timeout/budget 在此抛 ExecutionProfileError(fail-closed, provider 前)。
+   *  编排入口(deepImport/planMapAtlas/propose/generate/rag)启动时调用一次, 把返回的
+   *  冻结 profile 透传给内部 runStep/contentProviderFor(带 profile 的调用不再解析)。
+   *  options.specRefs: contractVersions 的固定 spec 引用集(deep import 用
+   *  DEEP_IMPORT_SPEC_REFS, 确定性; 缺省 = 内置注册表)。 */
+  resolveProfile(root?: string, options?: ResolveExecutionProfileOptions): Promise<ExecutionProfile> {
+    return resolveExecutionProfile(this.presets, this.config.llm, root, options);
   }
 
-  /** 内容手 Provider(注入该书预设默认面; 供 deepImport/propose/generate 等编排用)。 */
-  async contentProviderFor(root?: string): Promise<llmStep.Provider> {
-    return withResolvedDefaults(this.llmProvider, await this.presets.resolveDefaults(root));
+  /** 便捷: 内容手一步调用(默认 = ExecutionProfile: Config.llm ← 该书预设(N20)/llm.yml
+   *  直键; 调用方 overrides 优先)。profile 可显式传入已解析冻结的 ExecutionProfile
+   *  (入口解析一次、内部透传, N34); 传入后不再按 root 解析。
+   *  signal: 工具/编排取消信号, 与 llm-step 每步 timeout 合并贯通到 provider(加法)。
+   *  审查项 1: profile 参数必须携带 opaque provenance brand(仅 resolveExecutionProfile
+   *  解析产出; 普通对象即使字段合法也 INVALID_PROFILE fail-closed, 不得跳过 root 解析);
+   *  内部透传(resolveProfile 产出)经 brand 零重解析验证。 */
+  async runStep(
+    req: llmStep.StepRequest,
+    root?: string,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
+  ): Promise<llmStep.StepResult> {
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    // 审查项 3: workflowBudget 真实继承 —— 单步 runStep 也按 ExecutionProfile.workflowBudget
+    // 建一次累计 tracker(现有 RunStep budget API: runStep(provider, req, { budget })),
+    // 超支在 provider 前 budget_exceeded(fail-closed); profile 未设 workflowBudget →
+    // 不建 tracker, 行为不变。
+    const budget =
+      resolved.workflowBudget !== undefined
+        ? llmStep.createWorkflowBudget(resolved.workflowBudget)
+        : undefined;
+    return llmStep.runStep(
+      withAbortSignal(this.llmProvider, signal),
+      {
+        ...req,
+        overrides: mergeStepOverrides(resolved, req.overrides),
+      },
+      budget !== undefined ? { budget } : undefined,
+    );
+  }
+
+  /** 内容手 Provider(注入该书执行画像默认面; 供 deepImport/propose/generate 等编排用)。
+   *   profile: 已解析冻结的 ExecutionProfile(入口解析一次、内部透传, N34);
+   *   缺省时按 root 解析一次。
+   *   signal: 工具/编排取消信号, 与 req.signal 合并贯通(相加 API)。
+   *   审查项 1: profile 参数 brand 校验(同 runStep, 普通对象 fail-closed)。 */
+  async contentProviderFor(root?: string, signal?: AbortSignal, profile?: ExecutionProfile): Promise<llmStep.Provider> {
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    return withAbortSignal(
+      withResolvedDefaults(this.llmProvider, resolved),
+      signal,
+    );
   }
 
   /** 便捷: 审批门控的 adopt(采用类写操作必过 approval, §9)。 */
@@ -165,11 +273,12 @@ export class NovelCraftService extends Service {
     opts: store.AdoptOptions = {},
     note?: string,
   ): Promise<store.AdoptResult> {
+    const prepared = store.prepareAdopt(root, kind, ref, opts);
     return this.approval.guard(agent, {
       action: `采用${kind}`,
       summary: note ?? `vault ${root} 中的 ${ref}`,
       items: [ref],
-    }, async () => store.adopt(root, kind, ref, opts));
+    }, async () => store.executePreparedAdopt(prepared));
   }
 
   /** 便捷: 审批门控的 world 对象创建(采用类写入必过 approval, N31 + 铁律3 fail-closed)。 */
@@ -179,11 +288,12 @@ export class NovelCraftService extends Service {
     input: WorldCreateInput,
     note?: string,
   ): Promise<string> {
+    const prepared = world.prepareCreateObject(root, input);
     return this.approval.guard(agent, {
       action: '创建世界对象',
       summary: note ?? `vault ${root} 中的「${input.name}」`,
       items: [input.name],
-    }, async () => world.createObject(root, input));
+    }, async () => world.executePreparedCreateObject(prepared));
   }
 
   /** 便捷: 审批门控的 world 对象修改(采用类写入必过 approval, N31 + 铁律3 fail-closed)。 */
@@ -194,20 +304,52 @@ export class NovelCraftService extends Service {
     patch: WorldUpdatePatch,
     note?: string,
   ): Promise<void> {
+    const prepared = world.prepareUpdateObject(root, slug, patch);
     return this.approval.guard(agent, {
       action: '修改世界对象',
       summary: note ?? `vault ${root} 中的 ${slug}`,
       items: [slug],
-    }, async () => world.updateObject(root, slug, patch));
+    }, async () => world.executePreparedUpdateObject(prepared));
   }
 
   // ------------------------------------------------------------------
   // map-atlas(Phase 5; 计划 §4 Phase 5; catalog §4.11)
   // ------------------------------------------------------------------
 
-  /** 便捷: 地图册规划(contentProvider + world.planMapAtlas; 工具级 timeout 3600s)。 */
-  async planMapAtlas(root: string, opts: world.PlanMapAtlasOptions): Promise<world.PlanMapAtlasResult> {
-    return world.planMapAtlas(root, await this.contentProviderFor(root), opts);
+  /** 地图册生产编排入口(N33): immutable run + artifact/receipt/cursor + apply probe。 */
+  async planMapAtlas(
+    root: string,
+    opts: world.AtlasWorkflowOptions,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
+    agent?: import('@deepseek-ai/dsh-agent').Agent,
+  ): Promise<world.AtlasWorkflowResult> {
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    const provider = await this.contentProviderFor(root, signal, resolved);
+    const toApprovalDecision = (decision: string): import('@novelcraft/trace').ApprovalDecision =>
+      decision === 'allowed-once' ? 'allowed-once' : decision === 'unavailable' ? 'unavailable' : 'rejected';
+    return world.runAtlasWorkflow(root, opts, {
+      provider,
+      profileFingerprint: llmStep.fingerprintExecutionProfile(resolved),
+      contractVersions: resolved.contractVersions ?? {},
+      ...(resolved.workflowBudget !== undefined
+        ? { budget: llmStep.createWorkflowBudget(resolved.workflowBudget) }
+        : {}),
+      approve: async (action, summary, items) => {
+        if (agent === undefined) return 'unavailable';
+        return toApprovalDecision(await this.approval.request(agent, { action, summary, items, ...(signal ? { signal } : {}) }));
+      },
+      reauthorizeRemaining: async ({ workflowId, batches, estimate }) => {
+        if (agent === undefined) return 'unavailable';
+        return toApprovalDecision(await this.approval.request(agent, {
+          action: 'authorize_map_atlas_resume',
+          summary: `恢复地图册 ${workflowId}: ${estimate}`,
+          items: batches.map((batch) => `阶段 ${batch.phase}(${batch.batchId})`),
+          ...(signal ? { signal } : {}),
+        }));
+      },
+    });
   }
 
   /** 便捷: 地图册只读视图(tree + 指定/最近 run; 只读直通不过审批)。 */
@@ -230,7 +372,9 @@ export class NovelCraftService extends Service {
 
   /**
    * 便捷: 地图页/节点生命周期(审批门控, 铁律 3 fail-closed):
-   * adopt / adopt_placeholder / restore 经 ApprovalGate; reject / archive 为候选/历史面操作, 直执行。
+   * adopt / adopt_placeholder / restore / archive 均经 ApprovalGate(allowed-once 只放行
+   * 一次, rejected/cancelled/unavailable 一律拒绝, fail-closed; N35: archive 是 canonical
+   * 资产状态迁移, 工具无旁路); reject 为候选面操作(候选 → rejected 终态, 非 canonical), 直执行。
    */
   async reviewMapAtlasGuarded(
     agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
@@ -261,12 +405,22 @@ export class NovelCraftService extends Service {
       }
       case 'reject': {
         if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'reject 需要 page_ref');
-        const page = world.rejectAtlasPage(root, target.pageRef, { note: opts.note, expectedContentHash: opts.expectedContentHash });
+        const page = await world.rejectAtlasPage(root, target.pageRef, { note: opts.note, expectedContentHash: opts.expectedContentHash });
         return { ok: true, detail: `已驳回地图页 ${page.id}(终态 rejected)` };
       }
       case 'archive': {
         if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'archive 需要 page_ref');
-        const page = world.archiveAtlasPage(root, target.pageRef, { expectedContentHash: opts.expectedContentHash });
+        // N35: archive(adopted → deprecated)是 canonical 资产状态迁移, 必须 ApprovalGate
+        // allowed-once, 工具无旁路。审批前读快照 hash 作强制 CAS 基线(审批后写前重验,
+        // 与 adopt/restore 同 R17/CAS 语义: 审批期间被改/已 commit 的页一律 CONFLICT 零写)。
+        const adopted = world.readAtlasTree(root).pages.find((p) => p.id === target.pageRef);
+        if (!adopted) throw new store.StoreError('NOT_FOUND', `已采用页不存在: ${target.pageRef}`);
+        const preHash = adopted.content_hash;
+        const decision = await approve('map_atlas.archive_page', `归档地图页 ${adopted.title}(${target.pageRef})`, [target.pageRef]);
+        if (decision !== 'allowed-once') {
+          throw new store.StoreError('VALIDATION_FAILED', `archive 审批未通过(${decision}), fail-closed 零写`);
+        }
+        const page = await world.archiveAtlasPage(root, target.pageRef, { expectedContentHash: preHash });
         return { ok: true, detail: `已归档地图页 ${page.id}(deprecated, 可 restore)` };
       }
       case 'restore': {
@@ -277,19 +431,8 @@ export class NovelCraftService extends Service {
     }
   }
 
-  /** 便捷: 地图页标注 ops(作者内容编辑, 不过 ApprovalGate; 校验+hash 重算在 world 层)。 */
-  applyAtlasAnnotations(
-    root: string,
-    pageRef: string,
-    ops: world.AtlasAnnotationOp[],
-    opts?: { expectedContentHash?: string },
-  ): { applied: number; content_hash: string } {
-    // 批量 = 全量校验先行 + 单 commit + CAS(计划 Phase 5 工具 5 / 规则 11; 中途失败零残留, 重试不重复)。
-    return world.applyAtlasAnnotationOps(root, pageRef, ops, opts);
-  }
-
   /** 便捷: 改 prompt_only 候选页 prompt(候选面, 不过审批)。 */
-  updateAtlasPrompt(root: string, pageRef: string, prompt: string, expectedContentHash?: string): world.AtlasPage {
+  async updateAtlasPrompt(root: string, pageRef: string, prompt: string, expectedContentHash?: string): Promise<world.AtlasPage> {
     return world.updateAtlasPrompt(root, pageRef, prompt, expectedContentHash);
   }
 
@@ -326,30 +469,51 @@ export class NovelCraftService extends Service {
   }
 
   /**
-   * 便捷: 消费标注队列(主路径; 计划 Phase 5 工具 5):
-   * 读 .assistant/atlas/annotation-queue/*.json({page_ref, ops[]}), 逐文件应用, 成功后删除队列文件;
-   * 单文件失败不阻塞其余(错误汇总返回)。标注 = 作者内容编辑, 不过审批。
+   * 便捷: 消费标注队列(N35 唯一受控结构化入口; 计划 Phase 5 工具 5):
+   * 读 .assistant/atlas/annotation-queue/*.json, 载荷 schema 固定(封闭 provenance):
+   *   { page_ref: string, base_content_hash: string, ops: 严格 discriminated union[] }
+   * - base_content_hash 必填(N35): 缺失/非字符串 → 拒绝(零写, 队列文件保留待修);
+   * - 未知顶层字段 → 拒绝(固定 provenance, 不猜测); 未知 op/未知字段/缺字段由 world 层
+   *   严格校验拒绝(绝不把拼写错误当 delete); CAS 失配(stale)→ CONFLICT 零写;
+   * - 本队列只调用 world 层 **async transactional API**(applyAtlasAnnotationOpsTx,
+   *   N35/ADR-0021): 任何首写前产出完整 output bytes 并 executeTransaction, 不直接
+   *   writeFileSync/gitAdd/gitCommit; 内容 CAS/预存 staged/崩溃 → 执行器零写收敛;
+   * - 单文件失败不阻塞其余(错误汇总返回); 成功后删除队列文件。
+   * 标注 = 作者内容编辑, 不过审批; 工具不得直接传 ops 绕过本队列(CAS 必填)。
    */
-  applyAtlasAnnotationQueue(root: string): { files: number; applied: number; failed: number; errors: string[] } {
+  async applyAtlasAnnotationQueue(root: string): Promise<{ files: number; applied: number; failed: number; errors: string[] }> {
     const dir = pathsFor(root).assistant.atlas.annotationQueue;
     if (!existsSyncLocal(dir)) return { files: 0, applied: 0, failed: 0, errors: [] };
-    const files = readdirSyncLocal(dir).filter((f) => f.endsWith('.json')).sort();
+    // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)与伪装成
+    // .json 的目录一律忽略, 不跟随。abs 由安全 annotationQueue dir 拼接, 读取的
+    // 只能是目录内普通文件——外部 JSON 不被应用、不被删除。
+    const files = readdirSyncLocal(dir, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith('.json'))
+      .map((e) => e.name)
+      .sort();
     let applied = 0;
     let failed = 0;
     const errors: string[] = [];
     for (const file of files) {
       const abs = path.join(dir, file);
       try {
-        const payload = JSON.parse(readFileSync(abs, 'utf8')) as {
-          page_ref?: string;
-          ops?: world.AtlasAnnotationOp[];
-          base_content_hash?: string;
-        };
-        if (!payload.page_ref || !Array.isArray(payload.ops)) {
-          throw new Error('队列文件需 {page_ref, ops[], base_content_hash?}');
+        const payload = JSON.parse(readFileSync(abs, 'utf8')) as Record<string, unknown>;
+        // 固定 provenance 封闭 schema: 只认 page_ref/base_content_hash/ops 三键(不猜测)。
+        for (const key of Object.keys(payload)) {
+          if (key !== 'page_ref' && key !== 'base_content_hash' && key !== 'ops') {
+            throw new Error(`队列文件含未知字段 ${key}(固定 schema: page_ref/base_content_hash/ops)`);
+          }
         }
-        const r = this.applyAtlasAnnotations(root, payload.page_ref, payload.ops, {
-          expectedContentHash: payload.base_content_hash, // CAS: 防 stale 覆盖(Phase 6 队列载荷)
+        const pageRef = payload.page_ref;
+        const baseHash = payload.base_content_hash;
+        const ops = payload.ops;
+        if (typeof pageRef !== 'string' || pageRef.length === 0) throw new Error('队列文件缺 page_ref');
+        if (typeof baseHash !== 'string' || baseHash.length === 0) {
+          throw new Error('队列文件缺 base_content_hash(CAS 必填, N35; 缺失拒绝零写)');
+        }
+        if (!Array.isArray(ops) || ops.length === 0) throw new Error('队列文件缺 ops[]');
+        const r = await world.applyAtlasAnnotationOpsTx(root, pageRef, ops as world.AtlasAnnotationOp[], {
+          expectedContentHash: baseHash, // CAS: 防 stale 覆盖(N35; 必填, 失配 CONFLICT 零写)
         });
         applied += r.applied;
         rmFileSync(abs); // 成功后清队列(计划: 应用后清队列)。
@@ -375,27 +539,50 @@ export class NovelCraftService extends Service {
     return assistant.inboxView(root, currentContentHash);
   }
 
-  /** 便捷: 深度导入六阶段(adopt 经审批门, trace 落 .assistant/import-trace.jsonl)。 */
+  /** 便捷: 深度导入六阶段(范围授权 + adopt/2b 独立审批门, trace 落 .assistant/import-trace.jsonl)。
+   *   编排入口: profile 缺省时按 root 解析一次 ExecutionProfile(N34, fail-closed:
+   *   非法 preset/timeout/budget 在范围授权前抛, 零审批零 provider 零文件写);
+   *   profile 已传入(入口解析一次、内部透传)则不再解析。
+   *   signal: 工具取消信号贯通到内容手调用(加法)。 */
   deepImport(
     agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
     root: string,
     opts: DeepImportOptions,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
   ): Promise<imports.DeepImportResult> {
-    return deepImport(this, agent, root, opts);
+    return deepImport(this, agent, root, opts, signal, profile);
   }
 
-  /** 便捷: 计划台续写提案(内容手经该书预设面, 落 .assistant/proposals/)。 */
-  async proposeNextChapter(root: string, chapterIndex: number): Promise<writing.ProposeResult> {
-    return writing.proposeNextChapter(await this.contentProviderFor(root), root, chapterIndex);
+  /** 便捷: 计划台续写提案(内容手经该书执行画像面, 落 .assistant/proposals/)。
+   *   编排入口: profile 缺省时按 root 解析一次 ExecutionProfile(N34)并透传。
+   *   signal: 工具取消信号贯通(加法)。 */
+  async proposeNextChapter(
+    root: string,
+    chapterIndex: number,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
+  ): Promise<writing.ProposeResult> {
+    // 审查项 1: profile 参数 brand 校验(fail-closed, 见 runStep; 普通对象不得跳过 root 解析)。
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    return writing.proposeNextChapter(await this.contentProviderFor(root, signal, resolved), root, chapterIndex);
   }
 
-  /** 便捷: 续写提案第二阶段(选定方向 → writing_generate → chapters/pending 候选)。 */
+  /** 便捷: 续写提案第二阶段(选定方向 → writing_generate → chapters/pending 候选)。
+   *   编排入口: profile 缺省时按 root 解析一次 ExecutionProfile(N34)并透传。
+   *   signal: 工具取消信号贯通(加法)。 */
   async generateNextChapter(
     root: string,
     chapterIndex: number,
     opts: writing.GenerateNextChapterOptions,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
   ): Promise<writing.GenerateResult> {
-    return writing.generateNextChapter(await this.contentProviderFor(root), root, chapterIndex, opts);
+    // 审查项 1: profile 参数 brand 校验(fail-closed, 见 runStep; 普通对象不得跳过 root 解析)。
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    return writing.generateNextChapter(await this.contentProviderFor(root, signal, resolved), root, chapterIndex, opts);
   }
 
   /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */
@@ -443,13 +630,19 @@ export class NovelCraftService extends Service {
     return rag.syncRagIndex(root);
   }
 
-  /** 便捷: RAG 语义检索(L2 向量召回按 llm.yml embedding 键启用; rerank 默认开, 走该书预设面 N20, 失败自动降级)。 */
+  /** 便捷: RAG 语义检索(L2 向量召回按 llm.yml embedding 键启用; rerank 默认开, 走该书
+   *  执行画像面 N20, 失败自动降级)。编排入口: profile 缺省时按 root 解析一次
+   *  ExecutionProfile(N34)并透传给 rerank 内容手。 */
   async ragSearch(
     root: string,
     query: string,
     opts?: { topK?: number; rerank?: boolean },
+    profile?: ExecutionProfile,
   ): Promise<rag.RagSearchResult> {
-    const provider = opts?.rerank !== false ? await this.contentProviderFor(root) : undefined;
+    // 审查项 1: profile 参数 brand 校验(fail-closed, 见 runStep; 普通对象不得跳过 root 解析)。
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    const provider = opts?.rerank !== false ? await this.contentProviderFor(root, undefined, resolved) : undefined;
     const embeddingBackend = await this.embeddingBackendFor(root);
     return rag.searchRag(root, query, {
       ...(opts?.topK !== undefined ? { topK: opts.topK } : {}),
@@ -471,7 +664,8 @@ export class NovelCraftService extends Service {
       return undefined; // llm.yml 读取失败视为未启用。
     }
     try {
-      const m = await import('@novelcraft/rag-bge');
+      const m = await optionalBgeLoader.load();
+      if (typeof m.createBgeEmbeddingBackend !== 'function') return undefined;
       return m.createBgeEmbeddingBackend();
     } catch (err) {
       this.ctx.logger?.warn?.(

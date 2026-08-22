@@ -8,9 +8,11 @@
 // agent/工具显式触发, 或 watch.enabled 时由 interval 触发。
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { JobId, JobKindMap, JobStart } from '@deepseek-ai/dsh-jobs';
+import type { JobId, JobKindMap, JobRegistry, JobStart } from '@deepseek-ai/dsh-jobs';
 import type { RadarKind } from '@novelcraft/assistant';
 import { svc } from '../ctx.js';
+import type { ManagedRadarJob, RadarJobHost } from './watch-state.js';
+import type { VaultBinding } from '../vault/binding.js';
 
 declare module '@deepseek-ai/dsh-jobs' {
   interface JobKindMap {
@@ -63,7 +65,22 @@ export class RadarScheduler {
 
   /** 同步发起一轮巡检, 返回 job id(不等待完成; 经 ctx.jobs.wait/read 收尾)。 */
   start(spec: RadarRoundSpec, work: RadarWork): JobId {
+    const managed = this.startManaged(spec, work);
+    // 旧 id-only API 没有 done 消费者；失败仍由 JobRegistry 记录，避免派生 Promise 未处理。
+    void managed.done.catch(() => undefined);
+    return managed.jobId;
+  }
+
+  /**
+   * N34 watch scheduler seam：返回只管理本 radar job 的 done/cancel 句柄。
+   * owner 缺省时明确创建 unowned job，session disposal 不会由 DSH 自动误杀。
+   */
+  startManaged(spec: RadarRoundSpec, work: RadarWork): ManagedRadarJob & { jobId: JobId } {
     let aborter: AbortController | undefined;
+    let cancelled = false;
+    let publishStarted!: () => void;
+    let outcome!: ReturnType<JobStart['run']>['done'];
+    const started = new Promise<void>((resolve) => { publishStarted = resolve; });
     const specStart: JobStart = {
       kind: RADAR_JOB_KIND,
       label: spec.label ?? RADAR_LABELS[spec.radar],
@@ -71,8 +88,7 @@ export class RadarScheduler {
       ...(spec.owner ? { owner: spec.owner } : {}),
       run: () => {
         aborter = new AbortController();
-        let cancelled = false;
-        const done = (async () => {
+        outcome = (async () => {
           try {
             const output = await work(aborter.signal);
             return { status: cancelled ? ('killed' as const) : ('completed' as const), output };
@@ -84,20 +100,32 @@ export class RadarScheduler {
             };
           }
         })();
+        publishStarted();
         return {
           cancel: (reason?: string) => {
             cancelled = true;
             aborter?.abort(reason);
           },
-          done,
+          done: outcome,
         };
       },
     };
-    const jobs = svc<{ start(spec: JobStart): JobId }>(this.ctx, 'jobs');
-    if (!jobs) {
-      throw new Error('ctx.jobs 服务不可用(雷达巡检需要 jobs 插件)');
-    }
-    return jobs.start(specStart);
+    const jobs = svc<JobRegistry>(this.ctx, 'jobs');
+    if (!jobs) throw new Error('ctx.jobs 服务不可用(雷达巡检需要 jobs 插件)');
+    const jobId = jobs.start(specStart);
+    const done = started.then(async () => {
+      const terminal = await outcome;
+      if (terminal.status !== 'completed') throw new Error(terminal.detail ?? `radar job ${terminal.status}`);
+    });
+    return {
+      id: String(jobId),
+      jobId,
+      done,
+      cancel: (reason) => {
+        const status = jobs.kill(jobId, undefined, reason);
+        if (status === 'already-finished') return;
+      },
+    };
   }
 
   /**
@@ -117,5 +145,20 @@ export class RadarScheduler {
       const round = makeRound();
       if (round) this.start(round, work);
     }, minutes * 60_000) as () => void) ?? undefined;
+  }
+}
+
+/** 把通用 RadarScheduler 适配成 ActiveVaultWatchScheduler 的逐 radar job host。 */
+export class DshRadarJobHost implements RadarJobHost {
+  constructor(
+    private readonly scheduler: RadarScheduler,
+    private readonly work: (binding: VaultBinding, radar: RadarKind, signal: AbortSignal) => Promise<string>,
+  ) {}
+
+  start(binding: VaultBinding, radar: RadarKind): ManagedRadarJob {
+    return this.scheduler.startManaged(
+      { root: binding.root, radar },
+      (signal) => this.work(binding, radar, signal),
+    );
   }
 }

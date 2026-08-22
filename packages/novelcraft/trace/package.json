@@ -1,6 +1,8 @@
 {
   "name": "@novelcraft/trace",
   "version": "0.0.1",
+  "private": true,
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "description": "NovelCraft M4 trace contract: 事件词表 + 内存有序记录 + 策略断言 DSL + mock 决策/策略默认(零运行时依赖)",
   "type": "module",
   "main": "./dist/index.js",

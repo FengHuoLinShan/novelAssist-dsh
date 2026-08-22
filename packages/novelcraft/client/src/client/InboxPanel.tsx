@@ -8,10 +8,10 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SignalCard } from '../wire.ts'
 import { NS } from './locales.ts'
 import { useInbox } from './useWatch.ts'
+import { buildActPayload, type ActModifyFields, type InboxAction } from './actPayload.ts'
 import css from './novelcraft.module.css'
 
-/** 四动词(与 assistant 核心 InboxAction 对齐; 本地声明, 不跨包值导入)。 */
-type InboxAction = 'accept' | 'reject' | 'modify' | 'defer'
+export { buildActPayload, type ActModifyFields, type InboxAction } from './actPayload.ts'
 
 export interface InboxPanelProps {
   connection: RpcCaller | undefined
@@ -39,7 +39,7 @@ function VerbRow(props: {
   card: SignalCard
   t: TranslateNS<typeof NS>
   busy: boolean
-  onAct: (action: InboxAction, reason?: string, modified?: { title?: string; proposed_action?: string }) => void
+  onAct: (action: InboxAction, reason?: string, modified?: ActModifyFields) => void
 }): JSX.Element {
   const { card, t, busy, onAct } = props
   const [pending, setPending] = useState<'reject' | 'modify' | null>(null)
@@ -103,15 +103,11 @@ export function InboxPanel(props: InboxPanelProps): JSX.Element {
     if (selected >= cards.length && cards.length > 0) setSelected(0)
   }, [cards.length, selected])
 
-  const handleAct = async (action: InboxAction, reason?: string): Promise<void> => {
+  const handleAct = async (action: InboxAction, reason?: string, modified?: ActModifyFields): Promise<void> => {
     const card = cards[selected]
     if (!card) return
-    const text = await actOn({
-      sessionId,
-      signalId: card.id,
-      action,
-      ...(reason ? { reason } : {}),
-    })
+    // modified.title/proposed_action → wire modifiedTitle/modifiedProposedAction(buildActPayload)。
+    const text = await actOn(buildActPayload(card, sessionId, action, reason, modified))
     setMessage(text ?? t('inbox.act.fail'))
   }
 
@@ -163,7 +159,7 @@ export function InboxPanel(props: InboxPanelProps): JSX.Element {
             </ul>
           ) : null}
           <p className={css.proposed}>{t('inbox.action')}: {card.proposed_action}</p>
-          <VerbRow card={card} t={t} busy={busy} onAct={(a, r) => void handleAct(a, r)} />
+          <VerbRow card={card} t={t} busy={busy} onAct={(a, r, m) => void handleAct(a, r, m)} />
         </article>
       ))}
       <footer className={css.keyboardHints}>j/k · 1-4 · u · Esc</footer>

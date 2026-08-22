@@ -7,6 +7,11 @@ export type TraceEventType =
   | "begin_import"
   | "stage_candidates"
   | "checkpoint"
+  | "batch_planned"
+  | "batch_artifact"
+  | "batch_cursor"
+  | "resume"
+  | "apply_state"
   | "llm_step"
   | "degradation"
   | "approval"
@@ -56,6 +61,11 @@ export interface BeginImportEvent extends TraceEventBase {
   end_chapter: number;
   authorization_confirmed: boolean;
   input_fingerprint: string;
+  /** N34/ADR-0023 §6 + 独立审查 P5: 启动解析一次的执行画像指纹(可选, 加法)。
+   *  resume/续跑按此拒绝旧 run(执行画像变化不沿用旧 checkpoint)。 */
+  profile_fingerprint?: string;
+  /** P5/R6: 本次编排的契约版本集(从 spec registry 构造; 可选, 加法)。 */
+  contract_versions?: Record<string, string>;
 }
 
 export interface StageCandidatesEvent extends TraceEventBase {
@@ -74,6 +84,46 @@ export interface CheckpointEvent extends TraceEventBase {
   phase: string;
   input_fingerprint: string;
   done: boolean;
+}
+
+export interface BatchPlannedEvent extends TraceEventBase {
+  type: "batch_planned";
+  workflow_id: string;
+  batch_id: string;
+  phase: string;
+  ordinal: number;
+}
+
+export interface BatchArtifactEvent extends TraceEventBase {
+  type: "batch_artifact";
+  workflow_id: string;
+  batch_id: string;
+  result_hash: string;
+  transaction_id: string;
+}
+
+export interface BatchCursorEvent extends TraceEventBase {
+  type: "batch_cursor";
+  workflow_id: string;
+  batch_id: string;
+  state: "completed";
+}
+
+export interface ResumeEvent extends TraceEventBase {
+  type: "resume";
+  workflow_id: string;
+  outcome: "continued" | "provider_outcome_unknown" | "incompatible" | "recovered_intent";
+  remaining_batches: number;
+}
+
+export interface ApplyStateEvent extends TraceEventBase {
+  type: "apply_state";
+  workflow_id: string;
+  apply_id: string;
+  target: string;
+  from?: "waiting_approval" | "applying";
+  to: "waiting_approval" | "applying" | "applied" | "rejected" | "skipped" | "failed";
+  transaction_id?: string;
 }
 
 export interface LlmStepEvent extends TraceEventBase {
@@ -120,6 +170,11 @@ export type TraceEvent =
   | BeginImportEvent
   | StageCandidatesEvent
   | CheckpointEvent
+  | BatchPlannedEvent
+  | BatchArtifactEvent
+  | BatchCursorEvent
+  | ResumeEvent
+  | ApplyStateEvent
   | LlmStepEvent
   | DegradationEvent
   | ApprovalEvent

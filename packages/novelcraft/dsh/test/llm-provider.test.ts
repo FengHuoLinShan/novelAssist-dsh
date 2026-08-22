@@ -1,10 +1,13 @@
 // DshProvider 行为契约(seam: ctx.llm)。
 // 断言引 seam 契约(packages/novelcraft/README.md「LLM 真 provider」):
 // complete(req) 内部转 DSH ctx.llm 调用; system 进 system 槽;
-// usage 透传; error/aborted 终止映射为可分类错误(retryable)。
+// usage 透传; error 终止映射为可分类错误(retryable)。
+// 审查项 6: 取消三条路径(finish aborted / adapter AbortError / signal abort)统一抛
+// name=AbortError + retryable=false(llm-step classifyError 零重试, provider 前 fail-closed)。
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import { DshProvider } from '../src/index.js';
-import { makeContext, type HarnessServices } from './helpers.js';
+import { FakeAdapter, makeContext, type HarnessServices } from './helpers.js';
 
 describe('DshProvider', () => {
   let h: HarnessServices;
@@ -74,11 +77,41 @@ describe('DshProvider', () => {
     ).rejects.toMatchObject({ retryable: false });
   });
 
-  it('aborted 终止 → 错误(带失败详情)', async () => {
+  it('aborted 终止(finish aborted)→ 统一 AbortError: name=AbortError + retryable=false(审查项 6)', async () => {
     h.adapter.enqueue({ finishKind: 'aborted', failure: { code: 'ABORTED', message: 'signal' } });
     const provider = new DshProvider({ ctx: h.ctx, provider: 'fake', model: 'fake-model' });
-    await expect(
-      provider.complete({ messages: [{ role: 'user', content: 'hi' }] }),
-    ).rejects.toThrow(/DSH llm 调用失败/);
+    const err = await provider.complete({ messages: [{ role: 'user', content: 'hi' }] }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).name).toBe('AbortError');
+    expect((err as Error & { retryable?: boolean }).retryable).toBe(false);
+    expect((err as Error).message).toContain('aborted'); // 保留失败详情
+  });
+
+  it('signal abort(流已正常结束但信号已 abort)→ 统一 AbortError, 不返回半截文本(审查项 6)', async () => {
+    h.adapter.enqueue({ deltas: ['partial-text'], finishKind: 'stop' });
+    const controller = new AbortController();
+    controller.abort(); // 调用前已 abort(同步生效)
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'fake', model: 'fake-model' });
+    const err = await provider
+      .complete({ messages: [{ role: 'user', content: 'hi' }], signal: controller.signal })
+      .catch((e: unknown) => e);
+    expect((err as Error).name).toBe('AbortError');
+    expect((err as Error & { retryable?: boolean }).retryable).toBe(false);
+  });
+
+  it('adapter 抛 AbortError(LlmError ABORTED 码)→ 统一 AbortError + retryable=false(审查项 6)', async () => {
+    class ThrowingAbortAdapter extends FakeAdapter {
+      override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+        this.requests.push(options);
+        // dsh-llm 流协议把适配器抛错转为 terminal finish(ABORTED 码 → kind aborted)。
+        throw new LlmError('adapter aborted', 'ABORTED');
+      }
+    }
+    const throwing = new ThrowingAbortAdapter();
+    h.ctx.llm.registerAdapter(['throw-abort'], throwing);
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'throw-abort', model: 'fake-model' });
+    const err = await provider.complete({ messages: [{ role: 'user', content: 'hi' }] }).catch((e: unknown) => e);
+    expect((err as Error).name).toBe('AbortError');
+    expect((err as Error & { retryable?: boolean }).retryable).toBe(false);
   });
 });

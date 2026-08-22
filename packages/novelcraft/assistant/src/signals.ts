@@ -34,8 +34,9 @@ export interface Signal {
   reject_reason?: string;
 }
 
-const RADARS: RadarKind[] = ["ingest", "dedup", "suggest", "plot", "risk", "writing"];
-const SEVERITIES: Severity[] = ["hint", "note", "risk", "conflict"];
+export const SIGNAL_STATUSES: SignalStatus[] = ["open", "accepted", "rejected", "deferred", "resolved"];
+export const RADARS: RadarKind[] = ["ingest", "dedup", "suggest", "plot", "risk", "writing"];
+export const SEVERITIES: Severity[] = ["hint", "note", "risk", "conflict"];
 /** 干扰分级(设计文档 §11): 冲突级立即亮宠物; 风险进角标; 提示/注意静默堆积 */
 export const SEVERITY_ORDER: Record<Severity, number> = {
   conflict: 3,

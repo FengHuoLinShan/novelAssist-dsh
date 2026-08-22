@@ -15,6 +15,14 @@ export const inject = ['connection'];
 
 export { RPC_CHANNEL, ENDPOINTS };
 export type {
+  AtlasAnnotationOpInput,
+  AtlasAnnotationRequestPayload,
+  AtlasAnnotationRequestValue,
+  AtlasLabelCard,
+  AtlasNodeCard,
+  AtlasPageCard,
+  AtlasViewPayload,
+  AtlasViewValue,
   ChapterDossierAsset,
   ChapterDossierPayload,
   ChapterDossierValue,
@@ -40,7 +48,7 @@ export type {
   WritingDeskValue,
 } from './wire.js';
 export type { NovelcraftHostService } from './rpc.js';
-export { createNovelcraftHandlers } from './rpc.js';
+export { createNovelcraftHandlers, wireRefError } from './rpc.js';
 
 /** 宿主插件体: 注册通道, 返回 disposer 走 effect。 */
 export function apply(ctx: Context): void {
@@ -70,6 +78,10 @@ export function apply(ctx: Context): void {
         return handlers.presetsList(payload as never);
       case ENDPOINTS.presetsSelect:
         return handlers.presetsSelect(payload as never);
+      case ENDPOINTS.atlasView:
+        return handlers.atlasView(payload as never);
+      case ENDPOINTS.atlasAnnotationRequest:
+        return handlers.atlasAnnotationRequest(payload as never);
       default:
         return { ok: false, error: { code: 'internal', message: `unknown endpoint: ${endpoint}`, details: {} } };
     }

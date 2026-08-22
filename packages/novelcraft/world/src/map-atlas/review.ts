@@ -1,20 +1,30 @@
 // world/map-atlas · 页面/节点生命周期写面(Phase 4; 计划 §4 Phase 4; spec map-atlas.md §3 状态机)。
-// adopt 类(adoptAtlasPage/adoptAtlasPlaceholder/restoreAtlasPage)必经注入的 approve(fail-closed, 铁律 3);
-// 所有写操作 = 前置校验 → 单 git commit; 失败零 git 残留。
+// adopt 类(adoptAtlasPage/adoptAtlasPlaceholder/restoreAtlasPage)必经注入的 approve(fail-closed, 铁律 3)。
+//
+// N32/ADR-0021 P1: 全部生命周期写面不再直接 writeFileSync + gitAdd + gitCommit, 改为
+// @novelcraft/store.executeCanonicalWrite(kind='canonical'):
+//   - 任何首写前(审批前)构造**完整确定性 writeSet**(页面/节点移动 = 新路径建 + 旧路径删;
+//     祖先链 = 逐节点 move; 日志/状态 = 目标更新), expected = 计划/审批时刻读到的最新字节
+//     sha256, output = 落盘字节; 审批后**不重新读取/不刷新基线**(ADR §4 背景 4 / N32);
+//   - 内容哈希 CAS / stale baseline / 任何预存 staged(STAGED_CONFLICT)/ 崩溃后 durable
+//     intent 条件回滚由事务层承接; writeSet 外无关 unstaged/untracked 允许(ADR §1);
+//   - 图片字节永不进事务 writeSet(N29)。
 // 移植: 旧引擎 service.py review_page(417-469)/_adopt_ancestors(1049-1070)/_adopt_proposed_path(1071-1140)。
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { guardPath, paths } from "@novelcraft/vault";
 import {
-  gitAdd,
-  gitCommit,
-  hasUncommittedChanges,
+  executeCanonicalWrite,
+  gitHead,
   parseFrontmatter,
   serializeFrontmatter,
   StoreError,
+  type TransactionOptions,
+  type TxLocalTarget,
 } from "@novelcraft/store";
 import type { ApprovalDecision } from "@novelcraft/trace";
 import { readAtlasTree } from "./read.js";
+import { computeAtlasPageContentHash } from "./write.js";
 import {
   ATLAS_LEVEL_RANK,
   type AtlasAnnotation,
@@ -26,7 +36,7 @@ import {
 export type AtlasApprove = (action: string, summary: string, items: string[]) => Promise<ApprovalDecision>;
 
 // ============================================================================
-// 内部: frontmatter 读写(与 write.ts 同构, 但支持移动 + 批量单 commit)
+// 内部: frontmatter 读写(计划时刻读字节 → 计划输出, 不经 git; 事务统一落盘)
 // ============================================================================
 
 function readPageFile(file: string): AtlasPage {
@@ -108,47 +118,32 @@ function pageToFile(page: AtlasPage): string {
   return serializeFrontmatter(fm, `# ${page.title}\n`);
 }
 
-/** 批量文本写 + 移动(写新内容后删旧路径), 最后单 commit(全部写盘成功后才 git)。 */
-function commitAll(root: string, message: string, writes: Array<{ abs: string; content: string }>, moves: Array<{ from: string; to: string; content: string }>): void {
-  for (const w of writes) {
-    const abs = guardPath(root, w.abs); // R9: 所有落盘路径过守卫
-    mkdirSync(path.dirname(abs), { recursive: true });
-    writeFileSync(abs, w.content, "utf8");
-  }
-  for (const m of moves) {
-    const to = guardPath(root, m.to);
-    mkdirSync(path.dirname(to), { recursive: true });
-    writeFileSync(to, m.content, "utf8");
-    if (existsSync(m.from)) unlinkSync(guardPath(root, m.from));
-  }
-  gitAdd(root);
-  gitCommit(root, message);
+/** 计划输出目标(R9): guardPath + vault 根级逐段 symlink 检查(防 temp+rename 写穿内部
+ * symlink); 相对 vault 根的 POSIX 路径由事务执行器归一化。 */
+function planWriteTarget(root: string, abs: string, content: string, currentBytes: string | null): TxLocalTarget {
+  const g = guardPath(root, abs);
+  const rel = path.relative(path.resolve(root), g).split(path.sep).join("/");
+  return { path: rel, current: currentBytes, output: content };
 }
 
 // ============================================================================
 // 前置: 页面/节点定位与校验
 // ============================================================================
 
-function findPendingPage(root: string, pageId: string): { page: AtlasPage; file: string } {
+function findPendingPage(root: string, pageId: string): { page: AtlasPage; file: string; bytes: string } {
   const file = paths(root).world.atlas.pendingPageFile(pageId);
   if (!existsSync(file)) {
     throw new StoreError("NOT_FOUND", `候选页不存在: ${pageId}`);
   }
-  return { page: readPageFile(file), file };
+  return { page: readPageFile(file), file, bytes: readFileSync(file, "utf8") };
 }
 
-function findAdoptedPage(root: string, pageId: string): { page: AtlasPage; file: string } {
+function findAdoptedPage(root: string, pageId: string): { page: AtlasPage; file: string; bytes: string } {
   const file = paths(root).world.atlas.pageFile(pageId);
   if (!existsSync(file)) {
     throw new StoreError("NOT_FOUND", `已采用页不存在: ${pageId}`);
   }
-  return { page: readPageFile(file), file };
-}
-
-function assertCleanWorkspace(root: string): void {
-  if (hasUncommittedChanges(root)) {
-    throw new StoreError("DIRTY_WORKSPACE", "工作区存在未提交改动, 拒绝 adopt(R17/CAS)");
-  }
+  return { page: readPageFile(file), file, bytes: readFileSync(file, "utf8") };
 }
 
 function assertCas(page: AtlasPage, expectedContentHash?: string): void {
@@ -165,19 +160,62 @@ async function assertApproved(approve: AtlasApprove, action: string, summary: st
 }
 
 /**
- * 祖先链原子 adopt(旧 _adopt_ancestors/_adopt_proposed_path):
+ * 候选页 adopt 前置门禁(审批前运行, 产出审批摘要 + 强制 CAS 基线; 审批后不重读)。
+ * 返回最新快照; 与旧 findCandidatePage 语义一致(R17/CAS: 审批期间并发修改由事务
+ * expected 字节 CAS 在 preflight 拒绝)。
+ */
+function findCandidatePage(root: string, pageId: string, opts: AdoptAtlasPageOptions): { page: AtlasPage; file: string; bytes: string } {
+  const { page, file, bytes } = findPendingPage(root, pageId);
+  if (page.review_status !== "candidate") {
+    throw new StoreError("VALIDATION_FAILED", `页 ${pageId} 非候选状态(${page.review_status})`);
+  }
+  assertCas(page, opts.expectedContentHash);
+  if (page.generation_status !== "review_ready" || !page.image?.file) {
+    throw new StoreError("VALIDATION_FAILED", `prompt_only 或无图页不能 adopt(N28): ${pageId}`);
+  }
+  const imageAbs = guardPath(root, path.join(paths(root).world.atlas.dir, page.image.file));
+  if (!existsSync(imageAbs)) {
+    throw new StoreError("VALIDATION_FAILED", `图片文件缺失(image_missing): ${page.image.file}`);
+  }
+  if ((page.evidence.conflicts?.length ?? 0) > 0 && opts.confirmConflicts !== true) {
+    throw new StoreError("VALIDATION_FAILED", `页 ${pageId} 存在未确认 conflicts, 拒绝 adopt`);
+  }
+  return { page, file, bytes };
+}
+
+/** restore 前置: adopted 目录下 deprecated 页 + CAS(审批前运行; 审批后不重读)。 */
+function findDeprecatedPage(root: string, pageId: string, expectedContentHash?: string): { page: AtlasPage; file: string; bytes: string } {
+  const { page, file, bytes } = findAdoptedPage(root, pageId);
+  if (page.review_status !== "deprecated") {
+    throw new StoreError("VALIDATION_FAILED", `restore 要求 deprecated: ${pageId}(${page.review_status})`);
+  }
+  assertCas(page, expectedContentHash);
+  return { page, file, bytes };
+}
+
+/** 占位 adopt 前置: 候选节点存在且仍 provisional(审批前运行; 审批后不重读)。 */
+function assertPendingNodePreflight(root: string, nodeId: string): void {
+  const pendingFile = paths(root).world.atlas.pendingNodeFile(nodeId);
+  if (!existsSync(pendingFile)) {
+    throw new StoreError("NOT_FOUND", `候选节点不存在: ${nodeId}`);
+  }
+  const node = readNodeFile(pendingFile);
+  if (node.status !== "provisional") {
+    throw new StoreError("VALIDATION_FAILED", `节点 ${nodeId} 非 provisional 状态(${node.status}), 拒绝 adopt`);
+  }
+}
+
+/**
+ * 祖先链原子 adopt 写面计划(旧 _adopt_ancestors/_adopt_proposed_path):
  * 沿 parent_ref 链把 pending 节点移入 nodes/ 并置 adopted; 已 adopted 保持不变。
  * 预检: 节点存在(缺失 = 层级已变化拒)、循环检测、cover/world 无父、父 rank 严格大于子。
- * 返回 moves/写入计划(调用方单 commit)。
+ * **审批前**把每一 pending 节点的「删除源 + 新建目标」写入 targets(字节 CAS 基线封存),
+ * 返回被 adopt 的节点 id 列表; 审批后不重读、直接执行事务(N32/ADR-0021 §4)。
  */
-function planAncestorAdopt(
-  root: string,
-  startNodeId: string,
-  moves: Array<{ from: string; to: string; content: string }>,
-  adoptedIds: string[],
-): void {
+function planAncestorAdopt(root: string, startNodeId: string, targets: TxLocalTarget[]): string[] {
   const p = paths(root);
   const visited = new Set<string>();
+  const adoptedIds: string[] = [];
   let cursor: string | null = startNodeId;
   const chain: AtlasNode[] = [];
   while (cursor) {
@@ -216,19 +254,23 @@ function planAncestorAdopt(
       }
     }
   }
-  // 生成 pending → adopted 移动计划(只移 pending 的)。
+  // 生成 pending → adopted 移动计划(只移 pending 的; not txn 直接写, 由事务统一落盘)。
   for (const node of chain) {
     const pendingFile = p.world.atlas.pendingNodeFile(node.id);
     if (existsSync(pendingFile)) {
+      const bytes = readFileSync(pendingFile, "utf8"); // 审批/计划时刻字节(字节 CAS 基线)。
       const adoptedNode: AtlasNode = { ...node, status: "adopted" };
-      moves.push({
-        from: pendingFile,
-        to: p.world.atlas.nodeFile(node.id),
-        content: nodeToFile(adoptedNode),
-      });
+      targets.push(planWriteTarget(root, p.world.atlas.nodeFile(node.id), nodeToFile(adoptedNode), null));
+      targets.push({ path: relOfRoot(root, pendingFile), current: bytes, output: undefined });
       adoptedIds.push(node.id);
     }
   }
+  return adoptedIds;
+}
+
+/** 相对 vault 根的 POSIX 路径(事务 writeSet 路径形态)。 */
+function relOfRoot(root: string, abs: string): string {
+  return path.relative(path.resolve(root), abs).split(path.sep).join("/");
 }
 
 // ============================================================================
@@ -241,12 +283,14 @@ export interface AdoptAtlasPageOptions {
   /** CAS: 期望的 page.content_hash。 */
   expectedContentHash?: string;
   note?: string;
+  /** N32 内部测试 seam: 执行器选项透传。 */
+  tx?: TransactionOptions;
 }
 
 /**
  * 采用候选页(计划 Phase 4; 状态机 review_ready --adopt--> adopted):
  * 前置 git 干净 + CAS + generation_status=review_ready + image.file 存在(prompt_only 拒绝, N28)
- * + conflicts 门禁 + 祖先链原子 adopt; 单 commit(图片目录永不 git add, N29)。
+ * + conflicts 门禁 + 祖先链原子 adopt; canonical 事务单 commit(图片目录永不 enter writeSet, N29)。
  */
 export async function adoptAtlasPage(
   root: string,
@@ -254,60 +298,53 @@ export async function adoptAtlasPage(
   opts: AdoptAtlasPageOptions,
   approve: AtlasApprove,
 ): Promise<{ page: AtlasPage; adoptedNodeIds: string[] }> {
-  assertCleanWorkspace(root);
-  const { page, file } = findPendingPage(root, pageId);
-  if (page.review_status !== "candidate") {
-    throw new StoreError("VALIDATION_FAILED", `页 ${pageId} 非候选状态(${page.review_status})`);
-  }
-  assertCas(page, opts.expectedContentHash);
-  if (page.generation_status !== "review_ready" || !page.image?.file) {
-    throw new StoreError("VALIDATION_FAILED", `prompt_only 或无图页不能 adopt(N28): ${pageId}`);
-  }
-  const imageAbs = guardPath(root, path.join(paths(root).world.atlas.dir, page.image.file));
-  if (!existsSync(imageAbs)) {
-    throw new StoreError("VALIDATION_FAILED", `图片文件缺失(image_missing): ${page.image.file}`);
-  }
-  if ((page.evidence.conflicts?.length ?? 0) > 0 && opts.confirmConflicts !== true) {
-    throw new StoreError("VALIDATION_FAILED", `页 ${pageId} 存在未确认 conflicts, 拒绝 adopt`);
-  }
-  await assertApproved(approve, "map_atlas.adopt_page", `采用地图页 ${page.title}(${pageId})`, [pageId, page.node_ref]);
-
-  const moves: Array<{ from: string; to: string; content: string }> = [];
+  // ═══ 审批前(计划时刻): 全量读取 + CAS + 祖先链移动计划 → 完整确定性 writeSet ═══
+  const pre = findCandidatePage(root, pageId, opts); // 审批摘要 + 强制 CAS 基线(不重读)。
+  const snapHead = gitHead(root); // 封闭生成→审批→事务启动窗口(ADR §4 背景 4)。
+  const targets: TxLocalTarget[] = [];
   const adoptedNodeIds: string[] = [];
-  planAncestorAdopt(root, page.node_ref, moves, adoptedNodeIds);
+  adoptedNodeIds.push(...planAncestorAdopt(root, pre.page.node_ref, targets)); // 祖先链 + 节点 CAS 封存。
   const adopted: AtlasPage = {
-    ...page,
+    ...pre.page,
     review_status: "adopted",
     adopted_at: new Date().toISOString(),
-    review_note: opts.note ?? page.review_note,
+    review_note: opts.note ?? pre.page.review_note,
   };
-  moves.push({ from: file, to: paths(root).world.atlas.pageFile(pageId), content: pageToFile(adopted) });
-  commitAll(root, `atlas: adopt page ${pageId}`, [], moves);
+  // 页面移动: 新路径建 + 候选路径删(move 语义, git D+A)。
+  targets.push(planWriteTarget(root, paths(root).world.atlas.pageFile(pageId), pageToFile(adopted), null));
+  targets.push({ path: relOfRoot(root, pre.file), current: pre.bytes, output: undefined });
+  // ═══ 审批(审批后不重读、不刷新基线; 事务 preflight 字节 CAS 承接审批窗口竞争) ═══
+  await assertApproved(approve, "map_atlas.adopt_page", `采用地图页 ${pre.page.title}(${pageId})`, [pageId, pre.page.node_ref]);
+  await executeCanonicalWrite(root, targets, { purpose: `atlas: adopt page ${pageId}`, expectedHead: snapHead, ...(opts.tx ? { tx: opts.tx } : {}) });
   return { page: adopted, adoptedNodeIds };
 }
 
-/** 空页占位 adopt(计划 Phase 4): 只 adopt 候选节点(含祖先链), 不要求图片/不建 page; approval-gated; 单 commit。 */
+/** 空页占位 adopt(计划 Phase 4): 只 adopt 候选节点(含祖先链), 不要求图片/不建 page; approval-gated。 */
 export async function adoptAtlasPlaceholder(
   root: string,
   nodeId: string,
   approve: AtlasApprove,
+  opts: { tx?: TransactionOptions } = {},
 ): Promise<{ adoptedNodeIds: string[] }> {
-  assertCleanWorkspace(root);
-  const pendingFile = paths(root).world.atlas.pendingNodeFile(nodeId);
-  if (!existsSync(pendingFile)) {
-    throw new StoreError("NOT_FOUND", `候选节点不存在: ${nodeId}`);
-  }
-  await assertApproved(approve, "map_atlas.adopt_placeholder", `采用空页占位节点 ${nodeId}`, [nodeId]);
-  const moves: Array<{ from: string; to: string; content: string }> = [];
+  // 审批前(计划时刻): 节点校验 + 祖先链移动计划 → 完整确定性 writeSet。
+  assertPendingNodePreflight(root, nodeId);
+  const snapHead = gitHead(root);
+  const targets: TxLocalTarget[] = [];
   const adoptedNodeIds: string[] = [];
-  planAncestorAdopt(root, nodeId, moves, adoptedNodeIds);
-  commitAll(root, `atlas: adopt placeholder ${nodeId}`, [], moves);
+  adoptedNodeIds.push(...planAncestorAdopt(root, nodeId, targets));
+  // 审批后不重读; 事务 preflight 字节 CAS 承接审批窗口竞争(CONFLICT fail-closed)。
+  await assertApproved(approve, "map_atlas.adopt_placeholder", `采用空页占位节点 ${nodeId}`, [nodeId]);
+  await executeCanonicalWrite(root, targets, { purpose: `atlas: adopt placeholder ${nodeId}`, expectedHead: snapHead, ...(opts.tx ? { tx: opts.tx } : {}) });
   return { adoptedNodeIds };
 }
 
 /** 驳回候选页(review_ready → rejected 终态; prompt_only 不可驳回, 移植锚点 Phase 4; 候选面操作, 无需 approval)。 */
-export function rejectAtlasPage(root: string, pageId: string, opts?: { note?: string; expectedContentHash?: string }): AtlasPage {
-  const { page } = findPendingPage(root, pageId);
+export async function rejectAtlasPage(
+  root: string,
+  pageId: string,
+  opts?: { note?: string; expectedContentHash?: string; tx?: TransactionOptions },
+): Promise<AtlasPage> {
+  const { page, file, bytes } = findPendingPage(root, pageId);
   if (page.review_status !== "candidate") {
     throw new StoreError("VALIDATION_FAILED", `页 ${pageId} 非候选状态(${page.review_status})`);
   }
@@ -321,19 +358,27 @@ export function rejectAtlasPage(root: string, pageId: string, opts?: { note?: st
     rejected_at: new Date().toISOString(),
     review_note: opts?.note ?? page.review_note,
   };
-  commitAll(root, `atlas: reject page ${pageId}`, [{ abs: paths(root).world.atlas.pendingPageFile(pageId), content: pageToFile(rejected) }], []);
+  await executeCanonicalWrite(root, [
+    { path: relOfRoot(root, file), current: bytes, output: pageToFile(rejected) },
+  ], { purpose: `atlas: reject page ${pageId}`, ...(opts?.tx ? { tx: opts.tx } : {}) });
   return rejected;
 }
 
 /** 归档已采用页(adopted → deprecated; 历史页不硬删, 计划 Phase 4)。 */
-export function archiveAtlasPage(root: string, pageId: string, opts?: { expectedContentHash?: string }): AtlasPage {
-  const { page } = findAdoptedPage(root, pageId);
+export async function archiveAtlasPage(
+  root: string,
+  pageId: string,
+  opts?: { expectedContentHash?: string; tx?: TransactionOptions },
+): Promise<AtlasPage> {
+  const { page, file, bytes } = findAdoptedPage(root, pageId);
   if (page.review_status !== "adopted") {
     throw new StoreError("VALIDATION_FAILED", `archive 要求 adopted: ${pageId}(${page.review_status})`);
   }
   assertCas(page, opts?.expectedContentHash);
   const archived: AtlasPage = { ...page, review_status: "deprecated", deprecated_at: new Date().toISOString() };
-  commitAll(root, `atlas: archive page ${pageId}`, [{ abs: paths(root).world.atlas.pageFile(pageId), content: pageToFile(archived) }], []);
+  await executeCanonicalWrite(root, [
+    { path: relOfRoot(root, file), current: bytes, output: pageToFile(archived) },
+  ], { purpose: `atlas: archive page ${pageId}`, ...(opts?.tx ? { tx: opts.tx } : {}) });
   return archived;
 }
 
@@ -342,50 +387,59 @@ export async function restoreAtlasPage(
   root: string,
   pageId: string,
   approve: AtlasApprove,
-  opts?: { expectedContentHash?: string },
+  opts?: { expectedContentHash?: string; tx?: TransactionOptions },
 ): Promise<{ page: AtlasPage; adoptedNodeIds: string[] }> {
-  assertCleanWorkspace(root);
-  const { page, file } = findAdoptedPage(root, pageId);
-  if (page.review_status !== "deprecated") {
-    throw new StoreError("VALIDATION_FAILED", `restore 要求 deprecated: ${pageId}(${page.review_status})`);
-  }
-  assertCas(page, opts?.expectedContentHash);
-  await assertApproved(approve, "map_atlas.restore_page", `恢复地图页 ${page.title}(${pageId})`, [pageId, page.node_ref]);
-  const moves: Array<{ from: string; to: string; content: string }> = [];
+  // 审批前(计划时刻): deprecated 页 + CAS + 祖先链移动计划 → 完整确定性 writeSet。
+  const pre = findDeprecatedPage(root, pageId, opts?.expectedContentHash);
+  const snapHead = gitHead(root);
+  const targets: TxLocalTarget[] = [];
   const adoptedNodeIds: string[] = [];
-  planAncestorAdopt(root, page.node_ref, moves, adoptedNodeIds); // 祖先补齐(缺失/pending → adopt)。
-  const restored: AtlasPage = { ...page, review_status: "adopted", deprecated_at: null, adopted_at: new Date().toISOString() };
-  commitAll(root, `atlas: restore page ${pageId}`, [{ abs: file, content: pageToFile(restored) }], moves);
+  adoptedNodeIds.push(...planAncestorAdopt(root, pre.page.node_ref, targets)); // 祖先补齐(缺失/pending → adopt)。
+  const restored: AtlasPage = { ...pre.page, review_status: "adopted", deprecated_at: null, adopted_at: new Date().toISOString() };
+  targets.push({ path: relOfRoot(root, pre.file), current: pre.bytes, output: pageToFile(restored) });
+  // 审批后不重读; 事务 preflight 字节 CAS 承接审批窗口竞争(CONFLICT fail-closed)。
+  await assertApproved(approve, "map_atlas.restore_page", `恢复地图页 ${pre.page.title}(${pageId})`, [pageId, pre.page.node_ref]);
+  await executeCanonicalWrite(root, targets, { purpose: `atlas: restore page ${pageId}`, expectedHead: snapHead, ...(opts?.tx ? { tx: opts.tx } : {}) });
   return { page: restored, adoptedNodeIds };
 }
 
-/** 更新 prompt(仅 prompt_only 候选页; CAS; 单 commit)。 */
-export function updateAtlasPrompt(
+/**
+ * 更新 prompt(仅 prompt_only 候选页; CAS; canonical 事务单 commit; content_hash 必随 prompt 重算)。
+ * 候选面操作, 无审批; 仍走事务以获得内容 CAS + 崩溃恢复兜底。
+ */
+export async function updateAtlasPrompt(
   root: string,
   pageId: string,
   prompt: string,
   expectedContentHash?: string,
-): AtlasPage {
-  const { page } = findPendingPage(root, pageId);
+  opts?: { tx?: TransactionOptions },
+): Promise<AtlasPage> {
+  const { page, file, bytes } = findPendingPage(root, pageId);
   if (page.generation_status !== "prompt_only" || page.review_status !== "candidate") {
     throw new StoreError("VALIDATION_FAILED", `仅 prompt_only 候选页可改 prompt: ${pageId}`);
   }
   assertCas(page, expectedContentHash);
-  const next: AtlasPage = { ...page, prompt };
-  commitAll(root, `atlas: update prompt ${pageId}`, [{ abs: paths(root).world.atlas.pendingPageFile(pageId), content: pageToFile(next) }], []);
+  const base: Omit<AtlasPage, "content_hash"> = { ...page, prompt };
+  const next: AtlasPage = { ...base, content_hash: computeAtlasPageContentHash(base) }; // 一致性: 改 prompt 必重算。
+  await executeCanonicalWrite(root, [
+    { path: relOfRoot(root, file), current: bytes, output: pageToFile(next) },
+  ], { purpose: `atlas: update prompt ${pageId}`, ...(opts?.tx ? { tx: opts.tx } : {}) });
   return next;
 }
 
-/** 已采用节点调整(parent/level/title/sort_order; 循环与 rank 校验; 单 commit)。 */
-export function updateAtlasNode(
+/**
+ * 已采用节点调整(parent/level/title/sort_order; 循环与 rank 校验; canonical 事务单 commit)。
+ */
+export async function updateAtlasNode(
   root: string,
   nodeId: string,
   patch: { parent_ref?: string | null; level?: AtlasNode["level"]; title?: string; sort_order?: number },
-): AtlasNode {
-  assertCleanWorkspace(root);
+  opts?: { tx?: TransactionOptions },
+): Promise<AtlasNode> {
   const p = paths(root);
   const file = p.world.atlas.nodeFile(nodeId);
   if (!existsSync(file)) throw new StoreError("NOT_FOUND", `已采用节点不存在: ${nodeId}`);
+  const bytes = readFileSync(file, "utf8");
   const node = readNodeFile(file);
   if (node.status !== "adopted") {
     throw new StoreError("VALIDATION_FAILED", `updateAtlasNode 仅支持已采用节点: ${nodeId}`);
@@ -432,6 +486,8 @@ export function updateAtlasNode(
   if ((next.level === "cover" || next.level === "world") && next.parent_ref) {
     throw new StoreError("VALIDATION_FAILED", "cover/world 节点不得有父");
   }
-  commitAll(root, `atlas: update node ${nodeId}`, [{ abs: file, content: nodeToFile(next) }], []);
+  await executeCanonicalWrite(root, [
+    { path: relOfRoot(root, file), current: bytes, output: nodeToFile(next) },
+  ], { purpose: `atlas: update node ${nodeId}`, ...(opts?.tx ? { tx: opts.tx } : {}) });
   return next;
 }

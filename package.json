@@ -2,17 +2,27 @@
   "name": "novelcraft-m4",
   "private": true,
   "version": "0.0.1",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "workspaces": [
     "packages/novelcraft/*"
   ],
   "scripts": {
     "postinstall": "node scripts/apply-dsh-patches.mjs",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "node scripts/build-topological.mjs",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "check:deps": "node scripts/check-workspace-deps.mjs",
+    "check:git-writers": "node scripts/check-git-writers.mjs",
+    "check:distribution": "node scripts/check-distribution-profile.mjs",
+    "check:audit-gate": "node scripts/audit-baseline-selftest.mjs",
+    "audit:default": "node scripts/check-audit-baseline.mjs --profile=default",
+    "audit:bge": "node scripts/check-audit-baseline.mjs --profile=bge"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
+    "vitest": "^3.2.6"
   }
 }

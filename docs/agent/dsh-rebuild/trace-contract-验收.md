@@ -41,6 +41,7 @@ adopt / reject / complete_import(9 类, 判别联合, TraceRecorder 内存追加
 | 分片 | 批大小在 policy 上限内(1a 50 / 2a 12 / 2b 4) | specs/rules/policy-defaults.md |
 | 降级 | 1b 空语义进复核 / 2b 只降级不丢对象 / 1a 整章 fallback 不部分采用 / 去重失败降级 | R52–R55、PLAN.md |
 | 授权 | authorization_confirmed 强制 true、快照不可变、同 scope 幂等 | plan.ts、R42 节 |
+| state commit | 正常完成(rejected/complete 闭环)在最后 checkpoint/complete trace 写完后, 前置 R17 门禁(范围外任何改动含预存 staged 一律 DIRTY_WORKSPACE fail-closed)后精确 stage 工件并恰一次 commit(不 -A、不捕获其他文件、均无变化不 commit); checkpoint/trace 进 git 历史, 深导后工作区洁净 | §15、§22.2、workspace.ts commitImportState |
 
 ## 验证矩阵(全部通过)
 

@@ -61,7 +61,12 @@ function readCanonicalLocations(
   const dir = paths(root).world.objects;
   if (!existsSync(dir)) return [];
   const out: Array<{ slug: string; name: string; aliases: string[]; importance: number }> = [];
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".md")).sort()) {
+  // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => e.name)
+    .sort();
+  for (const f of files) {
     const { data } = parseFrontmatter(readFileSync(path.join(dir, f), "utf8"));
     const kind = String(data.kind ?? data.entity_type ?? "");
     if (kind !== "location" || String(data.status ?? "") !== "canonical") continue;
@@ -80,7 +85,12 @@ function readBiblePages(root: string, includeDrafts: boolean): BiblePageInfo[] {
   const dir = paths(root).bible.dir;
   if (!existsSync(dir)) return [];
   const pages: BiblePageInfo[] = [];
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".md")).sort()) {
+  // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => e.name)
+    .sort();
+  for (const f of files) {
     const { data, body } = parseFrontmatter(readFileSync(path.join(dir, f), "utf8"));
     const status = String(data.status ?? "");
     if (status !== "canonical" && !(includeDrafts && status === "draft")) continue;

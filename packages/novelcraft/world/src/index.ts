@@ -11,3 +11,4 @@ export * from "./map-atlas/plan.js";
 export * from "./map-atlas/review.js";
 export * from "./map-atlas/image.js";
 export * from "./map-atlas/annotation.js";
+export * from "./map-atlas/workflow.js";

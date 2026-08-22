@@ -1,18 +1,40 @@
 // @novelcraft/dsh · map-atlas 工具面端到端(Phase 5; 计划 §4 Phase 5 测试清单)。
 // FakeApproval 验证 allowed-once/rejected/unavailable; 上传路径导入不误 git add 图片; annotation 校验失败零残留。
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
-import { writeAtlasNode, writeAtlasPage, readAtlasTree } from '@novelcraft/world';
+import { paths } from '@novelcraft/vault';
+import {
+  applyAtlasAnnotationOps,
+  applyAtlasAnnotationOpsTx,
+  writeAtlasNode,
+  writeAtlasPage,
+  readAtlasTree,
+} from '@novelcraft/world';
 import type { AtlasNode, AtlasPage } from '@novelcraft/world';
 import { NovelCraftService } from '../src/index.js';
-import { makeContext, type HarnessServices } from './helpers.js';
+import { makeContext, type FakeApprovalConfig, type HarnessServices } from './helpers.js';
+
+// N35: 包装 world 两个标注写入口为可断言 spy(真实现透传), 证明 DSH queue 只调用
+// async transactional API(applyAtlasAnnotationOpsTx), 绝不走旧 sync 写面。
+vi.mock('@novelcraft/world', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@novelcraft/world')>();
+  return {
+    ...actual,
+    applyAtlasAnnotationOpsTx: vi.fn(actual.applyAtlasAnnotationOpsTx),
+    applyAtlasAnnotationOps: vi.fn(actual.applyAtlasAnnotationOps),
+  };
+});
 
 const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
+
+beforeEach(() => {
+  vi.clearAllMocks(); // 只清调用记录; vi.fn(actual) 实现保留。
+});
 
 interface TestEnv {
   h: HarnessServices;
@@ -24,8 +46,11 @@ interface TestEnv {
   cleanup: () => void;
 }
 
-async function setup(approvalOutcome: 'allowed-once' | 'rejected' | 'unavailable' = 'allowed-once'): Promise<TestEnv> {
-  const h = await makeContext({ approval: { outcome: approvalOutcome } });
+async function setup(
+  approvalOutcome: 'allowed-once' | 'rejected' | 'unavailable' = 'allowed-once',
+  approvalConfig?: FakeApprovalConfig,
+): Promise<TestEnv> {
+  const h = await makeContext({ approval: approvalConfig ?? { outcome: approvalOutcome } });
   const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-atlas-tools-'));
   const tools: ToolDefinition[] = [];
   h.ctx.provide('tools', {
@@ -152,7 +177,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
     expect(v.pending_nodes).toBe(2);
     expect(v.pending_pages).toBe(2);
     env.cleanup();
-  });
+  }, 90_000);
 
   it('upload: 挂 prompt_only 页置 review_ready; 图片不进 git(N29)', async () => {
     const env = await setup();
@@ -236,38 +261,82 @@ describe('map-atlas 工具面(Phase 5)', () => {
     env.cleanup();
   });
 
-  it('annotation: ops 模式 + 队列模式(消费后清文件); 校验失败零残留', async () => {
+  it('review archive: 必经 ApprovalGate allowed-once; rejected/unavailable fail-closed 零写(N35)', async () => {
+    // allowed-once → 归档成功
+    let env = await setup('allowed-once');
+    writeAtlasNode(env.root, node('n1'));
+    writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
+    await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
+    let r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
+    expect(r.ok).toBe(true);
+    expect(readAtlasTree(env.root).pages[0]?.review_status).toBe('deprecated');
+    env.cleanup();
+
+    // rejected → fail-closed: 页保持 adopted, 零写(先 adopt 放行一次, archive 再拒绝)
+    env = await setup('allowed-once', { sequence: ['allowed-once', 'rejected'] });
+    writeAtlasNode(env.root, node('n1'));
+    writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
+    await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
+    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
+    expect(r.ok).toBe(false);
+    expect(String(r.message)).toMatch(/审批未通过|fail-closed/);
+    expect(readAtlasTree(env.root).pages[0]?.review_status).toBe('adopted'); // 未动
+    expect(readAtlasTree(env.root).pages[0]?.deprecated_at).toBeNull();
+    env.cleanup();
+
+    // unavailable → fail-closed 零写
+    env = await setup('allowed-once', { sequence: ['allowed-once', 'unavailable'] });
+    writeAtlasNode(env.root, node('n1'));
+    writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
+    await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
+    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
+    expect(r.ok).toBe(false);
+    expect(readAtlasTree(env.root).pages[0]?.review_status).toBe('adopted');
+    env.cleanup();
+  });
+
+  it('annotation: 只消费队列(固定 schema + CAS 必填); 缺 base_content_hash/未知 op/未知字段拒绝零写且文件保留', async () => {
     const env = await setup();
     writeAtlasNode(env.root, node('n1'));
-    writeAtlasPage(env.root, page('pg1'));
-    // ops 模式
-    let r = await call(env, 'novelcraft_map_atlas_annotation', {
-      root: env.root, page_ref: 'pg1',
-      ops: [{ op: 'add', label: '城门', position_x: 0.5, position_y: 0.5 }],
-    });
-    expect(r.ok).toBe(true);
-    expect(r.applied).toBe(1);
-    const hashAfter = readAtlasTree(env.root).pendingPages[0]?.content_hash ?? '';
-    expect(hashAfter).not.toBe('h-pg1');
-    // 队列模式: UI 落盘 queue 文件 → 工具消费并清文件
+    writeAtlasPage(env.root, page('pg1')); // content_hash = h-pg1
     const queueDir = path.join(env.root, '.assistant', 'atlas', 'annotation-queue');
     mkdirSync(queueDir, { recursive: true });
-    writeFileSync(path.join(queueDir, 'q1.json'), JSON.stringify({
+    // ① 好队列: page_ref + base_content_hash + ops 全齐(UI 落盘形态)
+    writeFileSync(path.join(queueDir, 'q-good.json'), JSON.stringify({
       page_ref: 'pg1',
-      ops: [{ op: 'add', label: '码头', position_x: 0.2, position_y: 0.8 }],
+      base_content_hash: 'h-pg1',
+      ops: [{ op: 'add', label: '城门', position_x: 0.5, position_y: 0.5 }],
     }), 'utf8');
-    writeFileSync(path.join(queueDir, 'q2-bad.json'), JSON.stringify({
+    // ② 缺 base_content_hash → 拒绝零写(N35 queue/nohash)
+    writeFileSync(path.join(queueDir, 'q-nohash.json'), JSON.stringify({
       page_ref: 'pg1',
-      ops: [{ op: 'add', label: 'x', position_x: 9, position_y: 0 }],
+      ops: [{ op: 'add', label: '无哈希', position_x: 0.1, position_y: 0.1 }],
     }), 'utf8');
-    r = await call(env, 'novelcraft_map_atlas_annotation', { root: env.root });
-    expect(r.queue_files).toBe(2);
+    // ③ 未知 op 拼写(delet) → 拒绝; 绝不当作 delete 执行
+    writeFileSync(path.join(queueDir, 'q-unknownop.json'), JSON.stringify({
+      page_ref: 'pg1',
+      base_content_hash: 'h-pg1',
+      ops: [{ op: 'delet', id: 'ann-1' }],
+    }), 'utf8');
+    // ④ 未知顶层字段 → 拒绝(固定 provenance, 不猜测)
+    writeFileSync(path.join(queueDir, 'q-extrafield.json'), JSON.stringify({
+      page_ref: 'pg1',
+      base_content_hash: 'h-pg1',
+      provenance: 'hacker',
+      ops: [{ op: 'add', label: 'x', position_x: 0, position_y: 0 }],
+    }), 'utf8');
+    const r = await call(env, 'novelcraft_map_atlas_annotation', { root: env.root });
+    expect(r.queue_files).toBe(4);
     expect(r.applied).toBe(1);
-    expect(r.ok).toBe(false); // q2 失败
-    expect(existsSync(path.join(queueDir, 'q1.json'))).toBe(false); // 成功即清
-    expect(existsSync(path.join(queueDir, 'q2-bad.json'))).toBe(true); // 失败保留待修
+    expect(r.ok).toBe(false); // 3 个坏文件失败
+    expect(existsSync(path.join(queueDir, 'q-good.json'))).toBe(false); // 成功即清
+    expect(existsSync(path.join(queueDir, 'q-nohash.json'))).toBe(true); // 失败保留待修
+    expect(existsSync(path.join(queueDir, 'q-unknownop.json'))).toBe(true);
+    expect(existsSync(path.join(queueDir, 'q-extrafield.json'))).toBe(true);
     const pg = readAtlasTree(env.root).pendingPages[0]!;
-    expect(pg.annotations.map((a) => a.label).sort()).toEqual(['城门', '码头']); // 失败零残留
+    expect(pg.annotations.map((a) => a.label)).toEqual(['城门']); // 失败零残留
+    const hashAfter = pg.content_hash;
+    expect(hashAfter).not.toBe('h-pg1');
     env.cleanup();
   });
 
@@ -280,6 +349,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
     // ① 多 op 文件, 第二条非法 → 整文件零提交(F1 前: 第一条已 commit 且文件保留 → 重试重复)
     writeFileSync(path.join(queueDir, 'atomic.json'), JSON.stringify({
       page_ref: 'pg1',
+      base_content_hash: 'h-pg1', // N35: CAS 必填
       ops: [
         { op: 'add', label: '合法一', position_x: 0.1, position_y: 0.1 },
         { op: 'add', label: '非法二', position_x: 5, position_y: 0.5 },
@@ -293,6 +363,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
     // 修好文件后重试: 两条都进, 单文件单 commit
     writeFileSync(path.join(queueDir, 'atomic.json'), JSON.stringify({
       page_ref: 'pg1',
+      base_content_hash: 'h-pg1', // 页面未变(零提交), 基线仍是 h-pg1
       ops: [
         { op: 'add', label: '合法一', position_x: 0.1, position_y: 0.1 },
         { op: 'add', label: '合法二', position_x: 0.5, position_y: 0.5 },
@@ -327,6 +398,62 @@ describe('map-atlas 工具面(Phase 5)', () => {
     r = await call(env, 'novelcraft_map_atlas_annotation', { root: env.root });
     expect(r.ok).toBe(true);
     expect(r.applied).toBe(1);
+    env.cleanup();
+  });
+
+  it('annotation 队列(service 层): 只消费普通 .json —— symlink(指 vault 外)/目录伪 .json 忽略, 外部 JSON 不被应用/删除', async () => {
+    const env = await setup();
+    writeAtlasNode(env.root, node('n1'));
+    writeAtlasPage(env.root, page('pg1')); // content_hash = h-pg1
+    const queueDir = paths(env.root).assistant.atlas.annotationQueue;
+    mkdirSync(queueDir, { recursive: true });
+    // ① 好队列: 普通文件(带 CAS base)
+    writeFileSync(path.join(queueDir, 'a-good.json'), JSON.stringify({
+      page_ref: 'pg1',
+      ops: [{ op: 'add', label: '城门', position_x: 0.5, position_y: 0.5 }],
+      base_content_hash: 'h-pg1',
+    }), 'utf8');
+    // ② 外部 JSON: symlink 指向 vault 外(误解引用/恶意放置)——必须忽略不跟随
+    const outside = path.join(env.vaultsDir, 'queue-outside.json');
+    writeFileSync(outside, JSON.stringify({
+      page_ref: 'pg1',
+      ops: [{ op: 'add', label: '外链注入', position_x: 0.1, position_y: 0.1 }],
+    }), 'utf8');
+    symlinkSync(outside, path.join(queueDir, 'b-symlinked.json'));
+    // ③ 目录伪装成 .json——忽略(不读不删)
+    mkdirSync(path.join(queueDir, 'c-dir.json'));
+    const r = await env.service.applyAtlasAnnotationQueue(env.root);
+    expect(r).toMatchObject({ files: 1, applied: 1, failed: 0 });
+    expect(existsSync(path.join(queueDir, 'a-good.json'))).toBe(false); // 好文件消费即清
+    expect(existsSync(path.join(queueDir, 'b-symlinked.json'))).toBe(true); // symlink 保留
+    expect(existsSync(path.join(queueDir, 'c-dir.json'))).toBe(true); // 目录保留
+    expect(existsSync(outside)).toBe(true); // 外部文件未被删除
+    // 只有好载荷进页面; 外链载荷未应用
+    const pg = readAtlasTree(env.root).pendingPages.find((p) => p.id === 'pg1')!;
+    expect(pg.annotations.map((a) => a.label)).toEqual(['城门']);
+    env.cleanup();
+  });
+
+  it('annotation 队列只调用 transactional API(N35/ADR-0021): 消费走 applyAtlasAnnotationOpsTx, 旧 sync 写面零调用', async () => {
+    const env = await setup();
+    writeAtlasNode(env.root, node('n1'));
+    writeAtlasPage(env.root, page('pg1')); // content_hash = h-pg1
+    const queueDir = path.join(env.root, '.assistant', 'atlas', 'annotation-queue');
+    mkdirSync(queueDir, { recursive: true });
+    writeFileSync(path.join(queueDir, 'q.json'), JSON.stringify({
+      page_ref: 'pg1',
+      base_content_hash: 'h-pg1',
+      ops: [{ op: 'add', label: '城门', position_x: 0.5, position_y: 0.5 }],
+    }), 'utf8');
+    const r = await env.service.applyAtlasAnnotationQueue(env.root);
+    expect(r).toMatchObject({ files: 1, applied: 1, failed: 0 });
+    expect(existsSync(path.join(queueDir, 'q.json'))).toBe(false); // 成功即清
+    // 只调用 transactional API(ADR-0021 写面; 任何首写前产出 output bytes 并
+    // executeTransaction); CAS 基线原样传递(业务 content_hash, 非整文件 sha256)。
+    expect(vi.mocked(applyAtlasAnnotationOpsTx)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(applyAtlasAnnotationOpsTx).mock.calls[0][1]).toBe('pg1');
+    expect(vi.mocked(applyAtlasAnnotationOpsTx).mock.calls[0][3]).toEqual({ expectedContentHash: 'h-pg1' });
+    expect(vi.mocked(applyAtlasAnnotationOps)).not.toHaveBeenCalled(); // sync 兼容面零调用
     env.cleanup();
   });
 

@@ -43,7 +43,11 @@ async function setup(outcome: GateOutcome = 'allowed-once'): Promise<TestEnv> {
     watch: { enabled: false, intervalMinutes: 60 },
   });
   const service = h.ctx.novelcraft;
-  const root = service.vaults.ensureVault('测试书').root;
+  // N34: agent 工具一律从 exec.agent.session.id 解析绑定; 本套件用 fakeAgent
+  // (session s1)调用工具, 因此会话必须先绑定到测试书 vault(未绑定即 fail-closed)。
+  const binding = service.vaults.ensureVault('测试书');
+  await service.vaults.bindSession('s1', binding);
+  const root = binding.root;
   const exec = {
     callId: 'c1',
     name: '',
@@ -159,7 +163,7 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
     // 审批链收到请求(审计) + git 有 adopt commit。
     expect(env.h.approval.requests.length).toBeGreaterThan(0);
     expect(env.h.approval.requests[0]).toMatchObject({ toolName: 'novelcraft' });
-    expect(gitLogSubjects(env.root).some((s) => s.startsWith('adopt(chapter):'))).toBe(true);
+    expect(gitLogSubjects(env.root).some((s) => s.startsWith('vault-tx vtx:'))).toBe(true);
     env.cleanup();
   });
 

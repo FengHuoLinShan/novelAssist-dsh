@@ -1,7 +1,6 @@
 // 内置 spec 注册表(R2 首期 4 个, 转写自 specs/prompts/catalog.md)。
 // 未定字段标【待定】并放宽(additionalProperties 允许)。
 import type { LlmStepSpec } from "./types.js";
-
 export const BUILTIN_SPECS: LlmStepSpec[] = [
   {
     // catalog §1.6: 0.88 阈值与同名同型复用属 store 层, 本 spec 只管抽取输出。
@@ -246,4 +245,27 @@ export function loadSpec(specRef: string): LlmStepSpec | undefined {
 
 export function listSpecRefs(): string[] {
   return [...registry.keys()];
+}
+
+/**
+ * 从 spec 注册表构造 contractVersions(N34 / ADR-0023 §6, 独立审查 P2/R6):
+ * 契约版本由注册表派生, 而不是自由填写 —— 键 = specRef、值 = spec.contractVersion,
+ * 按 ref 排序保证确定性; 任一 ref 未注册 → 抛错 fail-closed(不带半解析契约集跑)。
+ * 缺省 = 内置注册表(BUILTIN_SPECS, 进程内恒定的编译期常量)——不随运行时注册状态
+ * 漂移(确定性: 指纹不依赖「此刻注册了哪些包级 spec」); 需要覆盖包级 spec
+ * (deep import 等)时由编排显式传固定 ref 集合(见 imports DEEP_IMPORT_SPEC_REFS)。
+ * 供 ExecutionProfile 组合面(DSH)与测试使用; 返回普通对象, 由 parseExecutionProfile
+ * 负责重建/深冻结(不返回已冻结对象, 避免误用为可变面)。
+ */
+export function contractVersionsFromSpecs(specRefs?: readonly string[]): Record<string, string> {
+  const refs = specRefs === undefined ? BUILTIN_SPECS.map((s) => s.specRef) : [...specRefs];
+  const out: Record<string, string> = {};
+  for (const ref of refs) {
+    const spec = loadSpec(ref);
+    if (!spec) {
+      throw new Error(`spec 未注册, 无法构造契约版本: ${ref}(fail-closed, N34)`);
+    }
+    out[ref] = spec.contractVersion;
+  }
+  return out;
 }

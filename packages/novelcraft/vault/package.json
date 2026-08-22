@@ -1,6 +1,7 @@
 {
   "name": "@novelcraft/vault",
   "version": "0.0.1",
+  "private": true,
   "description": "NovelCraft M4 vault kernel: workspace init, path spec, slug, guarded read/write (ADR-0016 R1)",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,6 +21,6 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.19.0 || >=24.0.0"
   }
 }

@@ -27,7 +27,7 @@
 ## 测试与验证
 
 - vitest 行为契约 + trace contract; 断言注释引规则编号(R#)/裁定编号(N#)。
-- 完成标准: `npm test`(440)全绿 + `npm run typecheck` 零错误。
+- 完成标准: `npm test` 全仓测试全绿 + `npm run typecheck` 零错误。
 - 构建按拓扑序(vault→trace→store→llm-step→…), 见 `docs/agent/dsh-rebuild/跨会话交接.md`。
 
 ## 协作与提交

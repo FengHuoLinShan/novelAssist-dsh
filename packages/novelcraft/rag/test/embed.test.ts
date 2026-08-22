@@ -218,7 +218,7 @@ describe("searchRag(L2 向量召回)", () => {
     expect(res.hits[0].chunk_id).toBe("ch1-0"); // 向量组余弦满分的排最前
   });
 
-  it("query embed 抛错 → degraded 含 embedding_failed 且 hits 仍 BM25", async () => {
+  it("query embed 抛错 → degraded 含 embedding_failed 且 hits 仍 BM25(N21/N22/N36)", async () => {
     const root = setupCosineRoot();
     const broken: EmbeddingBackend = {
       name: "fake-bge",

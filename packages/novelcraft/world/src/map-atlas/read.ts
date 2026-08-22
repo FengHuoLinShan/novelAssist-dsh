@@ -233,12 +233,15 @@ function cmpPage(a: AtlasPageView, b: AtlasPageView): number {
 
 function readDirMarkdown(dir: string): Array<{ slug: string; file: string; data: Record<string, unknown> }> {
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith('.md'))
+  // R9(目录枚举 containment): 每条目以 dir 为 guardPath root 做 lexical+real 双层
+  // containment——指向 vault 外的 .md symlink 一律 fail-closed 抛错, 绝不跟随读取。
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => (e.isFile() || e.isSymbolicLink()) && e.name.endsWith('.md'))
+    .map((e) => e.name)
     .sort()
     .map((f) => {
+      const file = guardPath(dir, f); // R9: 逐文件 containment(lexical + realpath)。
       const slug = f.replace(/\.md$/, '');
-      const file = path.join(dir, f);
       const { data } = parseFrontmatter(readFileSync(file, 'utf8'));
       return { slug, file, data };
     });
@@ -393,24 +396,45 @@ function parseRun(raw: unknown, id: string): AtlasRun {
 
 function listRunFiles(runsDir: string): Array<{ id: string; file: string }> {
   if (!existsSync(runsDir)) return [];
-  return readdirSync(runsDir)
-    .filter((f) => f.endsWith('.json'))
+  // R9(目录枚举 containment): 每条目以 runsDir 为 guardPath root 做 lexical+real
+  // 双层 containment——指向 vault 外的 .json symlink fail-closed 抛错(坏普通 JSON
+  // 仍由 parseRunFile 在 history 层跳过, 此处只管路径安全)。
+  return readdirSync(runsDir, { withFileTypes: true })
+    .filter((e) => (e.isFile() || e.isSymbolicLink()) && e.name.endsWith('.json'))
+    .map((e) => e.name)
     .sort()
-    .map((f) => ({ id: f.replace(/\.json$/, ''), file: path.join(runsDir, f) }));
+    .map((f) => ({ id: f.replace(/\.json$/, ''), file: guardPath(runsDir, f) }));
 }
 
-/** 读单个 run; 不存在抛错(与 readObject 同口径)。 */
+/** 解析单个 run 文件; 损坏(截断/非法 JSON)返回失败原因。 */
+function parseRunFile(file: string, id: string): { ok: true; run: AtlasRun } | { ok: false; reason: string } {
+  try {
+    return { ok: true, run: parseRun(JSON.parse(readFileSync(file, 'utf8')), id) };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 读单个 run; 不存在抛错(与 readObject 同口径); 指定文件损坏 → 明确报错。 */
 export function readAtlasRun(root: string, runId: string): AtlasRun {
-  const file = paths(root).assistant.atlas.runFile(runId);
+  // R9(直接按 id 读): 以 .assistant/atlas/runs 为限定根 guard+抛错——runId 穿越或
+  // 指向 vault 外的 .json symlink → fail-closed; 与写面 write.ts guardPath 同 gate。
+  const file = guardPath(paths(root).assistant.atlas.runs, `${runId}.json`);
   if (!existsSync(file)) throw new Error(`地图册 run 不存在: ${runId}`);
-  return parseRun(JSON.parse(readFileSync(file, 'utf8')), runId);
+  const parsed = parseRunFile(file, runId);
+  if (!parsed.ok) {
+    throw new Error(`地图册 run 损坏: ${runId}(${parsed.reason})`);
+  }
+  return parsed.run;
 }
 
-/** 按时间确定性排序(created_at → id)返回全部 run(新→旧)。 */
+/** 按时间确定性排序(created_at → id)返回全部 run(新→旧); 单个损坏 run 跳过不阻塞列表。 */
 export function listAtlasHistory(root: string): AtlasRun[] {
   const runsDir = paths(root).assistant.atlas.runs;
   return listRunFiles(runsDir)
-    .map(({ id, file }) => parseRun(JSON.parse(readFileSync(file, 'utf8')), id))
+    .map(({ id, file }) => parseRunFile(file, id))
+    .filter((r): r is { ok: true; run: AtlasRun } => r.ok)
+    .map((r) => r.run)
     .sort((a, b) => {
       const ta = a.created_at ?? '';
       const tb = b.created_at ?? '';

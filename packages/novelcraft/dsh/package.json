@@ -1,6 +1,8 @@
 {
   "name": "@novelcraft/dsh",
   "version": "0.0.1",
+  "private": true,
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "description": "NovelCraft M4 mounting layer: Cordis service plugin adapting the 13 pure core packages to DSH rc.6 seams (llm/approval/storage-domain/jobs/credentials/client-modules)",
   "type": "module",
   "main": "dist/index.js",
@@ -9,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js"
     }
   },
   "files": [
@@ -28,6 +34,7 @@
     "@novelcraft/outline": "*",
     "@novelcraft/rag": "*",
     "@novelcraft/store": "*",
+    "@novelcraft/trace": "*",
     "@novelcraft/vault": "*",
     "@novelcraft/world": "*",
     "@novelcraft/writing": "*"
@@ -41,6 +48,7 @@
     "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-jobs": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
@@ -55,6 +63,7 @@
     "@deepseek-ai/dsh-jobs": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-jobs-local": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-storage": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-json": "^0.1.0-rc.6",
@@ -64,6 +73,6 @@
     "zod": "^4.4.3",
     "@types/node": "^24.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
+    "vitest": "^3.2.6"
   }
 }

@@ -1,6 +1,8 @@
 {
   "name": "@novelcraft/store",
   "version": "0.0.1",
+  "private": true,
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "description": "NovelCraft M4 R1 kernel: frontmatter validation, adopt+commit, CAS, merge/split/attach_alias, index rebuild",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +18,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run",
+    "test": "vitest run --exclude test/transaction-execute.test.ts && vitest run test/transaction-execute.test.ts -t '事务执行器|fail-closed 前置|复核点与 CAS|崩溃恢复' && vitest run test/transaction-execute.test.ts -t 'state / run_bootstrap|state/checkpoint|intent 校验|Blocker A' && vitest run test/transaction-execute.test.ts -t 'Blocker B|Blocker C|最终复审'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

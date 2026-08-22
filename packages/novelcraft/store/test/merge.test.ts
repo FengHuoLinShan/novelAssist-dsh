@@ -34,13 +34,13 @@ function objectCount(r: string): number {
 }
 
 describe('merge/split(R6 可逆)', () => {
-  it('merges a draft into canonical, then split restores it', () => {
+  it('merges a draft into canonical, then split restores it', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical', aliases: ['婉儿'] }, 'A');
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', name: '红衣女子', status: 'draft', aliases: ['红裙'] }, 'B');
     commitAll(r);
 
-    const merged = mergeEntities(r, 'obj_b', 'obj_a');
+    const merged = await mergeEntities(r, 'obj_b', 'obj_a');
     expect(merged.inheritedAliases).toEqual(['红裙']);
     expect(readFrontmatter(r, 'world/objects/obj_b.md').status).toBe('merged');
     expect(readFrontmatter(r, 'world/objects/obj_b.md').merged_into).toBe('obj_a');
@@ -48,7 +48,7 @@ describe('merge/split(R6 可逆)', () => {
     // source 文件仍在(不硬删, R6/R2)
     expect(fs.existsSync(path.join(r, 'world/objects/obj_b.md'))).toBe(true);
 
-    const split = splitMerge(r, 'obj_b');
+    const split = await splitMerge(r, 'obj_b');
     expect(split.restoredStatus).toBe('draft');
     expect(readFrontmatter(r, 'world/objects/obj_b.md').status).toBe('draft');
     expect(readFrontmatter(r, 'world/objects/obj_a.md').aliases).toEqual(['婉儿']);
@@ -56,96 +56,96 @@ describe('merge/split(R6 可逆)', () => {
 });
 
 describe('R36/R37 · 合并目标 canonical + 已采用二次确认', () => {
-  it('rejects merging into a non-canonical target (R36)', () => {
+  it('rejects merging into a non-canonical target (R36)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'draft' }, 'A');
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', name: '红衣女子', status: 'draft' }, 'B');
     commitAll(r);
-    expect(() => mergeEntities(r, 'obj_b', 'obj_a')).toThrowError(
+    await expect(mergeEntities(r, 'obj_b', 'obj_a')).rejects.toThrowError(
       expect.objectContaining({ code: 'INVALID_TARGET' }),
     );
   });
 
-  it('requires second confirmation to merge a canonical source (R37)', () => {
+  it('requires second confirmation to merge a canonical source (R37)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', name: '红衣女子', status: 'canonical' }, 'B');
     commitAll(r);
-    expect(() => mergeEntities(r, 'obj_b', 'obj_a')).toThrowError(
+    await expect(mergeEntities(r, 'obj_b', 'obj_a')).rejects.toThrowError(
       expect.objectContaining({ code: 'CONFIRMATION_REQUIRED' }),
     );
     // 确认后执行
-    const merged = mergeEntities(r, 'obj_b', 'obj_a', { approved: true });
+    const merged = await mergeEntities(r, 'obj_b', 'obj_a', { approved: true });
     expect(readFrontmatter(r, 'world/objects/obj_b.md').status).toBe('merged');
   });
 
-  it('rejects merging into itself (R26)', () => {
+  it('rejects merging into itself (R26)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'draft' }, 'A');
     commitAll(r);
-    expect(() => mergeEntities(r, 'obj_a', 'obj_a')).toThrowError(
+    await expect(mergeEntities(r, 'obj_a', 'obj_a')).rejects.toThrowError(
       expect.objectContaining({ code: 'MERGE_SELF' }),
     );
   });
 
-  it('rejects merging objects of different kinds (R6 同类型才可融合)', () => {
+  it('rejects merging objects of different kinds (R6 同类型才可融合)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'location', name: '金陵', status: 'draft' }, 'B');
     commitAll(r);
-    expect(() => mergeEntities(r, 'obj_b', 'obj_a')).toThrowError(
+    await expect(mergeEntities(r, 'obj_b', 'obj_a')).rejects.toThrowError(
       expect.objectContaining({ code: 'MERGE_TYPE_MISMATCH' }),
     );
   });
 });
 
 describe('attach_alias(R1/R24/R25/R36)', () => {
-  it('attaches alias to existing object without creating a new object (R1)', () => {
+  it('attaches alias to existing object without creating a new object (R1)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_suwan.md', { id: 'obj_suwan', kind: 'character', name: '苏婉', status: 'canonical' }, '苏婉');
     commitAll(r);
     const before = objectCount(r);
-    const res = attachAlias(r, 'obj_suwan', '红衣女子');
+    const res = await attachAlias(r, 'obj_suwan', '红衣女子');
     expect(res.count).toBe(1);
     expect(objectCount(r)).toBe(before); // 对象数不增(R1)
     expect(readFrontmatter(r, 'world/objects/obj_suwan.md').aliases).toContain('红衣女子');
   });
 
-  it('rejects a duplicate alias after normalization (R24)', () => {
+  it('rejects a duplicate alias after normalization (R24)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_suwan.md', { id: 'obj_suwan', kind: 'character', name: '苏婉', status: 'canonical', aliases: ['Zhou Mingrui'] }, '苏婉');
     commitAll(r);
-    expect(() => attachAlias(r, 'obj_suwan', 'zhou mingrui')).toThrowError(
+    await expect(attachAlias(r, 'obj_suwan', 'zhou mingrui')).rejects.toThrowError(
       expect.objectContaining({ code: 'DUPLICATE_ALIAS' }),
     );
   });
 
-  it('rejects placeholder aliases (R25)', () => {
+  it('rejects placeholder aliases (R25)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_suwan.md', { id: 'obj_suwan', kind: 'character', name: '苏婉', status: 'canonical' }, '苏婉');
     commitAll(r);
-    expect(() => attachAlias(r, 'obj_suwan', '未知')).toThrowError(
+    await expect(attachAlias(r, 'obj_suwan', '未知')).rejects.toThrowError(
       expect.objectContaining({ code: 'INVALID_ALIAS' }),
     );
   });
 
-  it('rejects alias on a non-canonical target (R36)', () => {
+  it('rejects alias on a non-canonical target (R36)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_suwan.md', { id: 'obj_suwan', kind: 'character', name: '苏婉', status: 'draft' }, '苏婉');
     commitAll(r);
-    expect(() => attachAlias(r, 'obj_suwan', '红衣女子')).toThrowError(
+    await expect(attachAlias(r, 'obj_suwan', '红衣女子')).rejects.toThrowError(
       expect.objectContaining({ code: 'INVALID_TARGET' }),
     );
   });
 });
 
 describe('merge-log(.assistant/merge-log.jsonl)', () => {
-  it('appends a reversible merge record (adjudication #5)', () => {
+  it('appends a reversible merge record (adjudication #5)', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', name: '红衣女子', status: 'draft' }, 'B');
     commitAll(r);
-    mergeEntities(r, 'obj_b', 'obj_a', { workflow: 'import-deep' });
+    await mergeEntities(r, 'obj_b', 'obj_a', { workflow: 'import-deep' });
     const log = readMergeLog(r);
     expect(log.length).toBe(1);
     expect(log[0].operation).toBe('merge');
@@ -157,14 +157,14 @@ describe('merge-log(.assistant/merge-log.jsonl)', () => {
 });
 
 describe('N23 · merge/split/attach_alias 落盘前校验(fail-closed)', () => {
-  it('merge 拒绝 schema 不合规源对象: VALIDATION_FAILED, 无写入、无 commit', () => {
+  it('merge 拒绝 schema 不合规源对象: VALIDATION_FAILED, 无写入、无 commit', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
     // 源对象缺必填 name(object schema), 其余门禁全过
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', status: 'draft' }, 'B');
     commitAll(r);
     const headBefore = gitLogSubjects(r).length;
-    expect(() => mergeEntities(r, 'obj_b', 'obj_a')).toThrowError(
+    await expect(mergeEntities(r, 'obj_b', 'obj_a')).rejects.toThrowError(
       expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
     );
     // 无部分状态: 双文件均未改写、无 merge-log、无 commit
@@ -175,16 +175,16 @@ describe('N23 · merge/split/attach_alias 落盘前校验(fail-closed)', () => {
     expect(gitLogSubjects(r).length).toBe(headBefore);
   });
 
-  it('split 拒绝 schema 不合规已合并源: VALIDATION_FAILED, 不恢复、无 split 记录', () => {
+  it('split 拒绝 schema 不合规已合并源: VALIDATION_FAILED, 不恢复、无 split 记录', async () => {
     const r = fixture();
     writeAsset(r, 'world/objects/obj_a.md', { id: 'obj_a', kind: 'character', name: '苏婉', status: 'canonical' }, 'A');
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', name: '红衣女子', status: 'draft', aliases: ['红裙'] }, 'B');
     commitAll(r);
-    mergeEntities(r, 'obj_b', 'obj_a');
+    await mergeEntities(r, 'obj_b', 'obj_a');
     // 手改合并源为 schema 不合规(缺必填 name)
     writeAsset(r, 'world/objects/obj_b.md', { id: 'obj_b', kind: 'character', status: 'merged', merged_into: 'obj_a' }, 'B');
     const logBefore = readMergeLog(r).length;
-    expect(() => splitMerge(r, 'obj_b')).toThrowError(
+    await expect(splitMerge(r, 'obj_b')).rejects.toThrowError(
       expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
     );
     // 无部分状态: 未恢复 status、无 split 记录
@@ -192,13 +192,13 @@ describe('N23 · merge/split/attach_alias 落盘前校验(fail-closed)', () => {
     expect(readMergeLog(r).length).toBe(logBefore);
   });
 
-  it('attach_alias 拒绝 schema 不合规目标: VALIDATION_FAILED, 别名未写入、无 commit', () => {
+  it('attach_alias 拒绝 schema 不合规目标: VALIDATION_FAILED, 别名未写入、无 commit', async () => {
     const r = fixture();
     // canonical 但缺必填 name(object schema)
     writeAsset(r, 'world/objects/obj_x.md', { id: 'obj_x', kind: 'character', status: 'canonical' }, 'X');
     commitAll(r);
     const headBefore = gitLogSubjects(r).length;
-    expect(() => attachAlias(r, 'obj_x', '红衣女子')).toThrowError(
+    await expect(attachAlias(r, 'obj_x', '红衣女子')).rejects.toThrowError(
       expect.objectContaining({ code: 'VALIDATION_FAILED' }), // N23
     );
     expect(readFrontmatter(r, 'world/objects/obj_x.md').aliases).toBeUndefined();

@@ -2,7 +2,7 @@
 // 依据: specs/assets/outline.md + store-rules + N1(六键健康词汇表)+ N12(目录化)。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths, slugify } from "@novelcraft/vault";
-import { assertValidRelations, computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
+import { assertValidRelations, computeSceneHealthDetail, gitAdd, gitCommit, parseFrontmatter, relOf, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
 
 export interface SceneLite {
   slug: string;
@@ -16,9 +16,12 @@ export interface SceneLite {
 export function listScenes(root: string): SceneLite[] {
   const dir = paths(root).scenes.dir;
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => {
+  // R9(目录枚举扫描): withFileTypes 只接收 entry.isFile() 的 .md 普通文件;
+  // 仓库内已提交的 symlink(即使指向 vault 外)一律忽略, 绝不跟随读取。
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => {
+      const f = e.name;
       const file = `${dir}/${f}`;
       const { data } = parseFrontmatter(readFileSync(file, "utf8"));
       return {
@@ -58,7 +61,10 @@ export function structureHealthSignals(
   ];
   for (const [kind, dir] of dirs) {
     if (!existsSync(dir)) continue;
-    for (const f of readdirSync(dir).filter((x) => x.endsWith(".md"))) {
+    // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const f = entry.name;
       const { data } = parseFrontmatter(readFileSync(`${dir}/${f}`, "utf8"));
       const keys: string[] = [];
       if (data.needs_review === true) keys.push("structure_needs_review");
@@ -111,7 +117,10 @@ export function writeOutline(
     throw new StoreError("VALIDATION_FAILED", `outline frontmatter 校验失败: ${detail}`, issues);
   }
   writeFileSync(file, serializeFrontmatter(fm, String(body ?? "")), "utf8");
-  gitAdd(root);
+  // 精确 pathspec(relOf = 相对 repo 根的 POSIX 路径, store/merge.ts 同款): 只暂存
+  // 本操作路径(增/改/删都由 `git add <path>` 统一承接), 绝不 -A——无关的
+  // staged/unstaged/untracked 一律保持原状, 不卷入本 commit。
+  gitAdd(root, [relOf(root, file)]);
   gitCommit(root, opts.message ?? "outline: update story outline");
 }
 
@@ -162,8 +171,12 @@ export function writeStructureAsset(
     const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
     throw new StoreError("VALIDATION_FAILED", `${kind} frontmatter 校验失败: ${detail}`, issues);
   }
-  writeFileSync(`${dir}/${slug}.md`, serializeFrontmatter(fm, String(body ?? "")), "utf8");
-  gitAdd(root);
+  const file = `${dir}/${slug}.md`;
+  writeFileSync(file, serializeFrontmatter(fm, String(body ?? "")), "utf8");
+  // 精确 pathspec(relOf = 相对 repo 根的 POSIX 路径, store/merge.ts 同款): 只暂存
+  // 本操作路径(增/改/删都由 `git add <path>` 统一承接), 绝不 -A——无关的
+  // staged/unstaged/untracked 一律保持原状, 不卷入本 commit。
+  gitAdd(root, [relOf(root, file)]);
   gitCommit(root, `outline: ${kind} ${slug}`);
   return slug;
 }

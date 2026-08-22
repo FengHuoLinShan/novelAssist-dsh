@@ -9,10 +9,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
-import { act, inboxView, plotSummaryLine, pushSignal, scanHealthSignals, type InboxAction, type Signal } from '@novelcraft/assistant';
+import { act, inboxView, plotSummaryLine, pushSignal, scanHealthSignals, type Signal } from '@novelcraft/assistant';
 import { DEFAULT_CONTENT_PRESETS, resolvePolicy, selectPresetInLlmYml } from '@novelcraft/llm-step';
 import { chapterDossier, rebuildIndex, storyMap } from '@novelcraft/store';
-import { paths as vaultPaths, guardPath } from '@novelcraft/vault';
+import { paths as vaultPaths, guardPath, assertSafePathSegment, assertNoSymlinkOnPath } from '@novelcraft/vault';
 import {
   latestAtlasRun,
   readAtlasRun,
@@ -89,6 +89,32 @@ export function rpcFail<T>(message: string): RpcResult<T> {
   return { ok: false, error: { code: 'internal', message, details: {} } };
 }
 
+/** 收件箱四动词(与 wire InboxActPayload.action 对齐; 运行时判定用, 防恶意/损坏载荷)。 */
+const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
+
+/**
+ * wire 文件名级引用(page_ref / runId / signalId)运行时校验。
+ *
+ * 这些值会被拼进 path.join 落盘/读盘(signalFile/runFile/`${page_ref}.json`),
+ * 单靠 guardPath 只能拦「逃出 vault 根」, 拦不住「../.assistant/signals/x」这类
+ * vault 内跨目录写入。约定这些引用必须是「文件名」(不含路径分隔符), 否则直接拒绝:
+ * - 非空字符串(空白修剪后非空);
+ * - 长度 ≤ 128(合理上限; vault slug 限 64, 机器生成 id 更短);
+ * - 非 '.' / '..';
+ * - 不含 '/'、'\' 与任何控制字符。
+ *
+ * 返回作者语言错误消息; 合法返回 null。
+ */
+export function wireRefError(ref: unknown, label: string): string | null {
+  if (typeof ref !== 'string' || ref.trim() === '') return `${label} 必填`;
+  if (ref.length > 128) return `${label} 过长(≤128 字符)`;
+  if (ref === '.' || ref === '..') return `${label} 非法: ${ref}`;
+  if (/[\\/\u0000-\u001f\u007f]/.test(ref)) {
+    return `${label} 含非法字符(不得含 /、\\ 与控制字符)`;
+  }
+  return null;
+}
+
 export function rpcOk<T>(value: T): RpcResult<T> {
   return { ok: true, value };
 }
@@ -112,8 +138,10 @@ function readReviewCards(root: string): ReviewCard[] {
   const dir = path.join(root, '.assistant', 'reviews');
   if (!existsSync(dir)) return [];
   const out: ReviewCard[] = [];
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith('.json')) continue;
+  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const f = entry.name;
     try {
       const rec = JSON.parse(readFileSync(path.join(dir, f), 'utf8')) as {
         review_id?: string; chapter_index?: number; verdict?: string;
@@ -149,7 +177,11 @@ const EMPTY_DOSSIER: ChapterDossierAsset = {
 function latestProposalForChapter(root: string, nextChapter: number): ProposalRecord | undefined {
   const dir = path.join(root, '.assistant', 'proposals');
   if (!existsSync(dir)) return undefined;
-  const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.json'))
+    .map((e) => e.name)
+    .sort();
   for (let i = files.length - 1; i >= 0; i--) {
     try {
       const rec = JSON.parse(readFileSync(path.join(dir, files[i]), 'utf8')) as ProposalRecord;
@@ -279,10 +311,26 @@ export function createNovelcraftHandlers(ctx: Context) {
       if (!binding) {
         return rpcFail('未绑定工作区: 请先在助手侧打开这本书的会话(每书一会话, D17)。');
       }
+      // wire 校验(R9/N19 写边界; 防损坏/恶意载荷破坏信号文件):
+      // signalId 必须可安全当文件名用; action 四动词之一; 字符串字段类型核对。
+      const signalRefErr = wireRefError(payload.signalId, 'signalId');
+      if (signalRefErr) return rpcFail(signalRefErr);
+      if (!INBOX_ACTIONS.includes(payload.action)) {
+        return rpcFail('action 非法: 必须 accept/reject/modify/defer 之一');
+      }
+      if (payload.reason !== undefined && typeof payload.reason !== 'string') {
+        return rpcFail('reason 必须是字符串');
+      }
+      if (payload.modifiedTitle !== undefined && typeof payload.modifiedTitle !== 'string') {
+        return rpcFail('modifiedTitle 必须是字符串');
+      }
+      if (payload.modifiedProposedAction !== undefined && typeof payload.modifiedProposedAction !== 'string') {
+        return rpcFail('modifiedProposedAction 必须是字符串');
+      }
       try {
         const descriptor = act(binding.root, {
           signalId: payload.signalId,
-          action: payload.action as InboxAction,
+          action: payload.action,
           ...(payload.reason ? { reason: payload.reason } : {}),
           ...(payload.action === 'modify'
             ? {
@@ -377,8 +425,18 @@ export function createNovelcraftHandlers(ctx: Context) {
         return rpcOk({ bound: null, dossier: EMPTY_DOSSIER, review: null, signals: [], proposal: null });
       }
       try {
-        // 坏数据容错: 非有限数 → 0(该章通常不存在 → chapter=null 兜底, 不炸)。
+        // 坏数据容错: 非有限/非正章节不下探严格的 vault.chapterFile 正整数门禁，
+        // 直接返回空档案；合法数值仍按整数章读取。
         const idx = Number.isFinite(payload.chapterIndex) ? Math.trunc(payload.chapterIndex) : 0;
+        if (idx < 1) {
+          return rpcOk({
+            bound: { book: binding.book, root: binding.root },
+            dossier: EMPTY_DOSSIER,
+            review: null,
+            signals: [],
+            proposal: null,
+          });
+        }
         // 资产面: store.chapterDossier(逐资产容错自组装, §17.5.1)。
         const dossier = chapterDossier(binding.root, idx);
         // 读面: 本章最新审查 / 本章 open 信号(inboxView 已滤 open+新鲜) / next_chapter==N 最新提案。
@@ -487,7 +545,15 @@ export function createNovelcraftHandlers(ctx: Context) {
       try {
         const root = binding.root;
         const tree = readAtlasTree(root);
-        const run = payload.runId ? readAtlasRun(root, payload.runId) : latestAtlasRun(root);
+        // runId 是文件名级引用(runFile 拼接); wire 校验后再读, 非法直接拒绝(不落盘读写)。
+        let run: ReturnType<typeof latestAtlasRun> = null;
+        if (payload.runId) {
+          const runRefErr = wireRefError(payload.runId, 'runId');
+          if (runRefErr) return rpcFail(runRefErr);
+          run = readAtlasRun(root, payload.runId);
+        } else {
+          run = latestAtlasRun(root);
+        }
         const atlasDir = vaultPaths(root).world.atlas.dir;
         const toLabels = (pg: AtlasPageView): AtlasLabelCard[] =>
           pg.annotations.map((a) => ({
@@ -546,7 +612,12 @@ export function createNovelcraftHandlers(ctx: Context) {
         const levelOf = (nodeRef: string): string =>
           [...tree.nodes, ...tree.pendingNodes].find((n) => n.id === nodeRef)?.level ?? 'world';
         const queueDir = vaultPaths(root).assistant.atlas.annotationQueue;
-        const queueFiles = existsSync(queueDir) ? readdirSync(queueDir).filter((f) => f.endsWith('.json')) : [];
+        // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+        const queueFiles = existsSync(queueDir)
+          ? readdirSync(queueDir, { withFileTypes: true })
+              .filter((e) => e.isFile() && e.name.endsWith('.json'))
+              .map((e) => e.name)
+          : [];
         const queuePages: string[] = [];
         let queueOps = 0;
         for (const f of queueFiles) {
@@ -595,17 +666,42 @@ export function createNovelcraftHandlers(ctx: Context) {
       const binding = await resolveRoot(novelcraft, payload);
       if (!binding) return rpcFail('未绑定 vault');
       try {
-        if (!payload.page_ref?.trim()) return rpcFail('page_ref 必填');
+        // page_ref 是文件名级引用(`${page_ref}.json` 拼接落队列); 校验不通过即拒绝,
+        // 防止 '../.assistant/signals/x' 这类 vault 内跨目录写入(wireRefError 见上)。
+        const pageRefErr = wireRefError(payload.page_ref, 'page_ref');
+        if (pageRefErr) return rpcFail(pageRefErr);
         if (!Array.isArray(payload.ops) || payload.ops.length === 0) return rpcFail('ops 至少一条');
         // 只收精确结构化 ops; 坐标恒为归一化 0–1(规则 11), 不做任何自然语言换算。
-        for (const op of payload.ops) {
-          if (!['add', 'update', 'delete'].includes(op.op)) return rpcFail(`非法 op: ${op.op}`);
-          if (op.position_x !== undefined && (op.position_x < 0 || op.position_x > 1)) return rpcFail('position_x 必须 0–1');
-          if (op.position_y !== undefined && (op.position_y < 0 || op.position_y > 1)) return rpcFail('position_y 必须 0–1');
+        // 运行时逐条校验(防损坏/恶意载荷): op 枚举 + position_x/y 必须是有限 number 且 0–1。
+        const ops = payload.ops as unknown[];
+        for (const op of ops) {
+          if (typeof op !== 'object' || op === null) return rpcFail('ops 每条必须是对象');
+          const raw = op as { op?: unknown; position_x?: unknown; position_y?: unknown };
+          if (
+            typeof raw.op !== 'string' ||
+            !['add', 'update', 'delete'].includes(raw.op)
+          ) {
+            return rpcFail(`非法 op: ${String(raw.op)}`);
+          }
+          for (const key of ['position_x', 'position_y'] as const) {
+            const v = raw[key];
+            if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1)) {
+              return rpcFail(`${key} 必须是 0–1 的有限数(拒绝字符串/NaN/Infinity)`);
+            }
+          }
         }
         const root = binding.root;
+        // 写边界(R9, fail-closed): queueDir 由 paths() 限定(guard + 逐段 symlink
+        // 检查), page_ref 在 wireRefError 之外再经 assertSafePathSegment 双保险为
+        // 单文件段; 目标文件若被预置为 symlink —— 包括指向 vault 内 signals 等
+        // 其他文件的内部链接(guardPath 的 real containment 会放行, 而
+        // writeFileSync 会跟随链接改写 vault 内他处; 读面 atlas/view 的目录枚举
+        // 只收普通文件, 链接队列文件会被忽略 → 写读不一致) —— 由
+        // assertNoSymlinkOnPath 显式拒绝任意 symlink(外部/内部/悬空一律不写)。
         const queueDir = vaultPaths(root).assistant.atlas.annotationQueue;
+        assertSafePathSegment(payload.page_ref, 'page_ref');
         const file = guardPath(root, path.join(queueDir, `${payload.page_ref}.json`));
+        assertNoSymlinkOnPath(root, file);
         mkdirSync(path.dirname(file), { recursive: true });
         writeFileSync(
           file,

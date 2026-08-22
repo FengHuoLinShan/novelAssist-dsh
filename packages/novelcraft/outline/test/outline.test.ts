@@ -1,11 +1,12 @@
 // outline 行为契约(specs/assets/outline.md + N1/N12 + catalog §2)
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
-import { StoreError, gitAdd, gitCommit, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
+import { StoreError, gitAdd, gitCommit, gitStatusEntries, relOf, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { analyzeOutline, generateOutlineItem, generateStoryOutline, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
 
 const dirs: string[] = [];
@@ -18,6 +19,16 @@ function makeRoot() {
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
+
+/** 测试侧 git CLI(只读断言; 生产实现经 store git 封装)。 */
+function git(root: string, args: string[]): string {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).toString();
+}
+
+/** HEAD commit 改动的文件列表(-z 未引号化输出, 非 ASCII 路径逐字; 断言 commit 原子性)。 */
+function committedFiles(root: string): string[] {
+  return git(root, ["diff-tree", "--no-commit-id", "--name-only", "-z", "-r", "HEAD"]).split("\0").filter(Boolean);
+}
 
 describe("sceneHealthSignals(N1 四键)", () => {
   it("未关联章节 + 未复核 → 两键", () => {
@@ -80,6 +91,55 @@ describe("总纲 outline.md 单文件(adjudication #1)", () => {
     expect(o.title).toBe("总纲");
     expect(o.outline_markdown).toContain("# 卷一");
     expect(existsSync(join(root, "structure", "outline.md"))).toBe(true);
+  });
+});
+
+// gitAdd 精确 pathspec 契约(store git.ts:124 + relOf, 同 merge.ts 用法):
+// writeOutline/writeStructureAsset 只暂存本操作文件(相对 repo 根的 POSIX 路径),
+// 绝不 -A——无关的 unstaged/untracked(含删除)一律保持原状, 不卷入本 commit。
+describe("写链 gitAdd 精确 pathspec(不 -A, 保留无关 staged/unstaged)", () => {
+  /** 无关脏状态: unstaged 修改 + untracked + unstaged 删除(均为 -A 会卷入的对象)。 */
+  function dirtyWorktree(root: string) {
+    writeFileSync(join(root, "scenes", "u-mod.md"), '---\nid: u-mod\nstatus: draft\ntitle: UM\n---\n');
+    writeFileSync(join(root, "scenes", "u-del.md"), '---\nid: u-del\nstatus: draft\ntitle: UD\n---\n');
+    gitAdd(root); gitCommit(root, "base"); // 基线 commit(测试夹具, 允许全量)
+    writeFileSync(join(root, "scenes", "u-mod.md"), '---\nid: u-mod\nstatus: draft\ntitle: UM2\n---\n'); // unstaged 修改
+    writeFileSync(join(root, "scenes", "u-new.md"), '---\nid: u-new\nstatus: draft\ntitle: UN\n---\n'); // untracked
+    rmSync(join(root, "scenes", "u-del.md")); // unstaged 删除
+  }
+
+  it("writeOutline: commit 只含 structure/outline.md, 无关状态原样保留", () => {
+    const root = makeRoot();
+    dirtyWorktree(root);
+    writeOutline(root, { title: "总纲", outline_markdown: "# 卷一" });
+    expect(committedFiles(root)).toEqual(["structure/outline.md"]); // 原子 commit, 无 -A 卷入
+    const sig = gitStatusEntries(root).map((e) => `${e.status}|${e.path}`).sort();
+    expect(sig).toEqual([" D|scenes/u-del.md", " M|scenes/u-mod.md", "??|scenes/u-new.md"].sort());
+  });
+
+  it("writeOutline 二次改写: 仍只含 outline.md(修改态同样精确)", () => {
+    const root = makeRoot();
+    writeOutline(root, { title: "总纲", outline_markdown: "# 卷一" });
+    writeOutline(root, { title: "总纲", outline_markdown: "# 卷一之改" });
+    expect(committedFiles(root)).toEqual(["structure/outline.md"]);
+    expect(gitStatusEntries(root)).toEqual([]); // 工作区干净
+  });
+
+  it("writeStructureAsset: commit 只含本资产文件, 无关状态原样保留", () => {
+    const root = makeRoot();
+    dirtyWorktree(root);
+    const slug = writeStructureAsset(root, "arc", { title: "第一卷" });
+    expect(committedFiles(root)).toEqual([`structure/arcs/${slug}.md`]);
+    const sig = gitStatusEntries(root).map((e) => `${e.status}|${e.path}`).sort();
+    expect(sig).toEqual([" D|scenes/u-del.md", " M|scenes/u-mod.md", "??|scenes/u-new.md"].sort());
+  });
+
+  it("精确 pathspec 含删除: 已删除的 outline.md 经同款 relOf pathspec 单独暂存删除", () => {
+    const root = makeRoot();
+    writeOutline(root, { title: "总纲", outline_markdown: "# 卷一" });
+    rmSync(join(root, "structure", "outline.md")); // 路径被删(worktree 无文件, index 仍有)
+    gitAdd(root, [relOf(root, join(root, "structure", "outline.md"))]);
+    expect(gitStatusEntries(root)).toContainEqual({ status: "D ", path: "structure/outline.md" });
   });
 });
 
@@ -279,5 +339,45 @@ describe("写链 validateFrontmatter 接入(N23/M7-C)", () => {
     writeOutline(root, { title: "总纲", outline_markdown: "# 卷一" });
     const { data, body } = parseFrontmatter(readFileSync(join(root, "structure", "outline.md"), "utf8"));
     expect(validateFrontmatter("outline", { ...data, outline_markdown: body.trim() } as never)).toEqual([]);
+  });
+});
+
+// R9(目录枚举扫描): readdirSync + withFileTypes 只接收 entry.isFile() 的 .md 普通文件;
+// 仓库内已提交的指向 vault 外 .md 的 symlink 必须被安全忽略, 绝不跟随读取。
+// 平台不支持 symlink(如 Windows 非管理员)时 skipIf。
+const symlinkSupported = (() => {
+  try {
+    const d = mkdtempSync(join(tmpdir(), "ncl-"));
+    symlinkSync("t", join(d, "l"));
+    rmSync(d, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!symlinkSupported)("listScenes 忽略指向 vault 外的 .md symlink(R9)", () => {
+  it("外部文件内容不可见, 普通 scene 正常列出", () => {
+    const root = makeRoot();
+    const outside = mkdtempSync(join(tmpdir(), "nco-x-"));
+    dirs.push(outside);
+    writeFileSync(join(outside, "secret.md"), '---\ntitle: 外部泄漏\nstatus: draft\n---\n');
+    symlinkSync(join(outside, "secret.md"), join(root, "scenes", "evil.md"));
+    writeFileSync(
+      join(root, "scenes", "s001.md"),
+      '---\nid: s001\nstatus: draft\ntitle: S1\nsource: deep_import\n---\n',
+    );
+    const scenes = listScenes(root);
+    expect(scenes.map((s) => s.slug)).toEqual(["s001"]);
+    expect(scenes.some((s) => s.title === "外部泄漏")).toBe(false);
+  });
+
+  it("目录里只有 symlink 时返回空(安全忽略, 不跟随)", () => {
+    const root = makeRoot();
+    const outside = mkdtempSync(join(tmpdir(), "nco-x-"));
+    dirs.push(outside);
+    writeFileSync(join(outside, "secret.md"), '---\ntitle: 外部泄漏\nstatus: draft\n---\n');
+    symlinkSync(join(outside, "secret.md"), join(root, "scenes", "evil.md"));
+    expect(listScenes(root)).toEqual([]);
   });
 });

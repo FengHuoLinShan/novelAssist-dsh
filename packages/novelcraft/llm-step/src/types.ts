@@ -1,4 +1,5 @@
 // llm-step 类型(R2 核心契约, 依据设计文档 §4/§12/§22.5 + specs/prompts/catalog.md)
+import type { WorkflowBudget } from "./budget.js";
 import type { ValidatorSchema } from "./validator.js";
 
 export interface LlmStepSpec {
@@ -34,6 +35,8 @@ export interface StepRequest {
     provider?: string;
     model?: string;
     temperature?: number;
+    /** top_p [0,1](审查项 4: core strict 参数面支持; 传输契约不支持处由实现侧明确拒绝) */
+    top_p?: number;
     maxTokens?: number;
     timeoutMs?: number;
   };
@@ -89,6 +92,8 @@ export interface ProviderRequest {
   provider?: string;
   model?: string;
   temperature?: number;
+  /** top_p [0,1](审查项 4: core strict 参数面支持; 传输契约不支持处由实现侧明确拒绝) */
+  top_p?: number;
   maxTokens?: number;
   signal?: AbortSignal;
 }
@@ -98,6 +103,37 @@ export interface ProviderResponse {
   usage?: { inputTokens: number; outputTokens: number };
 }
 
+/**
+ * Provider 可选执行默认(N34 / ADR-0023 §6 加法, 独立审查 P2):
+ * 由执行画像(ExecutionProfile)经 DSH 组合后附着在 Provider 上, 使 imports/writing/world/rag
+ * 内部的「裸 runStep(provider, req)」也真正继承 timeout/maxTokens/temperature/model——
+ * 不逐包改调用点、不改 runStep 签名的破坏面。
+ * runStep 按 spec 默认 < provider.executionDefaults < 请求 overrides 合并
+ * (显式 undefined 判断, temperature=0 等合法零值不被吞掉)。
+ */
+export interface StepExecutionDefaults {
+  /** DSH provider 路由默认(如 'deepseek'); 请求级 override 优先 */
+  provider?: string;
+  /** 模型 id 默认; 请求级 override 优先 */
+  model?: string;
+  /** 单步温度默认, [0,2] 有限数字; 请求级 override 优先 */
+  temperature?: number;
+  /** 单步 top_p 默认, [0,1] 有限数字; 请求级 override 优先(审查项 4) */
+  top_p?: number;
+  /** 单次输出 token 上限默认(1–200000 整数; 0/缺省 = spec 决定); 请求级 override 优先 */
+  maxTokens?: number;
+  /** 单步超时默认毫秒(1000–3600000 整数); 请求级 override 优先 */
+  timeoutMs?: number;
+}
+
 export interface Provider {
   complete(req: ProviderRequest): Promise<ProviderResponse>;
+  /**
+   * 可选执行默认(加法): runStep 在 spec 默认与请求 overrides 之间读取本层。
+   * 由 DSH 组合面(withResolvedDefaults / contentProviderFor)附着的执行画像默认;
+   * 裸 runStep(provider, req) 无需经 applyExecutionProfileToRequest 也能继承。
+   */
+  executionDefaults?: StepExecutionDefaults;
+  /** Optional orchestration-scoped cumulative tracker; explicit RunStepOptions.budget wins. */
+  workflowBudget?: WorkflowBudget;
 }

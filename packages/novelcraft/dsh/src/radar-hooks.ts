@@ -1,8 +1,11 @@
 // @novelcraft/dsh · 雷达事件触发(设计 §11: 事件驱动, 非定时刷屏; D6 低频巡检默认关)。
 // 工具事件 → 确定性雷达对账 → pushSignalsChanged(ADR-0018 推送通道)。
 // 钩子为尽力而为的副作用: 任何扫描异常不外抛, 不破坏主工具调用链。
+// N34: root 必须是已验证的绑定 vault 根(工具层 resolveBoundRoot 产出); 钩子内再做
+// 一次只读 validateInitializedVault 兜底, 非已初始化 vault 直接跳过(绝不扫任意目录)。
 import type { Context } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
+import { validateInitializedVault } from '@novelcraft/vault';
 import { pushSignalsChanged } from './push.js';
 
 /** 事件→雷达映射(§11 唤醒条件 2: 事件触发)。 */
@@ -19,12 +22,15 @@ export const EVENT_RADAR_MAP = {
   generate: ['writing'],
 } as const satisfies Record<string, readonly assistant.RadarKind[]>;
 
-/** 跑一组雷达并推送信号变化; 扫描异常吞掉(返回 undefined), 推送仍尝试。 */
+/** 跑一组雷达并推送信号变化; 非已初始化 vault 或扫描异常时跳过(返回 undefined), 推送仍尝试。 */
 export function fireRadarHooks(
   ctx: Context,
   root: string,
   radars: readonly assistant.RadarKind[],
 ): assistant.SweepResult | undefined {
+  // N34: root 必须通过只读 validateInitializedVault(工具层已传入绑定 root; 此处
+  // 兜底防任意目录误入)——伪 vault/无 git/无 HEAD 一律不跑雷达(fail-closed)。
+  if (!validateInitializedVault(root).ok) return undefined;
   let result: assistant.SweepResult | undefined;
   try {
     result = assistant.runRadarSweep(root, { radars: [...radars] });

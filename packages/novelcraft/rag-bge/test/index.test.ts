@@ -49,6 +49,7 @@ describe("createBgeEmbeddingBackend(pipelineFactory 注入)", () => {
       quantized: false,
       pipelineFactory: factory,
     });
+    expect(backend.name).toBe("bge:Xenova/custom-model:fp32"); // N36: provenance 不伪报默认 q8 模型
     await backend.embed(["句"]);
     expect(factory).toHaveBeenCalledWith("Xenova/custom-model", { quantized: false });
   });
@@ -75,15 +76,19 @@ describe("createBgeEmbeddingBackend(pipelineFactory 注入)", () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
-  it("pipelineFactory 抛错 → bge_load_failed(供上层降级)", async () => {
-    const backend = createBgeEmbeddingBackend({
-      pipelineFactory: async () => {
-        throw new Error("model fetch 404");
-      },
+  it("pipelineFactory 首次抛错 → 稳定 code，失败不缓存且下次可成功重试", async () => {
+    const calls: Array<{ texts: string[]; opts: unknown }> = [];
+    const factory = vi.fn()
+      .mockRejectedValueOnce(new Error("model fetch 404"))
+      .mockResolvedValueOnce(makeFakePipeline(calls));
+    const backend = createBgeEmbeddingBackend({ pipelineFactory: factory });
+    await expect(backend.embed(["句"])).rejects.toMatchObject({
+      code: "bge_load_failed",
+      message: expect.stringContaining("bge_load_failed"),
     });
-    await expect(backend.embed(["句"])).rejects.toThrow("bge_load_failed");
-    // 加载失败不缓存: 下次 embed 重试仍为加载错误(前缀不变)
-    await expect(backend.embed(["句"])).rejects.toThrow("bge_load_failed");
+    expect(await backend.embed(["重试"])).toEqual([[2, 1, 0]]);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(1);
   });
 
   it("pipeline 调用抛错 → bge_embed_failed", async () => {

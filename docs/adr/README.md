@@ -10,6 +10,11 @@
 | [ADR-0018](0018-m4-dsh-shared-layer-policy.md) | Accepted | DSH 共享层默认不改、窄缝例外(pnpm patch / 最小 fork)+ 上游回馈四条纪律。 |
 | [ADR-0019](0019-structure-relation-model.md) | Accepted | 结构资产统一 relations 有向对(对齐 N11)+ 跨类关系索引; related_*_ids 降级为兼容投影, 只做加法渐进收敛。 |
 | [ADR-0020](0020-map-atlas-m4-file-model.md) | Accepted | 世界地图册(map atlas)M4 文件模型: world/atlas/** 文件真相 + 无生图边界 + prompt_only 不可 adopt + 空页占位 + 标签 L1 队列 + 本机路径图片导入(N28/N29)。 |
+| [ADR-0021](0021-vault-write-transactions.md) | Accepted / implemented & verified | Vault 目标路径级写事务：声明 write set、staged fail-closed、CAS、精确提交、条件回滚与跨进程锁(N32)。 |
+| [ADR-0022](0022-resumable-workflow-runs.md) | Accepted / implemented & verified | deep-import/map-atlas 不可变 run 与逐批恢复协议；force 新 run；剩余 LLM 批次重新授权(N33)。 |
+| [ADR-0023](0023-dsh-lifecycle-execution-profile.md) | Accepted / implemented & verified | DSH session→vault 生命周期、Node 托管守望、单次补跑及统一 ExecutionProfile/Node matrix(N34)。 |
+| [ADR-0024](0024-capability-api-boundary.md) | Accepted / implemented & verified | NovelCraftService 公开 capability API 安全默认，raw 写面内部化；不宣称同进程恶意代码隔离(N35)。 |
+| [ADR-0025](0025-source-distribution-runtime-profile.md) | Accepted / implemented & verified | M4 源码分发、workspace private、DSH Node 基线与默认省略 optional BGE 的安装策略(N36)。 |
 
 ## 状态约定
 

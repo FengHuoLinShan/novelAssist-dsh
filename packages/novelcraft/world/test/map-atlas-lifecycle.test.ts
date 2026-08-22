@@ -1,16 +1,18 @@
 // world/map-atlas · Phase 4 生命周期/图片导入/标注 行为契约(计划 §4 Phase 4 + 验收; N28/N29)。
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault, paths } from "@novelcraft/vault";
-import { StoreError } from "@novelcraft/store";
+import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError } from "@novelcraft/store";
 import {
   addAtlasAnnotation,
   adoptAtlasPage,
   adoptAtlasPlaceholder,
+  applyAtlasAnnotationOps,
   archiveAtlasPage,
+  computeAtlasPageContentHash,
   deleteAtlasAnnotation,
   importAtlasImage,
   readAtlasTree,
@@ -209,17 +211,17 @@ describe("占位/驳回/归档/恢复/改 prompt(计划 Phase 4 状态机)", () 
     await expect(adoptAtlasPlaceholder(root, "n-city", allowAll)).rejects.toThrow(/不存在/);
   });
 
-  it("reject → rejected 终态(文件保留在 pending, 不硬删); prompt_only 不可驳回", () => {
+  it("reject → rejected 终态(文件保留在 pending, 不硬删); prompt_only 不可驳回", async () => {
     const root = makeRoot();
     writeAtlasNode(root, node("n1"));
     writeAtlasPage(root, withImage(page("pg1"), root, "pg1"));
     writeAtlasPage(root, page("pg-prompt"));
-    expect(() => rejectAtlasPage(root, "pg-prompt")).toThrow(/prompt_only/); // 移植锚点 Phase 4
-    const r = rejectAtlasPage(root, "pg1", { note: "重画" });
+    await expect(rejectAtlasPage(root, "pg-prompt")).rejects.toThrow(/prompt_only/); // 移植锚点 Phase 4
+    const r = await rejectAtlasPage(root, "pg1", { note: "重画" });
     expect(r.review_status).toBe("rejected");
     expect(r.rejected_at).toBeTruthy();
     expect(existsSync(paths(root).world.atlas.pendingPageFile("pg1"))).toBe(true);
-    expect(() => rejectAtlasPage(root, "pg1")).toThrow(/非候选/);
+    await expect(rejectAtlasPage(root, "pg1")).rejects.toThrow(/非候选/);
   });
 
   it("archive → deprecated(历史页不硬删); restore → adopted 且祖先补齐", async () => {
@@ -228,26 +230,42 @@ describe("占位/驳回/归档/恢复/改 prompt(计划 Phase 4 状态机)", () 
     writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
     writeAtlasPage(root, withImage(page("pg1", { node_ref: "n-city" }), root, "pg1"));
     await adoptAtlasPage(root, "pg1", {}, allowAll);
-    const archived = archiveAtlasPage(root, "pg1");
+    const archived = await archiveAtlasPage(root, "pg1");
     expect(archived.review_status).toBe("deprecated");
     expect(existsSync(paths(root).world.atlas.pageFile("pg1"))).toBe(true); // 不硬删
     const restored = await restoreAtlasPage(root, "pg1", allowAll);
     expect(restored.page.review_status).toBe("adopted");
     expect(restored.page.deprecated_at).toBeNull();
     // 再 archive 一次后 restore 需 approval
-    archiveAtlasPage(root, "pg1");
+    await archiveAtlasPage(root, "pg1");
     await expect(restoreAtlasPage(root, "pg1", denyAll)).rejects.toThrow(/审批/);
-  });
+  }, 15_000);
 
-  it("updateAtlasPrompt: 仅 prompt_only 候选可改 + CAS", () => {
+  it("updateAtlasPrompt: 仅 prompt_only 候选可改 + CAS", async () => {
     const root = makeRoot();
     writeAtlasNode(root, node("n1"));
     writeAtlasPage(root, page("pg1", { content_hash: "h-old" }));
-    const next = updateAtlasPrompt(root, "pg1", "新 prompt", "h-old");
+    const next = await updateAtlasPrompt(root, "pg1", "新 prompt", "h-old");
     expect(next.prompt).toBe("新 prompt");
-    expect(() => updateAtlasPrompt(root, "pg1", "x", "h-错")).toThrow(StoreError);
+    await expect(updateAtlasPrompt(root, "pg1", "x", "h-错")).rejects.toThrow(StoreError);
     writeAtlasPage(root, page("pg2", { generation_status: "review_ready" }));
-    expect(() => updateAtlasPrompt(root, "pg2", "x")).toThrow(/prompt_only/);
+    await expect(updateAtlasPrompt(root, "pg2", "x")).rejects.toThrow(/prompt_only/);
+  });
+
+  it("updateAtlasPrompt 一致性: 改 prompt 后 content_hash 用 computeAtlasPageContentHash 重算", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1", { content_hash: "h-old" }));
+    const next = await updateAtlasPrompt(root, "pg1", "新 prompt", "h-old");
+    expect(next.content_hash).not.toBe("h-old"); // 旧哈希不得残留
+    // 与同口径重算一致(并读回落盘文件复核)。
+    expect(next.content_hash).toBe(computeAtlasPageContentHash(next as AtlasPage));
+    const { data } = parseFrontmatter(readFileSync(paths(root).world.atlas.pendingPageFile("pg1"), "utf8"));
+    expect(data.content_hash).toBe(computeAtlasPageContentHash(next as AtlasPage));
+    // CAS 用重算后的新哈希可再次修改。
+    const again = await updateAtlasPrompt(root, "pg1", "再改", next.content_hash);
+    expect(again.content_hash).not.toBe(next.content_hash);
+    expect(again.content_hash).toBe(computeAtlasPageContentHash(again as AtlasPage));
   });
 
   it("updateAtlasNode: rank 翻转/循环/封面有父 拒", async () => {
@@ -256,16 +274,287 @@ describe("占位/驳回/归档/恢复/改 prompt(计划 Phase 4 状态机)", () 
     writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
     await adoptAtlasPlaceholder(root, "n-city", allowAll);
     // 合法: 改标题
-    const r = updateAtlasNode(root, "n-city", { title: "临水城" });
+    const r = await updateAtlasNode(root, "n-city", { title: "临水城" });
     expect(r.title).toBe("临水城");
     // 循环: n-cover.parent = n-city(n-city 的祖先是 n-cover)
-    expect(() => updateAtlasNode(root, "n-cover", { parent_ref: "n-city" })).toThrow(/循环/);
+    await expect(updateAtlasNode(root, "n-cover", { parent_ref: "n-city" })).rejects.toThrow(/循环/);
     // rank: n-city 提到 cover 之上
-    expect(() => updateAtlasNode(root, "n-city", { level: "cover" })).toThrow(/rank|cover/);
+    await expect(updateAtlasNode(root, "n-city", { level: "cover" })).rejects.toThrow(/rank|cover/);
     // review 修②: 新父为 pending/悬空 → 拒(adopted 节点不得挂 provisional 父)
     writeAtlasNode(root, node("n-pending", { level: "region" }));
-    expect(() => updateAtlasNode(root, "n-city", { parent_ref: "n-pending" })).toThrow(/adopted/);
-    expect(() => updateAtlasNode(root, "n-city", { parent_ref: "ghost" })).toThrow(/adopted/);
+    await expect(updateAtlasNode(root, "n-city", { parent_ref: "n-pending" })).rejects.toThrow(/adopted/);
+    await expect(updateAtlasNode(root, "n-city", { parent_ref: "ghost" })).rejects.toThrow(/adopted/);
+  });
+});
+
+describe("精确 stage: 本次写面相对 POSIX pathspec, 绝不 git add -A(N32 §6; 保留无关用户改动)", () => {
+  const lastCommitFiles = (root: string) =>
+    execFileSync("git", ["show", "--name-only", "--format=", "HEAD"], { cwd: root, encoding: "utf8" })
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0);
+
+  it("reject/updatePrompt: 无关未跟踪+已跟踪改动不被 sweep, 每个 commit 只含目标页", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, withImage(page("pg1"), root, "pg1"));
+    writeAtlasPage(root, page("pg2", { content_hash: "h-pg2" }));
+    // 无关用户改动: 未跟踪笔记 + 已跟踪 book.yml 未暂存修改。
+    writeFileSync(join(root, "notes.md"), "# 用户笔记\n", "utf8");
+    const bookYml = paths(root).bookYml;
+    writeFileSync(bookYml, readFileSync(bookYml, "utf8") + "# 用户备注\n", "utf8");
+
+    await rejectAtlasPage(root, "pg1");
+    // 本次 commit 只含被驳回页的精确路径(不含 notes.md/book.yml)。
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pending/pages/pg1.md"]);
+    // 无关改动原样保留在工作区(未跟踪 / 未暂存)。
+    let porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+    expect(porcelain).toContain("notes.md");
+    expect(porcelain).toContain("book.yml");
+
+    await updateAtlasPrompt(root, "pg2", "新 prompt", "h-pg2");
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pending/pages/pg2.md"]);
+    porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+    expect(porcelain).toContain("notes.md");
+    expect(porcelain).toContain("book.yml");
+  });
+
+  it("adopt 祖先链: 单 commit 含移动目标+删除源(含删除), pending 从 git 消失", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n-cover", { level: "cover" }));
+    writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
+    writeAtlasPage(root, withImage(page("pg1", { node_ref: "n-city" }), root, "pg1"));
+    await adoptAtlasPage(root, "pg1", {}, allowAll);
+    // 精确含删除(--no-renames: 移动显示为 D 旧路径 + A 新路径, 不折叠成 rename):
+    // 3 新路径 + 3 被删 pending 源, 不多不少。
+    const status = execFileSync(
+      "git", ["show", "--name-status", "--format=", "--no-renames", "HEAD"],
+      { cwd: root, encoding: "utf8" },
+    )
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0)
+      .sort();
+    expect(status).toEqual([
+      "A\tworld/atlas/nodes/n-city.md",
+      "A\tworld/atlas/nodes/n-cover.md",
+      "A\tworld/atlas/pages/pg1.md",
+      "D\tworld/atlas/pending/nodes/n-city.md",
+      "D\tworld/atlas/pending/nodes/n-cover.md",
+      "D\tworld/atlas/pending/pages/pg1.md",
+    ]);
+    // 删除已落 index: pending 路径不再 tracked; 新路径 tracked。
+    const tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" });
+    expect(tracked).not.toContain("world/atlas/pending/");
+    expect(tracked).toContain("world/atlas/nodes/n-city.md");
+    expect(tracked).toContain("world/atlas/pages/pg1.md");
+    // 工作区零残留(单 commit 后)。
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" })).toBe("");
+  });
+
+  it("archive 精确 stage: 老页路径唯一入 commit, 无关用户改动保留", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, withImage(page("pg1"), root, "pg1"));
+    await adoptAtlasPage(root, "pg1", {}, allowAll);
+    writeFileSync(join(root, "notes.md"), "# 用户笔记\n", "utf8"); // 无关未跟踪改动
+    await archiveAtlasPage(root, "pg1");
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pages/pg1.md"]);
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" })).toContain("notes.md");
+  });
+});
+
+describe("approval 后写前重验(审批可能耗时; 拒绝并发修改, R17/CAS)", () => {
+  it("adoptAtlasPage: approve 回调内并发修改候选(重算哈希) → CONFLICT 拒绝, 无 adopt commit", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, withImage(page("pg1"), root, "pg1"));
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    // 审批期间另一进程改了候选页(改 prompt + 重算 content_hash + 已提交)。
+    const approveTampers = async () => {
+      const file = paths(root).world.atlas.pendingPageFile("pg1");
+      const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      const base = { ...(data as unknown as AtlasPage), prompt: "并发修改" };
+      const next = { ...base, content_hash: computeAtlasPageContentHash(base) };
+      writeFileSync(file, serializeFrontmatter(next as unknown as Record<string, unknown>, body), "utf8");
+      gitAdd(root);
+      gitCommit(root, "concurrent tamper");
+      return "allowed-once" as const;
+    };
+    await expect(
+      adoptAtlasPage(root, "pg1", { expectedContentHash: "h-pg1" }, approveTampers),
+    ).rejects.toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    // 无 adopt commit(仅并发编辑的 1 个 commit), 无 adopted 页, 候选原文件保留。
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1);
+    expect(existsSync(paths(root).world.atlas.pageFile("pg1"))).toBe(false);
+    expect(existsSync(paths(root).world.atlas.pendingPageFile("pg1"))).toBe(true);
+  });
+
+  it("adoptAtlasPage: approve 回调内改写目标但未提交 → CAS CONFLICT 拒绝, 无 commit", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, withImage(page("pg1"), root, "pg1"));
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveDirty = async () => {
+      // 并发写入未提交改动(不 git add/commit)。
+      writeFileSync(paths(root).world.atlas.pendingPageFile("pg1"), `---\nid: "pg1"\n---\n并发残写\n`, "utf8");
+      return "allowed-once" as const;
+    };
+    await expect(adoptAtlasPage(root, "pg1", {}, approveDirty)).rejects.toThrowError(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(0); // 零 commit
+    expect(existsSync(paths(root).world.atlas.pageFile("pg1"))).toBe(false);
+  });
+
+  it("adoptAtlasPlaceholder: approve 回调内提交删除候选节点 → HEAD/CAS CONFLICT 拒绝, 无 commit", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n-cover", { level: "cover" }));
+    writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveDeletes = async () => {
+      rmSync(paths(root).world.atlas.pendingNodeFile("n-city"));
+      gitAdd(root);
+      gitCommit(root, "concurrent delete node");
+      return "allowed-once" as const;
+    };
+    await expect(adoptAtlasPlaceholder(root, "n-city", approveDeletes)).rejects.toThrowError(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1); // 仅并发删除的 commit
+    expect(existsSync(paths(root).world.atlas.nodeFile("n-city"))).toBe(false);
+    expect(existsSync(paths(root).world.atlas.nodeFile("n-cover"))).toBe(false);
+  });
+
+  it("restoreAtlasPage: approve 回调内并发修改归档页 → CONFLICT 拒绝, 无 restore commit", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n-cover", { level: "cover" }));
+    writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
+    writeAtlasPage(root, withImage(page("pg1", { node_ref: "n-city" }), root, "pg1"));
+    await adoptAtlasPage(root, "pg1", {}, allowAll);
+    await archiveAtlasPage(root, "pg1");
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveTampers = async () => {
+      const file = paths(root).world.atlas.pageFile("pg1");
+      const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      const base = { ...(data as unknown as AtlasPage), prompt: "归档后并发修改" };
+      const next = { ...base, content_hash: computeAtlasPageContentHash(base) };
+      writeFileSync(file, serializeFrontmatter(next as unknown as Record<string, unknown>, body), "utf8");
+      gitAdd(root);
+      gitCommit(root, "concurrent tamper archived");
+      return "allowed-once" as const;
+    };
+    await expect(
+      restoreAtlasPage(root, "pg1", approveTampers, { expectedContentHash: "h-pg1" }),
+    ).rejects.toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1); // 仅并发编辑的 commit
+    // 依旧 archived(未恢复)。
+    const tree = readAtlasTree(root);
+    expect(tree.pages.find((p) => p.id === "pg1")?.review_status).toBe("deprecated");
+  });
+
+  it("adoptAtlasPage: 未传 expectedContentHash, 回调内改候选并 commit → 审批快照 CAS 仍 CONFLICT", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, withImage(page("pg1"), root, "pg1"));
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveTampers = async () => {
+      const file = paths(root).world.atlas.pendingPageFile("pg1");
+      const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      const base = { ...(data as unknown as AtlasPage), prompt: "并发修改" };
+      const next = { ...base, content_hash: computeAtlasPageContentHash(base) };
+      writeFileSync(file, serializeFrontmatter(next as unknown as Record<string, unknown>, body), "utf8");
+      gitAdd(root);
+      gitCommit(root, "concurrent tamper");
+      return "allowed-once" as const;
+    };
+    // 调用者未传 expected: 旧实现 fail-open 会采用「新但未审批」内容; 现在强制
+    // 审批前 pre.page.content_hash 为 CAS 基线 → CONFLICT。
+    await expect(adoptAtlasPage(root, "pg1", {}, approveTampers)).rejects.toThrowError(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1); // 仅并发编辑的 commit
+    expect(existsSync(paths(root).world.atlas.pageFile("pg1"))).toBe(false);
+    expect(existsSync(paths(root).world.atlas.pendingPageFile("pg1"))).toBe(true);
+  });
+
+  it("restoreAtlasPage: 未传 expectedContentHash, 回调内改归档页并 commit → 审批快照 CAS 仍 CONFLICT", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n-cover", { level: "cover" }));
+    writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
+    writeAtlasPage(root, withImage(page("pg1", { node_ref: "n-city" }), root, "pg1"));
+    await adoptAtlasPage(root, "pg1", {}, allowAll);
+    await archiveAtlasPage(root, "pg1");
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveTampers = async () => {
+      const file = paths(root).world.atlas.pageFile("pg1");
+      const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      const base = { ...(data as unknown as AtlasPage), prompt: "归档后并发修改" };
+      const next = { ...base, content_hash: computeAtlasPageContentHash(base) };
+      writeFileSync(file, serializeFrontmatter(next as unknown as Record<string, unknown>, body), "utf8");
+      gitAdd(root);
+      gitCommit(root, "concurrent tamper archived");
+      return "allowed-once" as const;
+    };
+    await expect(restoreAtlasPage(root, "pg1", approveTampers)).rejects.toThrowError(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1);
+    const tree = readAtlasTree(root);
+    expect(tree.pages.find((p) => p.id === "pg1")?.review_status).toBe("deprecated");
+  });
+
+  it("adoptAtlasPlaceholder: 回调内改候选节点内容并 commit → 祖先链快照失配 CONFLICT, 不采用", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n-cover", { level: "cover" }));
+    writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveTampers = async () => {
+      const file = paths(root).world.atlas.pendingNodeFile("n-city");
+      const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      const next = { ...data, title: "并发改题" };
+      writeFileSync(file, serializeFrontmatter(next as Record<string, unknown>, body), "utf8");
+      gitAdd(root);
+      gitCommit(root, "concurrent node tamper");
+      return "allowed-once" as const;
+    };
+    // 节点无 page hash: 以审批前整条链原始字节指纹为基线。
+    await expect(adoptAtlasPlaceholder(root, "n-city", approveTampers)).rejects.toThrowError(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1); // 仅并发编辑的 commit
+    expect(existsSync(paths(root).world.atlas.nodeFile("n-city"))).toBe(false);
+    expect(existsSync(paths(root).world.atlas.nodeFile("n-cover"))).toBe(false);
+  });
+
+  it("adoptAtlasPage: 回调内改祖先父引用(接另一真实节点)并 commit → 祖先链快照失配 CONFLICT", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n-cover", { level: "cover" }));
+    writeAtlasNode(root, node("n-other", { level: "region", parent_ref: "n-cover" }));
+    writeAtlasNode(root, node("n-city", { level: "city", parent_ref: "n-cover" }));
+    writeAtlasPage(root, withImage(page("pg1", { node_ref: "n-city" }), root, "pg1"));
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const approveTampers = async () => {
+      const file = paths(root).world.atlas.pendingNodeFile("n-city");
+      const { data, body } = parseFrontmatter(readFileSync(file, "utf8"));
+      const next = { ...data, parent_ref: "n-other" }; // 链结构改变(仍是合法链)。
+      writeFileSync(file, serializeFrontmatter(next as Record<string, unknown>, body), "utf8");
+      gitAdd(root);
+      gitCommit(root, "concurrent parent swap");
+      return "allowed-once" as const;
+    };
+    await expect(adoptAtlasPage(root, "pg1", {}, approveTampers)).rejects.toThrowError(
+      expect.objectContaining({ code: "CONFLICT" }),
+    );
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(after - before).toBe(1);
+    expect(existsSync(paths(root).world.atlas.pageFile("pg1"))).toBe(false);
+    expect(existsSync(paths(root).world.atlas.nodeFile("n-city"))).toBe(false);
   });
 });
 
@@ -350,7 +639,7 @@ describe("importAtlasImage 本机导入(附录 A.3; N29)", () => {
     expect(r4.page.image?.file).toMatch(/images\/pg-up-[^/]+\/v1\.png/);
   });
 
-  it("JPEG magic 探测", () => {
+  it("JPEG magic 探测", async () => {
     const root = makeRoot();
     writeAtlasNode(root, node("n1"));
     const src = writeTmpImage(root, "src.jpg", jpgBytes(320, 240));
@@ -392,14 +681,138 @@ describe("annotation CRUD(spec §2.2; 计划 Phase 4)", () => {
     expect(tree.pendingPages.find((p) => p.id === "pg1")!.annotations.length).toBe(0);
   });
 
-  it("label 空/坐标越界 拒; rejected 页不可标注", () => {
+  it("label 空/坐标越界 拒; rejected 页不可标注", async () => {
     const root = makeRoot();
     writeAtlasNode(root, node("n1"));
     writeAtlasPage(root, page("pg1"));
     expect(() => addAtlasAnnotation(root, "pg1", { label: " ", position_x: 0, position_y: 0 })).toThrow(/label/);
     expect(() => addAtlasAnnotation(root, "pg1", { label: "x", position_x: 1.2, position_y: 0 })).toThrow(/0–1/);
     writeAtlasPage(root, withImage(page("pg2"), root, "pg2"));
-    rejectAtlasPage(root, "pg2");
+    await rejectAtlasPage(root, "pg2");
     expect(() => addAtlasAnnotation(root, "pg2", { label: "x", position_x: 0, position_y: 0 })).toThrow(/只读/);
+  });
+
+  it("标注写只 stage 本页文件: 完整精确相对 POSIX pathspec, 不 -A 卷入无关改动(ADR-0021 §6)", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1"));
+    // 无关改动: 未跟踪杂散文件 + 已跟踪节点文件的手改(皆不提交)。
+    writeFileSync(join(root, "stray.txt"), "stray\n", "utf8");
+    const nodeFile = paths(root).world.atlas.pendingNodeFile("n1");
+    writeFileSync(nodeFile, readFileSync(nodeFile, "utf8") + "<!-- 作者手改 -->\n", "utf8");
+
+    // N35 CAS 队列通道保留: 错误基线 → CONFLICT, 零 commit。
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(() =>
+      applyAtlasAnnotationOps(root, "pg1", [{ op: "add", label: "x", position_x: 0, position_y: 0 }], {
+        expectedContentHash: "wrong",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    const afterCas = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    expect(afterCas - before).toBe(0);
+
+    const lastCommitFiles = (r: string) =>
+      execFileSync("git", ["show", "--name-only", "--format=", "HEAD"], { cwd: r, encoding: "utf8" })
+        .split(/\r?\n/)
+        .filter((l) => l.trim().length > 0);
+    const dirty = () =>
+      execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" })
+        .split(/\r?\n/)
+        .filter((l) => l.trim().length > 0)
+        .sort();
+
+    const id = addAtlasAnnotation(root, "pg1", { label: "城门", position_x: 0.5, position_y: 0.5 });
+    // 最近 commit 只含本页文件(完整精确相对 POSIX 路径, 非目录前缀/非 ./ 开头)。
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pending/pages/pg1.md"]);
+    expect(dirty()).toEqual([" M world/atlas/pending/nodes/n1.md", "?? stray.txt"]); // 无关改动未被卷入
+
+    // 更新/删除/队列批量同样只 stage 本页文件(全生命周期)。
+    updateAtlasAnnotation(root, "pg1", id, { label: "正门" });
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pending/pages/pg1.md"]);
+    // 批量 ops 必须携带 expectedContentHash CAS(N35): 取当前页 hash 为基线。
+    const pgHash = readAtlasTree(root).pendingPages.find((p) => p.id === "pg1")!.content_hash;
+    expect(applyAtlasAnnotationOps(root, "pg1", [{ op: "update", id, label: "西门" }], { expectedContentHash: pgHash }).applied).toBe(1);
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pending/pages/pg1.md"]);
+    deleteAtlasAnnotation(root, "pg1", id);
+    expect(lastCommitFiles(root)).toEqual(["world/atlas/pending/pages/pg1.md"]);
+    expect(dirty()).toEqual([" M world/atlas/pending/nodes/n1.md", "?? stray.txt"]); // 无关改动始终原样未提交
+  });
+
+  it("applyAtlasAnnotationOps 缺 expectedContentHash → VALIDATION_FAILED 零写(N35; queue 载荷同样必填)", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1"));
+    const count = () => Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    const before = count();
+    expect(() =>
+      applyAtlasAnnotationOps(root, "pg1", [{ op: "add", label: "x", position_x: 0, position_y: 0 }]),
+    ).toThrowError(expect.objectContaining({ code: "VALIDATION_FAILED", message: expect.stringMatching(/CAS/) }));
+    expect(count()).toBe(before); // 零 commit
+    expect(readAtlasTree(root).pendingPages.find((p) => p.id === "pg1")!.annotations.length).toBe(0); // 零残留
+    // queue/nohash 拒绝在 dsh 层(service.applyAtlasAnnotationQueue)覆盖; 此处锁定 world 层
+    // CAS 缺失语义: 即使 ops 合法, 缺 hash 也绝不动页面(ADR-0021 expected-state 基线前置)。
+  });
+
+  it("严格 discriminated union: 未知 op/未知字段/缺必填字段拒绝(绝不把拼写错误当 delete)", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1"));
+    const id = addAtlasAnnotation(root, "pg1", { label: "城门", position_x: 0.5, position_y: 0.5 });
+    const base = readAtlasTree(root).pendingPages.find((p) => p.id === "pg1")!.content_hash;
+    const rejectWith = (ops: unknown[]) => {
+      expect(() =>
+        applyAtlasAnnotationOps(root, "pg1", ops as never, { expectedContentHash: base }),
+      ).toThrowError(expect.objectContaining({ code: "VALIDATION_FAILED" }));
+    };
+    // 拼写错误 op 值绝不触发 delete: 标注必须仍在(先验后效即证明不是 delete 分支)。
+    rejectWith([{ op: "delet", id }]);
+    rejectWith([{ op: "delet" }]);
+    rejectWith([{ op: "delete" }]);                    // delete 缺 id
+    rejectWith([{ op: "delete", id: "" }]);            // delete id 空
+    rejectWith([{ op: "add", label: "x" }]);           // add 缺坐标
+    rejectWith([{ op: "add", position_x: 0, position_y: 0 }]); // add 缺 label
+    rejectWith([{ op: "add", label: "x", position_x: "0.5", position_y: 0 }]); // 坐标类型错
+    rejectWith([{ op: "update", id, label: "" }]);     // update label 空
+    rejectWith([{ op: "update", label: "y" }]);        // update 缺 id
+    rejectWith([{ op: "add", label: "x", position_x: 0, position_y: 0, foo: 1 }]); // 未知字段
+    rejectWith([{ op: "delete", id, label: "x" }]);    // delete 只允许 op/id
+    // 全部注入失败 → 页面零残留、零变化(标注仍在, hash 不变, 零 commit)。
+    const pg = readAtlasTree(root).pendingPages.find((p) => p.id === "pg1")!;
+    expect(pg.annotations.map((a) => a.id)).toEqual([id]);
+    expect(pg.content_hash).toBe(base);
+  });
+
+  it("正文与未知 frontmatter 逐字/语义保留; 只改 annotations + content_hash(N35)", async () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1"));
+    // 手工改写页面: 追加未知 frontmatter 字段 + 非空正文(逐字保留目标; body 无尾换行)。
+    const file = paths(root).world.atlas.pendingPageFile("pg1");
+    const { data } = parseFrontmatter(readFileSync(file, "utf8"));
+    writeFileSync(
+      file,
+      serializeFrontmatter(
+        { ...data, custom_note: "作者自定义字段", nested: { a: [1, 2], b: "中文" }, tags: ["地图", "城"] },
+        "# 临水城\n\n这是正文第一段。\n\n- 列表项\n\n末尾无换行",
+      ),
+      "utf8",
+    );
+    const base = readAtlasTree(root).pendingPages.find((p) => p.id === "pg1")!.content_hash;
+    const id = addAtlasAnnotation(root, "pg1", { label: "城门", position_x: 0.5, position_y: 0.5 });
+    const after = parseFrontmatter(readFileSync(file, "utf8"));
+    // 正文逐字保留(含无尾换行); 未知 frontmatter 语义保留。
+    expect(after.body).toBe("# 临水城\n\n这是正文第一段。\n\n- 列表项\n\n末尾无换行");
+    expect(after.data.custom_note).toBe("作者自定义字段");
+    expect(after.data.nested).toEqual({ a: [1, 2], b: "中文" });
+    expect(after.data.tags).toEqual(["地图", "城"]);
+    expect((after.data.annotations as unknown[]).map((a) => (a as { label: string }).label)).toEqual(["城门"]);
+    expect(String(after.data.content_hash)).not.toBe(base);
+    // 更新后再次验证: 未知字段/正文全生命周期保留。
+    updateAtlasAnnotation(root, "pg1", id, { label: "正门" });
+    const after2 = parseFrontmatter(readFileSync(file, "utf8"));
+    expect(after2.body).toBe(after.body);
+    expect(after2.data.custom_note).toBe("作者自定义字段");
+    expect(after2.data.nested).toEqual({ a: [1, 2], b: "中文" });
+    expect((after2.data.annotations as unknown[]).map((a) => (a as { label: string }).label)).toEqual(["正门"]);
   });
 });

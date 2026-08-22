@@ -206,6 +206,10 @@ export interface ExtractSpatialFactsOptions {
   startBatch?: number;
   /** 指纹复用回避的 run id(orchestrator 的本轮 planning run)。 */
   excludeRunId?: string;
+  /** durable driver 每个 chunk 自成 batch 时禁用跨 run 整体复用。 */
+  disableReuse?: boolean;
+  /** provider/shape 失败直接抛给 run engine → provider_outcome_unknown，不静默吞错。 */
+  failClosed?: boolean;
 }
 
 /**
@@ -227,7 +231,7 @@ export async function extractSpatialFacts(
     };
   }
 
-  const reused = tryReuseEvidence(root, ctx, fingerprint, opts?.excludeRunId);
+  const reused = opts?.disableReuse === true ? null : tryReuseEvidence(root, ctx, fingerprint, opts?.excludeRunId);
   if (reused) return reused;
 
   const batches: AtlasContextPacket[][] = [];
@@ -258,17 +262,20 @@ export async function extractSpatialFacts(
     let step;
     try {
       step = await runStep(provider, { specRef: "map_spatial_facts", input });
-    } catch {
+    } catch (err) {
+      if (opts?.failClosed === true) throw err;
       step = null;
     }
     if (step) journals.push({ specRef: "map_spatial_facts", batch: bi, journal: step.journal, usage: step.usage, ok: step.ok });
     if (!step || !step.ok || typeof step.result !== "object" || step.result === null) {
-      failedBatches += 1; // 批失败只降级, 继续下一批(计划 Phase 2 降级)。
+      if (opts?.failClosed === true) throw new Error(`map_spatial_facts batch ${bi} provider/结果失败`);
+      failedBatches += 1; // legacy 路径批失败只降级, durable driver 使用 failClosed。
       if (nextCheckpoint === null) nextCheckpoint = bi; // 续跑游标 = 首个失败批号。
       continue;
     }
     const rawLocations = (step.result as { locations?: unknown }).locations;
     if (!Array.isArray(rawLocations)) {
+      if (opts?.failClosed === true) throw new Error(`map_spatial_facts batch ${bi} 缺 locations 数组`);
       failedBatches += 1;
       if (nextCheckpoint === null) nextCheckpoint = bi; // 续跑游标 = 首个失败批号。
       continue;

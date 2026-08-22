@@ -2,10 +2,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { estimateTokens, listSpecRefs, loadSpec, registerSpec } from "../src/index";
-import type { ValidatorSchema } from "../src/index";
+import type { Provider, ValidatorSchema } from "../src/index";
 import { MockProvider } from "../src/index";
 import { resolvePolicy } from "../src/index";
 import { runStep } from "../src/index";
@@ -172,6 +172,40 @@ describe("runStep(主流程, 设计文档 §12 契约)", () => {
     expect(r.journal).toHaveLength(1);
   });
 
+  it("AbortError 终态优先于 adapter retryable=true，始终零重试(审查项 6)", async () => {
+    let calls = 0;
+    const provider: Provider = {
+      async complete() {
+        calls += 1;
+        const err = new Error("调用已被取消(aborted)");
+        err.name = "AbortError";
+        (err as Error & { retryable: boolean }).retryable = true; // 恶意/错误 adapter 元数据也不得覆盖终态
+        throw err;
+      },
+    };
+    const r = await runStep(provider, { specRef: "entity_extraction", input: "x" });
+    expect(r.ok).toBe(false);
+    expect(r.error?.kind).toBe("provider_fatal"); // 取消 = 不可重试的 provider 失败
+    expect(calls).toBe(1); // 零重试(即使 message 含 "abort", 也不走 retryable 正则)
+    expect(r.journal).toHaveLength(1);
+  });
+
+  it("retryable provider 错误耗尽尝试 → provider_retryable(非 schema_violation), 保留最后 message", async () => {
+    const provider = new MockProvider({
+      retryable: true,
+      responses: [
+        { throwError: new Error("network down") },
+        { throwError: new Error("network down") },
+      ],
+    });
+    const r = await runStep(provider, { specRef: "entity_extraction", input: "x" });
+    expect(r.ok).toBe(false);
+    expect(r.error?.kind).toBe("provider_retryable");
+    expect(r.error?.message).toBe("network down");
+    expect(r.journal).toHaveLength(2);
+    expect(r.journal.every((j) => j.errorKind === "provider_retryable")).toBe(true);
+  });
+
   it("预算超限 → budget_exceeded", async () => {
     const provider = new MockProvider({ responses: [] });
     const r = await runStep(provider, {
@@ -181,6 +215,52 @@ describe("runStep(主流程, 设计文档 §12 契约)", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.error?.kind).toBe("budget_exceeded");
+  });
+});
+
+describe("runStep wall-clock 超时兜底(确定性超时契约)", () => {
+  it("provider 永不 settle 且忽略 signal → 短 timeout 下按时返回 timeout(真实时钟)", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const hanging: Provider = {
+      complete: (req) => {
+        seenSignal = req.signal;
+        return new Promise(() => {}); // 永不 settle, 完全忽略 signal
+      },
+    };
+    const t0 = Date.now();
+    const r = await runStep(hanging, {
+      specRef: "entity_extraction",
+      input: "x",
+      overrides: { timeoutMs: 50 },
+    });
+    const elapsed = Date.now() - t0;
+    expect(r.ok).toBe(false);
+    expect(r.error?.kind).toBe("timeout");
+    expect(r.journal[0].errorKind).toBe("timeout");
+    expect(seenSignal?.aborted).toBe(true); // 超时同时 abort controller
+    expect(elapsed).toBeGreaterThanOrEqual(40); // 确实经过了超时窗口
+    expect(elapsed).toBeLessThan(2000); // 合理时间内返回, 而非挂死
+  });
+
+  it("快速 provider 不被误判, 且超时 timer 无残留(fake timers)", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = new MockProvider({
+        responses: [{ text: JSON.stringify({ entities: [] }) }],
+      });
+      const p = runStep(provider, {
+        specRef: "entity_extraction",
+        input: "x",
+        overrides: { timeoutMs: 50 },
+      });
+      // 不推进 fake timers: 若 runStep 依赖超时 timer 才返回, 此 await 会挂死
+      const r = await p;
+      expect(r.ok).toBe(true);
+      expect(r.error).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0); // 超时 timer 已随竞速结束清理
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -5,19 +5,100 @@ on:
   pull_request:
 
 jobs:
-  test:
+  default-profile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install default profile without optional dependencies
+        run: npm ci --omit=optional
+      - name: Restore only CI toolchain native bindings
+        # Rollup/Rolldown/Lightning CSS publish platform bindings as optionalDependencies.
+        # They are build/test tools, not the optional BGE runtime profile under test. Exact
+        # versions already exist in package-lock.json, which remains authoritative here.
+        run: |
+          npm install --no-save --omit=optional \
+            @rollup/rollup-linux-x64-gnu@4.62.4 \
+            @rolldown/binding-linux-x64-gnu@1.2.4 \
+            lightningcss-linux-x64-gnu@1.33.0
+      - name: Enforce omitted optional BGE workspace adapter
+        run: |
+          rm -f node_modules/@novelcraft/rag-bge
+          test ! -e node_modules/@novelcraft/rag-bge
+          test ! -L node_modules/@novelcraft/rag-bge
+      - name: Assert optional BGE runtime chain is absent
+        run: |
+          node - <<'NODE'
+          for (const name of ['@huggingface/transformers', 'onnxruntime-node', 'onnxruntime-web', 'sharp']) {
+            try { require.resolve(name); console.error(`unexpected optional package: ${name}`); process.exitCode = 1 }
+            catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error }
+          }
+          NODE
+      - name: Build default packages (topological order, excludes BGE adapter)
+        run: |
+          for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
+            npm run build -w @novelcraft/$p
+          done
+      - name: Verify physically omitted BGE adapter cannot load
+        run: |
+          node --input-type=module - <<'NODE'
+          try {
+            await import('@novelcraft/rag-bge')
+            throw new Error('BGE adapter unexpectedly loadable in default profile')
+          } catch (error) {
+            if (error?.message === 'BGE adapter unexpectedly loadable in default profile') throw error
+            if (error?.code !== 'ERR_MODULE_NOT_FOUND' && error?.code !== 'MODULE_NOT_FOUND') throw error
+          }
+          NODE
+      - name: Check workspace dependency hygiene
+        run: npm run check:deps
+      - name: Check source distribution profile
+        run: npm run check:distribution
+      - name: Check Git writer hygiene
+        run: npm run check:git-writers
+      - name: Test default workspaces (excludes BGE capability tests)
+        run: |
+          for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
+            npm test -w @novelcraft/$p
+          done
+      - name: Typecheck default workspaces (excludes BGE adapter)
+        run: |
+          for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
+            npm run typecheck -w @novelcraft/$p
+          done
+      - name: Self-test audit gate fail-closed semantics
+        run: npm run check:audit-gate
+      - name: Enforce default audit baseline
+        run: node scripts/check-audit-baseline.mjs --profile=default
+
+  bge-profile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.x
           cache: npm
-      - run: npm ci
-      - name: Build packages (topological order)
+      - name: Install explicit BGE profile
+        run: npm ci --include=optional
+      - name: Validate real Transformers module seam (no model download)
         run: |
-          for p in vault trace store llm-step rag memory context assistant outline world writing imports dsh client; do
-            npm run build -w @novelcraft/$p
-          done
-      - run: npm test
-      - run: npm run typecheck
+          node --input-type=module -e "const m = await import('@huggingface/transformers'); if (typeof m.pipeline !== 'function' || !m.env) throw new Error('invalid Transformers runtime seam')"
+      - name: Build RAG packages
+        run: |
+          npm run build -w @novelcraft/vault
+          npm run build -w @novelcraft/store
+          npm run build -w @novelcraft/llm-step
+          npm run build -w @novelcraft/rag
+          npm run build -w @novelcraft/rag-bge
+      - name: Test explicit BGE profile
+        run: npm test -w @novelcraft/rag -w @novelcraft/rag-bge
+      - name: Enforce registered BGE audit baseline
+        run: node scripts/check-audit-baseline.mjs --profile=bge

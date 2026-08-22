@@ -164,6 +164,13 @@ export function rebuildIndex(root: string): VaultIndex {
 
   scan(p.structure.dir, (rel, abs) => {
     if (!rel.endsWith('.md')) return;
+    // 白名单: 仅 structure/outline.md 与 threads/arcs/foreshadowing/reveal 目录下 md。
+    // 散落/未知 md(如 notes.md、outline-extra.md)一律跳过, 不整体抛错也不误判。
+    const isOutline = rel === 'outline.md';
+    const isKnownKindDir = ['threads/', 'arcs/', 'foreshadowing/', 'reveal/'].some((prefix) =>
+      rel.startsWith(prefix),
+    );
+    if (!isOutline && !isKnownKindDir) return;
     const { data } = parseFrontmatter(readText(abs));
     const kind = assetKindFromPath(`structure/${rel}`);
     const slug = slugFromFilename(rel);
@@ -225,3 +232,26 @@ export * from './dedup.js';
 export * from './health.js';
 export * from './story-map.js';
 export * from './dossier.js';
+export * from './tx-write.js';
+
+// ADR-0021/N32 public transaction seam. Business and host integrations consume
+// this barrel; lock/intent/Git plumbing remain implementation-private.
+export * from './transaction/recovery.js';
+export type {
+  TransactionRequest,
+  TransactionOptions,
+  TransactionResult,
+  TargetSpec,
+  StatePlanSource,
+  GatePhase,
+  TxErrorCode,
+} from './transaction/execute.js';
+export { probeTxCommitForTargets, readCommittedFile } from './transaction/git-transaction.js';
+export {
+  GATE_PHASES,
+  EMPTY_SHA,
+  runTransactionProcess,
+  recoverTransactionProcess,
+} from './transaction/execute.js';
+// per-vault 跨进程锁(§3): 供宿主/编排持锁(如锁测试 harness 的 lock-hold/attempt 模式)。
+export { acquireVaultWriteLock, type VaultLock, type VaultWriteLockOptions } from './transaction/lock.js';

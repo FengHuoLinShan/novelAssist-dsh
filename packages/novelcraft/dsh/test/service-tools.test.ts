@@ -8,6 +8,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
 import { NovelCraftService } from '../src/index.js';
+import { registerNovelcraftTools } from '../src/tools.js';
 import { makeContext, type HarnessServices } from './helpers.js';
 
 const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
@@ -82,8 +83,8 @@ describe('NovelCraftService 端到端', () => {
   it('服务装配: 全部适配器暴露在 ctx.novelcraft', async () => {
     const env = await setup();
     expect(env.service.config.llm).toEqual({ provider: 'fake', model: 'fake-model' });
-    expect(env.service.facades.store).toBeDefined();
-    expect(env.service.facades.assistant).toBeDefined();
+    expect(Object.keys(env.service.capabilities).sort()).toEqual(['adoptGuarded', 'propose', 'read']);
+    expect('facades' in env.service).toBe(false);
     expect(env.tools.map((t) => t.name).sort()).toEqual([
       'novelcraft_deep_import',
       'novelcraft_generate_next_chapter',
@@ -139,6 +140,24 @@ describe('NovelCraftService 端到端', () => {
     );
     expect(out).toMatchObject({ ok: true, input_tokens: 2, error: '' });
     expect((out as { text: string }).text).toContain('"findings":[]');
+    env.cleanup();
+  });
+
+  it('工具 novelcraft_llm_step: exec.signal 捕获并贯通(已 abort → provider 同步收到 aborted signal)', async () => {
+    const env = await setup();
+    env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
+    const controller = new AbortController();
+    controller.abort();
+    const t = tool(env, 'novelcraft_llm_step');
+    const out = await t.execute(
+      { spec: 'semantic_review', input: '正文' },
+      { ...env.exec, name: 'novelcraft_llm_step', signal: controller.signal },
+    );
+    // exec.signal 已 abort → runStep 层 withAbortSignal 合并 controller 同步 abort
+    // → DshProvider 请求(adapter.requests[0])携带的 signal 变 aborted(工具取消贯通)。
+    expect(env.h.adapter.requests[0]?.signal?.aborted).toBe(true);
+    // 已 abort 必须 fail-closed；请求仍携带 aborted signal 供 provider/adapter 观察。
+    expect(out).toMatchObject({ ok: false });
     env.cleanup();
   });
 
@@ -218,14 +237,38 @@ describe('NovelCraftService 端到端', () => {
     });
     const service = h.ctx.novelcraft;
     const binding = service.vaults.ensureVault('测试书');
+    await service.vaults.bindSession('s1', binding);
+    const pending = path.join(binding.root, 'world', 'pending', 'pend_red.md');
+    writeFileSync(pending, serializeFrontmatter(
+      { id: 'pend_red', kind: 'character', name: '红衣女子', status: 'candidate' },
+      '候选正文',
+    ), 'utf8');
+    gitAdd(binding.root, [pending]);
+    gitCommit(binding.root, 'fixture: rejected adopt candidate');
     const t = tools.find((x) => x.name === 'novelcraft_store_adopt');
     if (!t) throw new Error('missing tool');
     const out = (await t.execute(
-      { root: binding.root, kind: 'object', ref: '不存在' },
+      { root: binding.root, kind: 'object', ref: 'pend_red' },
       { callId: 'c1', name: 'novelcraft_store_adopt', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
     )) as { ok: boolean; message: string };
     expect(out.ok).toBe(false);
     expect(out.message).toContain('未获批准');
     rmSync(vaultsDir, { recursive: true, force: true });
+  });
+
+  it('工具注册中途失败会回滚此前注册项，不遗留 HMR duplicate', async () => {
+    const h = await makeContext();
+    const disposed: string[] = [];
+    let calls = 0;
+    h.ctx.provide('tools', {
+      register(def: ToolDefinition) {
+        calls += 1;
+        if (calls === 2) throw new Error('duplicate tool');
+        return () => { disposed.push(def.name); };
+      },
+    });
+    expect(() => registerNovelcraftTools(h.ctx, {} as NovelCraftService)).toThrow(/duplicate tool/);
+    expect(disposed).toHaveLength(1);
+    await h.dispose();
   });
 });

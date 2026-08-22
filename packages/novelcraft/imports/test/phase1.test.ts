@@ -1,5 +1,6 @@
 // imports Phase 1 行为契约(PLAN.md / store-rules / imports.md)
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +18,9 @@ function makeRoot() {
   initVault(root, { title: "测试书", language: "zh" });
   ingestChapter(root, { chapterIndex: 1, text: "第一章正文。", source: "paste" });
   ingestChapter(root, { chapterIndex: 2, text: "第二章正文。", source: "paste" });
+  // R17: commitScenes 写前要求范围外干净工作区 → 夹具先提交初始状态。
+  gitAdd(root);
+  gitCommit(root, "fixture init");
   return root;
 }
 afterEach(() => {
@@ -168,6 +172,71 @@ describe("commitScenes(幂等/冲突/归一)", () => {
     }
     expect(err).toMatchObject({ code: "VALIDATION_FAILED" }); // N23 fail-closed: 校验失败即抛 StoreError
     expect(existsSync(join(root, "scenes", "s001.md"))).toBe(false); // 不产生文件
+  });
+  it("整批先校验后写: 后项校验失败 → 前项(合法)也不落盘(整批原子)", () => {
+    const root = makeRoot();
+    const good = candidate(1, "A1");
+    const bad = { ...candidate(2, "A2"), payload: { ...candidate(2, "A2").payload, title: 42 } } as unknown as SceneCandidate;
+    let err: unknown = null;
+    try {
+      commitScenes(root, [good, bad], { workflowId: "w1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(existsSync(join(root, "scenes", "s001.md"))).toBe(false); // 合法项也不写
+    expect(existsSync(join(root, "scenes", "s002.md"))).toBe(false);
+  });
+  it("scene id 按现存合法 max(scene_index, sNNN)+1, 不复用空洞(已证实覆盖修复)", () => {
+    const root = makeRoot();
+    // 现存 s001(idx1)、s003(idx3)(空洞 s002): existing.length+1=3 会复用 s003 覆盖,
+    // 修复后必须取 max=3 → 下一个 s004。
+    writeFileSync(join(root, "scenes", "s001.md"), "---\nid: s001\nstatus: draft\nscene_index: 1\ntitle: 旧1\n---\n");
+    writeFileSync(join(root, "scenes", "s003.md"), "---\nid: s003\nstatus: draft\nscene_index: 3\ntitle: 旧3\n---\n");
+    gitAdd(root); gitCommit(root, "existing scenes");
+    const before = readFileSync(join(root, "scenes", "s003.md"), "utf8");
+    const r = commitScenes(root, [candidate(1, "A1")], { workflowId: "w1" });
+    expect(r.created).toEqual(["s004"]);
+    expect(readFileSync(join(root, "scenes", "s003.md"), "utf8")).toBe(before); // 旧文件未被覆盖
+  });
+  it("同批重复 provenance(同候选重复入参)→ 只落一份, 其余 skip", () => {
+    const root = makeRoot();
+    const c = candidate(1, "A1");
+    const r = commitScenes(root, [c, c], { workflowId: "w1" });
+    expect(r.created).toHaveLength(1);
+    expect(r.skipped).toHaveLength(1);
+    expect(readdirSync(join(root, "scenes")).filter((f) => f.endsWith(".md"))).toHaveLength(1);
+  });
+  it("同批重复锚点(同章同 start_anchor)→ 只落一份, 后者锚点冲突", () => {
+    const root = makeRoot();
+    const a = candidate(1, "A1");
+    const b = { ...candidate(1, "A1"), candidate_id: "ch1-b" } as SceneCandidate;
+    const r = commitScenes(root, [a, b], { workflowId: "w1" });
+    expect(r.created).toHaveLength(1);
+    expect(r.conflicts).toEqual(["ch1-b(锚点冲突)"]);
+    expect(readdirSync(join(root, "scenes")).filter((f) => f.endsWith(".md"))).toHaveLength(1);
+  });
+  it("写前范围外脏工作区 → DIRTY_WORKSPACE, 零写入零 commit(R17)", () => {
+    const root = makeRoot();
+    writeFileSync(join(root, "untracked-notes.md"), "手改未提交", "utf8"); // 范围外脏改动
+    let err: unknown = null;
+    try {
+      commitScenes(root, [candidate(1, "A1")], { workflowId: "w1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "DIRTY_WORKSPACE" });
+    expect(existsSync(join(root, "scenes", "s001.md"))).toBe(false);
+  });
+  it("gitAdd 只传本批精确相对文件(commit 不含无关路径)", () => {
+    const root = makeRoot();
+    const created = commitScenes(root, [candidate(1, "A1"), candidate(2, "A2")], { workflowId: "w1" }).created;
+    const files = execFileSync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim().split("\n").filter(Boolean);
+    expect(created).toEqual(["s001", "s002"]);
+    expect(files).toEqual(["scenes/s001.md", "scenes/s002.md"]);
   });
 });
 

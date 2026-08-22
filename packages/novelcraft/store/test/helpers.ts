@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initVault } from '@novelcraft/vault';
-import { gitAdd, gitCommit } from '../src/git';
+import { gitAdd, gitCommit, gitHead, gitStatusEntries } from '../src/git';
 import { serializeFrontmatter, parseFrontmatter } from '../src/frontmatter';
 
 export interface VaultFixture {
@@ -22,6 +22,11 @@ export function initRepo(root: string): void {
 
 export function commitAll(root: string, msg = 'fixture'): string {
   gitAdd(root);
+  // N32 bootstrapVaultGitHistory already committed book.yml/.gitignore. Legacy fixtures may
+  // immediately call commitAll with no additional change; keep the existing HEAD deterministically.
+  if (!gitStatusEntries(root).some((entry) => entry.status[0] !== ' ' && entry.status[0] !== '?')) {
+    return gitHead(root);
+  }
   return gitCommit(root, msg);
 }
 

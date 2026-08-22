@@ -62,6 +62,51 @@ export function assertCheckpointAfterPhase(trace: TraceSource, phases: string[])
   }
 }
 
+/** N33: 每个 batch 必须 plan → artifact commit → cursor completed，且不得重复推进。 */
+export function assertBatchPersistenceOrder(trace: TraceSource): void {
+  const events = eventsOf(trace);
+  const planned = events.filter((e) => e.type === "batch_planned");
+  for (const plan of planned) {
+    const artifacts = events.filter((e) => e.type === "batch_artifact" && e.batch_id === plan.batch_id);
+    const cursors = events.filter((e) => e.type === "batch_cursor" && e.batch_id === plan.batch_id);
+    if (artifacts.length !== 1) throw new Error(`trace contract 违反: batch ${plan.batch_id} 必须恰有一个 artifact commit`);
+    if (cursors.length !== 1) throw new Error(`trace contract 违反: batch ${plan.batch_id} 必须恰推进一次 cursor`);
+    if (plan.seq >= artifacts[0].seq || artifacts[0].seq >= cursors[0].seq) {
+      throw new Error(`trace contract 违反: batch ${plan.batch_id} 必须 plan → artifact → cursor`);
+    }
+  }
+  const batchEvents = events.filter(
+    (e): e is Extract<TraceEvent, { type: "batch_artifact" | "batch_cursor" }> =>
+      e.type === "batch_artifact" || e.type === "batch_cursor",
+  );
+  const unplanned = batchEvents.find((event) => !planned.some((plan) => plan.batch_id === event.batch_id));
+  if (unplanned) throw new Error(`trace contract 违反: batch ${unplanned.batch_id} 未先提交 plan`);
+}
+
+/** N33: applied 必须从 applying 转入并携 transaction identity；中断只能回待审批。 */
+export function assertApplyStateMachine(trace: TraceSource): void {
+  const events = eventsOf(trace).filter(
+    (e): e is Extract<TraceEvent, { type: "apply_state" }> => e.type === "apply_state",
+  );
+  const current = new Map<string, string>();
+  for (const event of events) {
+    const observed = current.get(event.apply_id);
+    if (event.from !== undefined && observed !== undefined && event.from !== observed) {
+      throw new Error(`trace contract 违反: apply ${event.apply_id} from=${event.from} 与当前 ${observed} 不符`);
+    }
+    if (event.to === "applying" && event.from !== "waiting_approval") {
+      throw new Error(`trace contract 违反: apply ${event.apply_id} 只能由 waiting_approval 进入 applying`);
+    }
+    if (event.to === "applied" && (event.from !== "applying" || !event.transaction_id)) {
+      throw new Error(`trace contract 违反: apply ${event.apply_id} applied 缺少 applying/transaction identity`);
+    }
+    if (event.to === "waiting_approval" && event.from !== "applying") {
+      throw new Error(`trace contract 违反: apply ${event.apply_id} 非 applying 中断不得回 waiting_approval`);
+    }
+    current.set(event.apply_id, event.to);
+  }
+}
+
 const SHARD_LIMIT_KEY: Record<string, keyof DeepImportPolicy> = {
   "1a": "slicingBatchSize",
   "2a": "phase2BatchSize",

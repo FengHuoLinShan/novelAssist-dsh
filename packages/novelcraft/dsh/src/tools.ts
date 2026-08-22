@@ -1,6 +1,8 @@
 // @novelcraft/dsh · agent 工具注册(ctx.tools seam)。
 // §22.3/§12: 原语工具面同名映射为「文件背书插件工具」; 采用类写操作经
 // ApprovalGate(fail-closed), 读操作直通。工具名统一 novelcraft_ 前缀。
+// 取消贯通: 五个内容手工具(llm_step/deep_import/propose/generate/map_atlas_plan)
+// 把 exec.signal 传 service(service 层 withAbortSignal 与 llm-step timeout 合并)。
 // tools 服务缺失时静默跳过注册(最小 profile/纯进程内测试仍可用服务门面)。
 // defineTool 显式泛型: S=ParameterSchemaSpec, O=ObjectValueSchemaSpec
 // (对象开放是 dsh-tools 的强制要求); 工具内部把 args 收窄到本地接口。
@@ -9,6 +11,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { realpathSync } from 'node:fs';
 import * as assistant from '@novelcraft/assistant';
 import * as store from '@novelcraft/store';
 import type { AdoptableKind } from '@novelcraft/store';
@@ -26,10 +29,19 @@ export function registerNovelcraftTools(ctx: Context, service: NovelCraftService
   if (!registry || typeof registry.register !== 'function') return [];
 
   const disposers: Array<() => void> = [];
-  for (const tool of buildTools(ctx, service)) {
-    disposers.push(registry.register(tool));
+  try {
+    for (const tool of buildTools(ctx, service)) {
+      disposers.push(registry.register(tool));
+    }
+    return disposers;
+  } catch (error) {
+    // Registration is all-or-nothing. If the k-th tool fails, the caller never receives the prior
+    // disposers, so this function must roll them back before rethrowing.
+    for (const dispose of disposers.reverse()) {
+      try { dispose(); } catch { /* preserve the registration failure */ }
+    }
+    throw error;
   }
-  return disposers;
 }
 
 const render = (_args: unknown, value: unknown): ContentBlock[] => [
@@ -41,6 +53,67 @@ function errMessage(err: unknown): string {
   if (err instanceof GateDeniedError) return err.message;
   if (err instanceof store.StoreError) return `store: ${err.message}`;
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * N34 工作区隔离错误(统一 fail-closed 拒绝; 转作者语言 ok:false 消息)。
+ * 由 resolveBoundRoot 抛出: 无 session / 未绑定 / root 与绑定不一致。
+ */
+export class WorkspaceIsolationError extends Error {
+  constructor(reason: string) {
+    super(`工作区隔离失败: ${reason}`);
+    this.name = 'WorkspaceIsolationError';
+  }
+}
+
+/**
+ * 统一工具 root/binding 解析(N34 工作区隔离; 独立审查确认问题修复):
+ * - 所有带 root 或会访问 vault 的 agent 工具都必须经本 helper 从
+ *   `exec.agent.session.id` 解析会话绑定(内存优先, 回查 domain 只读缓存);
+ * - 无 agent session / 未绑定 → 抛 WorkspaceIsolationError(fail-closed),
+ *   零服务调用、零 fs 访问;
+ * - 工具保留 root 参数时: 其 canonical(realpath)必须与绑定 root **完全一致**
+ *   (realpath 逐字节相等), 否则拒绝——绝不信任任意 root、绝不以参数 root 访问
+ *   绑定外的任何目录。指向**别的** vault 的路径别名/symlink 一律拒绝; 指向同一
+ *   canonical vault 的别名(realpath 相等)放行, 但工具始终只用本 helper 返回的
+ *   绑定 root 执行, 与参数原值无关;
+ * - 只读工具同规则隔离(读面同样只从绑定 root 访问)。
+ * @returns 绑定 root(canonical), 供 service 调用与事件钩子(fireRadarHooks/
+ *   fireRagHook)统一使用。
+ */
+async function resolveBoundRoot(
+  service: NovelCraftService,
+  exec: { agent?: unknown },
+  requested?: unknown,
+): Promise<string> {
+  const sessionId = (exec.agent as { session?: { id?: unknown } } | undefined)?.session?.id;
+  if (typeof sessionId !== 'string' || sessionId.length === 0) {
+    throw new WorkspaceIsolationError('无 agent session id, 拒绝访问任意 vault');
+  }
+  const binding = await service.vaults.resolve(sessionId);
+  if (!binding) {
+    throw new WorkspaceIsolationError(`session ${sessionId} 未绑定 vault, 拒绝`);
+  }
+  const boundRoot = binding.root;
+  if (requested !== undefined) {
+    if (typeof requested !== 'string') {
+      throw new WorkspaceIsolationError(`root 参数必须是字符串, got ${typeof requested}`);
+    }
+    let realBound: string;
+    let realRequested: string;
+    try {
+      realBound = realpathSync(boundRoot);
+      realRequested = realpathSync(requested);
+    } catch (err) {
+      throw new WorkspaceIsolationError(`无法解析 root 真实路径: ${(err as Error).message}`);
+    }
+    if (realBound !== realRequested) {
+      throw new WorkspaceIsolationError(
+        `root(${requested}) 与 session 绑定 vault(${boundRoot}) 的 canonical 根不一致, 拒绝跨工作区访问`,
+      );
+    }
+  }
+  return boundRoot;
 }
 
 const ADOPTABLE_KINDS = [
@@ -148,10 +221,6 @@ interface MapAtlasReviewArgs extends RootArgs {
   expected_content_hash?: string;
   note?: string;
 }
-interface MapAtlasAnnotationArgs extends RootArgs {
-  page_ref?: string;
-  ops?: Array<Record<string, unknown>>;
-}
 interface MapAtlasUpdatePromptArgs extends RootArgs {
   page_ref: string;
   prompt: string;
@@ -191,19 +260,18 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       },
       timeoutMs: 300_000,
       async execute(rawArgs, exec) {
-        void exec.signal;
         const args = rawArgs as unknown as LlmStepArgs;
-        // 会话绑定解析 vault 根(D17): 该书预设/llm.yml 经 runStep 注入(N20); 未绑定 → 仅 Config.llm 默认。
-        let root: string | undefined;
-        const sessionId = (exec.agent as Agent | undefined)?.session?.id;
-        if (sessionId) {
-          try {
-            root = (await service.vaults.resolve(sessionId))?.root;
-          } catch {
-            root = undefined;
-          }
+        // N34 工作区隔离: llm_step 会访问绑定 vault 的该书 profile/llm.yml(N20),
+        // 统一经 resolveBoundRoot 从 exec.agent.session.id 解析绑定; 无 session/
+        // 未绑定 → fail-closed, 不退回「仅 Config.llm 默认」的任意 root 访问。
+        let boundRoot: string;
+        try {
+          boundRoot = await resolveBoundRoot(service, exec);
+        } catch (err) {
+          return { ok: false, text: '', input_tokens: 0, output_tokens: 0, error: errMessage(err) };
         }
-        const result = await service.runStep({
+        // exec.signal(工具取消)贯通: runStep 层与 llm-step timeout 合并(withAbortSignal)。
+        const result = await service.capabilities.propose.runStep({
           specRef: args.spec,
           input: args.input,
           overrides: {
@@ -213,7 +281,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
           },
           fixAttempts: args.fix_attempts ?? 1,
-        }, root);
+        }, boundRoot, exec.signal);
         const text = result.ok
           ? result.result && typeof result.result === 'object'
             ? JSON.stringify(result.result)
@@ -251,17 +319,27 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
-        const { root } = rawArgs as unknown as RootArgs;
-        const index = service.refreshIndex(root);
-        return {
-          objects: index.objects.length,
-          aliases: index.aliases.length,
-          relations: index.relations.length,
-          scenes: index.scenes.length,
-          chapters: index.chapters.length,
-          structure: index.structure.length,
-        };
+      async execute(rawArgs, exec) {
+        const { root: requestedRoot } = rawArgs as unknown as RootArgs;
+        try {
+          // N34: 只读工具同样隔离——root 必须与 session 绑定完全一致(canonical)。
+          const root = await resolveBoundRoot(service, exec, requestedRoot);
+          const index = service.capabilities.propose.refreshIndex(root);
+          return {
+            ok: true,
+            objects: index.objects.length,
+            aliases: index.aliases.length,
+            relations: index.relations.length,
+            scenes: index.scenes.length,
+            chapters: index.chapters.length,
+            structure: index.structure.length,
+            message: `派生索引已重建(${index.objects.length} 对象/` +
+              `${index.aliases.length} 别名/` +
+              `${index.relations.length} 关系)`,
+          };
+        } catch (err) {
+          return { ok: false, objects: 0, aliases: 0, relations: 0, scenes: 0, chapters: 0, structure: 0, message: errMessage(err) };
+        }
       },
     }),
 
@@ -296,9 +374,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const args = rawArgs as unknown as AdoptArgs;
         const agent = exec.agent as Agent | undefined;
         try {
-          const result = await service.adoptGuarded(
+          // N34: root 必须与 session 绑定 canonical 完全一致; 后续 service/钩子
+          // 一律用返回的绑定 root(解析在一切服务调用/文件访问之前 → 零影响 B)。
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const result = await service.capabilities.adoptGuarded.storeAdopt(
             agent,
-            args.root,
+            root,
             args.kind as AdoptableKind,
             args.ref,
             {
@@ -310,14 +391,14 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           // 事件触发雷达(§11): adopt 后去重+风险对账; 章候选采用另加写作面。
           fireRadarHooks(
             ctx,
-            args.root,
+            root,
             args.kind === 'chapter_candidate'
               ? [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]
               : EVENT_RADAR_MAP.adopt,
           );
           // 事件触发 RAG 索引(§11): adopt(含章候选分支)后资产/正文变化, 增量同步派生索引;
           // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
-          fireRagHook(ctx, args.root, () => service.ragEmbed(args.root));
+          fireRagHook(ctx, root, () => service.capabilities.propose.ragEmbed(root));
           return {
             ok: true,
             commit: result.commit,
@@ -348,20 +429,28 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as InboxViewArgs;
-        const signals = service.inbox(args.root, args.content_hash);
-        return {
-          signals: signals.map((s) => ({
-            id: s.id,
-            radar: s.radar,
-            severity: s.severity,
-            title: s.title,
-            proposed_action: s.proposed_action,
-            status: s.status,
-            observed_at: s.observed_at,
-          })),
-        };
+        try {
+          // N34: 只读工具同样隔离(绑定 root 校验在一切读取之前 → 零读 B)。
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const signals = service.capabilities.read.inbox(root, args.content_hash);
+          return {
+            ok: true,
+            signals: signals.map((s) => ({
+              id: s.id,
+              radar: s.radar,
+              severity: s.severity,
+              title: s.title,
+              proposed_action: s.proposed_action,
+              status: s.status,
+              observed_at: s.observed_at,
+            })),
+            message: `收件箱 ${signals.length} 条新鲜信号`,
+          };
+        } catch (err) {
+          return { ok: false, signals: [], message: errMessage(err) };
+        }
       },
     }),
 
@@ -393,10 +482,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as InboxActArgs;
         try {
-          const descriptor = assistant.act(args.root, {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const descriptor = assistant.act(root, {
             signalId: args.signal_id,
             action: args.action as assistant.InboxAction,
             ...(args.reason ? { reason: args.reason } : {}),
@@ -417,7 +507,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               : descriptor.kind === 'microflow'
                 ? `已路由微工作流「${descriptor.microflow ?? ''}」: 请按其阶段调用对应工具执行。`
                 : '已记录决定(校准笔记已更新)。';
-          pushSignalsChanged(ctx, { root: args.root });
+          pushSignalsChanged(ctx, { root });
           return {
             ok: true,
             action: descriptor.action,
@@ -457,29 +547,35 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as PushArgs;
-        const signal = assistant.pushSignal(args.root, {
-          radar: args.radar as assistant.RadarKind,
-          severity: args.severity as assistant.Severity,
-          title: args.title,
-          evidence: args.evidence,
-          proposed_action: args.proposed_action,
-          reversibility: args.reversibility,
-          ...(args.expires_when_draft_changes !== undefined
-            ? { expires_when_draft_changes: args.expires_when_draft_changes }
-            : {}),
-        });
-        pushSignalsChanged(ctx, { root: args.root });
-        return { id: signal.id };
+        try {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const signal = assistant.pushSignal(root, {
+            radar: args.radar as assistant.RadarKind,
+            severity: args.severity as assistant.Severity,
+            title: args.title,
+            evidence: args.evidence,
+            proposed_action: args.proposed_action,
+            reversibility: args.reversibility,
+            ...(args.expires_when_draft_changes !== undefined
+              ? { expires_when_draft_changes: args.expires_when_draft_changes }
+              : {}),
+          });
+          pushSignalsChanged(ctx, { root });
+          return { ok: true, id: signal.id, message: `已推送信号 ${signal.id}` };
+        } catch (err) {
+          return { ok: false, id: '', message: errMessage(err) };
+        }
       },
     }),
-    // ---- 7. 深度导入(六阶段, adopt 经审批门; trace 落 .assistant/import-trace.jsonl) ----
+    // ---- 7. 深度导入(范围授权 + adopt/2b 独立审批门; trace 落 .assistant/import-trace.jsonl) ----
     defineTool({
       name: 'novelcraft_deep_import',
       description:
-        '深度导入: 按章节范围顺序跑六阶段(切分/补全/融合/Scene 采用/实体/别名关系/结构)。' +
-        'Scene 采用必经用户审批(fail-closed); 全程 trace 事件落 .assistant/import-trace.jsonl。' +
+        '深度导入: 执行前先请求范围授权(授权将调用 LLM 并产出候选; 拒绝则零副作用, fail-closed); ' +
+        '放行后按章节范围顺序跑六阶段(切分/补全/融合/Scene 采用/实体/别名关系/结构)。' +
+        'Scene 采用与 2b 别名/关系写入分别过独立审批(fail-closed); 全程 trace 事件落 .assistant/import-trace.jsonl。' +
         '多章为长任务, 建议由编排层分批触发; 本工具同步执行并返回摘要。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
@@ -509,15 +605,16 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const args = rawArgs as unknown as DeepImportArgs;
         const agent = exec.agent as Agent | undefined;
         try {
-          const result = await service.deepImport(agent, args.root, {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const result = await service.capabilities.adoptGuarded.deepImport(agent, root, {
             startChapter: args.start_chapter,
             endChapter: args.end_chapter,
-          });
+          }, exec.signal);
           // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
-          fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.deepImport);
+          fireRadarHooks(ctx, root, EVENT_RADAR_MAP.deepImport);
           // 事件触发 RAG 索引(§11): 导入后章节内容变化, 增量同步派生索引;
           // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
-          fireRagHook(ctx, args.root, () => service.ragEmbed(args.root));
+          fireRagHook(ctx, root, () => service.capabilities.propose.ragEmbed(root));
           return {
             ok: true,
             workflow_id: result.workflow_id,
@@ -526,7 +623,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             skipped: result.skipped.length,
             conflicts: result.conflicts.length,
             rejected: result.rejected,
-            trace_file: importTraceFile(args.root),
+            trace_file: importTraceFile(root),
             message: result.rejected
               ? '深度导入完成: Scene 采用未获批准(无提交)。'
               : '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
@@ -561,10 +658,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         render,
       },
       timeoutMs: 300_000,
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as ProposeNextChapterArgs;
         try {
-          const r = await service.proposeNextChapter(args.root, args.chapter);
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.propose.proposeNextChapter(root, args.chapter, exec.signal);
           if (!r.ok || !r.proposal) {
             return { ok: false, next_chapter: 0, proposals: [], message: r.error?.message ?? '提案失败' };
           }
@@ -610,11 +708,24 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
-        const { root } = rawArgs as unknown as RootArgs;
-        const r = service.scanHealth(root);
-        pushSignalsChanged(ctx, { root });
-        return { created: r.created, skipped: r.skipped, resolved: r.resolved, reopened: r.reopened, total: r.total };
+      async execute(rawArgs, exec) {
+        const { root: requestedRoot } = rawArgs as unknown as RootArgs;
+        try {
+          const root = await resolveBoundRoot(service, exec, requestedRoot);
+          const r = service.capabilities.propose.scanHealth(root);
+          pushSignalsChanged(ctx, { root });
+          return {
+            ok: true,
+            created: r.created,
+            skipped: r.skipped,
+            resolved: r.resolved,
+            reopened: r.reopened,
+            total: r.total,
+            message: `结构健康扫描完成(新 ${r.created}/结 ${r.resolved}/复 ${r.reopened})`,
+          };
+        } catch (err) {
+          return { ok: false, created: 0, skipped: 0, resolved: 0, reopened: 0, total: 0, message: errMessage(err) };
+        }
       },
     }),
 
@@ -643,16 +754,17 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         render,
       },
       timeoutMs: 300_000,
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as GenerateNextChapterArgs;
         try {
-          const r = await service.generateNextChapter(args.root, args.chapter, {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.propose.generateNextChapter(root, args.chapter, {
             proposalTitle: args.proposal_title,
             ...(args.premise ? { premise: args.premise } : {}),
-          });
+          }, exec.signal);
           if (!r.ok) return { ok: false, file: '', message: r.error?.message ?? '生成失败' };
           // 事件触发雷达(§11): 新候选入库后写作面对账。
-          fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.generate);
+          fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
           return {
             ok: true,
             file: r.file ?? '',
@@ -693,10 +805,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as IngestFileArgs;
         try {
-          const report = service.ingestTextFile(args.root, {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const report = service.capabilities.propose.ingestTextFile(root, {
             filePath: args.file_path,
             ...(args.start_chapter !== undefined ? { startChapter: args.start_chapter } : {}),
             ...(args.force ? { force: true } : {}),
@@ -705,10 +818,10 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             return { ok: false, total: 0, imported: 0, skipped: 0, conflicts: [], message: report.reason ?? '导入失败' };
           }
           // 事件触发雷达(§11): 摄入对账 + 写作健康。
-          fireRadarHooks(ctx, args.root, EVENT_RADAR_MAP.ingest);
+          fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
           // 事件触发 RAG 索引(§11): 新章落库后增量同步派生索引;
           // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
-          fireRagHook(ctx, args.root, () => service.ragEmbed(args.root));
+          fireRagHook(ctx, root, () => service.capabilities.propose.ragEmbed(root));
           const dup = report.warnings.includes('duplicate_import');
           const conflictNote = (report.conflicts?.length ?? 0) > 0
             ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
@@ -754,14 +867,15 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as RadarSweepArgs;
         try {
-          const r = service.radarSweep(
-            args.root,
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = service.capabilities.propose.radarSweep(
+            root,
             args.radar ? [args.radar as assistant.RadarKind] : undefined,
           );
-          pushSignalsChanged(ctx, { root: args.root });
+          pushSignalsChanged(ctx, { root });
           // 输出摊平为开放对象(dsh-tools 输出根必须 JSON 开放; 逐键构造字面量,
           // 使每条计数对象可赋给 JsonValue 索引签名)。
           const results: Record<string, { created: number; skipped: number; resolved: number; reopened: number; total: number }> = {};
@@ -811,10 +925,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as RagSearchArgs;
         try {
-          const r = await service.ragSearch(args.root, args.query, {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.read.ragSearch(root, args.query, {
             ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
             ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
           });
@@ -866,10 +981,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
-        const { root } = rawArgs as unknown as RootArgs;
+      async execute(rawArgs, exec) {
+        const args = rawArgs as unknown as RootArgs;
         try {
-          const r = await service.ragEmbed(root);
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.propose.ragEmbed(root);
           if (r.message !== undefined) {
             // 后端不可用: 原样返回提示(作者语言), ok=false。
             return { ok: false, embedded: 0, failed: 0, skipped: 0, message: r.message };
@@ -917,16 +1033,17 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         render,
       },
       timeoutMs: 3_600_000,
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as MapAtlasPlanArgs;
         try {
-          const r = await service.planMapAtlas(args.root, {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.propose.planMapAtlas(root, {
             run_kind: args.full_rebuild ? 'initial' : 'update',
             style_note: args.style_note,
             include_working_drafts: args.include_working_drafts,
             include_interiors: args.include_interiors,
             full_rebuild: args.full_rebuild,
-          });
+          }, exec.signal, undefined, exec.agent);
           const ev = (r.run.spatial_evidence ?? {}) as {
             supported?: unknown[]; visual_fill?: unknown[]; conflicts?: unknown[];
             degraded?: boolean; reused?: boolean;
@@ -984,10 +1101,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as MapAtlasViewArgs;
         try {
-          const { tree, run } = service.viewMapAtlas(args.root, args.run_id);
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const { tree, run } = service.capabilities.read.viewMapAtlas(root, args.run_id);
           return {
             ok: true,
             adopted_nodes: tree.nodes.length,
@@ -1034,20 +1152,21 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as MapAtlasUploadArgs;
         try {
+          const root = await resolveBoundRoot(service, exec, args.root);
           let nodeRef = args.node_ref;
           if (!nodeRef) {
             // 附录 A.2: 上传到新位置 → 创建 provisional 候选节点(候选面, 不过审批)。
             if (!args.title || !args.level) {
               throw new store.StoreError('VALIDATION_FAILED', 'node_ref 缺省时 title 与 level 必填');
             }
-            nodeRef = await service.createAtlasUploadNode(args.root, {
+            nodeRef = await service.capabilities.propose.createAtlasUploadNode(root, {
               title: args.title, level: args.level, parent_ref: args.parent_ref,
             });
           }
-          const r = service.importAtlasImage(args.root, args.file_path, { nodeRef });
+          const r = service.capabilities.propose.importAtlasImage(root, args.file_path, { nodeRef });
           return {
             ok: true,
             page_id: r.page.id,
@@ -1068,7 +1187,8 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       description:
         '地图页/节点生命周期: adopt(采用候选页, 需 review_ready+有图) / adopt_placeholder(采用空页占位节点) / ' +
         'reject(驳回 review_ready 候选页) / archive(归档已采用页) / restore(恢复归档页)。' +
-        'adopt/adopt_placeholder/restore 必经审批(fail-closed); conflicts 页需 confirm_conflicts=true。',
+        'adopt/adopt_placeholder/archive/restore 必经审批(fail-closed, allowed-once 只放行一次); ' +
+        'conflicts 页需 confirm_conflicts=true。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         page_ref: { type: 'string', description: '页 id(adopt/reject/archive/restore)' },
@@ -1093,9 +1213,10 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       async execute(rawArgs, exec) {
         const args = rawArgs as unknown as MapAtlasReviewArgs;
         try {
-          const r = await service.reviewMapAtlasGuarded(
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.adoptGuarded.reviewMapAtlas(
             exec.agent as Agent | undefined,
-            args.root,
+            root,
             { pageRef: args.page_ref, nodeRef: args.node_ref },
             args.action as 'adopt' | 'adopt_placeholder' | 'reject' | 'archive' | 'restore',
             { confirmConflicts: args.confirm_conflicts, expectedContentHash: args.expected_content_hash, note: args.note },
@@ -1107,17 +1228,17 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       },
     }),
 
-    // ---- 19. 标注应用(主路径 = 消费 UI 队列; 作者内容编辑不过审批) ----
+    // ---- 19. 标注应用(N35: 唯一受控结构化入口 = 消费 UI 队列; 作者内容编辑不过审批) ----
     defineTool({
       name: 'novelcraft_map_atlas_annotation',
       description:
-        '应用地图页文字标注: 省略 ops 时消费 .assistant/atlas/annotation-queue/ 队列文件(UI 已落盘的精确结构化编辑), ' +
-        'agent 只触发不翻译坐标; ops 仅接受精确结构化数据, 拒绝自然语言坐标描述。' +
-        '校验 label/坐标/目标节点(仅已采用) + 单 commit。标注是作者内容编辑, 不走审批。',
+        '应用地图页文字标注: 只消费 .assistant/atlas/annotation-queue/ 队列文件(UI 已落盘的精确' +
+        '结构化编辑, 固定 schema {page_ref, base_content_hash, ops}, base_content_hash CAS 必填)。' +
+        'agent 只触发消费, 不生成/不翻译坐标, 不接受直接 ops 参数(工具无旁路)。' +
+        '缺失/过期 base_content_hash、非法 op(未知 op/未知字段/缺字段)一律拒绝且零写, 队列文件保留待修。' +
+        '标注是作者内容编辑, 不走审批。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        page_ref: { type: 'string', description: '页 id(ops 模式必填)' },
-        ops: { type: 'array', description: '精确 ops: [{op:add|update|delete, id?, label?, position_x?, position_y?, target_node_ref?}]' },
       },
       output: {
         schema: {
@@ -1132,15 +1253,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
-        const args = rawArgs as unknown as MapAtlasAnnotationArgs;
+      async execute(rawArgs, exec) {
+        const args = rawArgs as unknown as RootArgs;
         try {
-          if (args.ops && args.ops.length > 0) {
-            if (!args.page_ref) throw new store.StoreError('VALIDATION_FAILED', 'ops 模式 page_ref 必填');
-            const r = service.applyAtlasAnnotations(args.root, args.page_ref, args.ops as never);
-            return { ok: true, applied: r.applied, queue_files: 0, message: `已应用 ${r.applied} 条标注(hash ${r.content_hash.slice(0, 12)})` };
-          }
-          const r = service.applyAtlasAnnotationQueue(args.root);
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const r = await service.capabilities.propose.authorEdit.annotations(root);
           return {
             ok: r.failed === 0,
             applied: r.applied,
@@ -1180,10 +1297,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         },
         render,
       },
-      async execute(rawArgs) {
+      async execute(rawArgs, exec) {
         const args = rawArgs as unknown as MapAtlasUpdatePromptArgs;
         try {
-          const page = service.updateAtlasPrompt(args.root, args.page_ref, args.prompt, args.expected_content_hash);
+          const root = await resolveBoundRoot(service, exec, args.root);
+          const page = await service.capabilities.propose.updateAtlasPrompt(root, args.page_ref, args.prompt, args.expected_content_hash);
           return { ok: true, page_id: page.id, content_hash: page.content_hash, message: `已更新页 ${page.id} 的 prompt。` };
         } catch (err) {
           return { ok: false, page_id: args.page_ref, content_hash: '', message: errMessage(err) };

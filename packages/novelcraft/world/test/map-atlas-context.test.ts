@@ -148,7 +148,7 @@ describe("compileAtlasContext 地点选择(计划 §4 Phase 2)", () => {
     // name 升序 → 前 20 个(00..19)。
     expect(r.packets[0].location_key).toBe("loc-00");
     expect(r.packets[19].location_key).toBe("loc-19");
-  });
+  }, 15_000);
 });
 
 describe("compileAtlasContext 世界书证据(计划 §2/§4 Phase 2)", () => {

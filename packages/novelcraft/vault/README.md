@@ -12,7 +12,7 @@ NovelCraft M4(ADR-0016)R1 内核包: 工作区初始化、路径规范、slug、
 | `initVault(rootPath, bookMeta)` | 建 §22.2 目录树骨架 + book.yml + `git init`; 已存在幂等返回 | §22.2 |
 | `resolveVaultRoot(startPath)` | 向上找 book.yml 定位 vault 根; 找不到抛错 | R9 |
 | `paths(root)` | §22.2 全表路径常量 + 拼接函数(含 adjudications #1–#5, N12 目录化) | §22.2 |
-| `guardPath(root, p)` | 防路径穿越(规范化后仍在 root 内, 否则抛错) | R9 |
+| `guardPath(root, p)` | 防路径穿越: lexical 规范化 + realpath 真实位置双层 containment, 经 symlink 逃出 canonical root 一律拒绝(不解决 TOCTOU) | R9 |
 | `readAsset` / `writeAsset` | 带 guard 读写; 写前建父目录 | R9/R12 |
 | `slugify(title, existing?)` | 保留 CJK/仅剔非法字符/限长 64/冲突去重; id = slug | N10/R63 |
 

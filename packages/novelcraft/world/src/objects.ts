@@ -1,8 +1,23 @@
 // world · 对象/别名/关系/待处理读面与 CRUD(薄封装 store, R5 确定性核心)。
 // 依据: specs/assets/world.md + store-rules; 知识标签 = 对象 frontmatter tags 派生(N13)。
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { paths, slugify } from "@novelcraft/vault";
-import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
+// N32/ADR-0021 P1: 写面(createObject/updateObject)不再直接 writeText + gitAdd + gitCommit,
+// 而是经 @novelcraft/store.executeCanonicalWrite(kind='canonical', ADR-0021): 首写前
+// 产出完整确定性 writeSet(输出字节 + 计划时刻当前字节 expected), 内容 CAS/预存 staged
+// fail-closed/崩溃 durable intent 条件回滚由事务层承接; 无关 unstaged/untracked 允许。
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { assertNoSymlinkOnPath, guardPath, paths, slugify } from "@novelcraft/vault";
+import {
+  executePreparedCanonicalWrite,
+  gitHead,
+  parseFrontmatter,
+  prepareCanonicalWrite,
+  relOf,
+  serializeFrontmatter,
+  StoreError,
+  validateFrontmatter,
+  type PreparedCanonicalWrite,
+  type TransactionOptions,
+} from "@novelcraft/store";
 
 /** 对象 relations 有向对(N11/N14): source=宿主对象文件本身, 不落 source 字段。 */
 export interface ObjectRelation {
@@ -26,15 +41,30 @@ export interface WorldObject {
   file: string;
 }
 
+/**
+ * guardPath 之后对最终目标追加 vault 根级逐段 symlink 检查(R9): guardPath 的
+ * real containment 会放行指向 vault 内其他文件的 symlink(同目录 x.md → y.md),
+ * 跟随读写会把 x 的内容当 y、把对 x 的写落到 y(审批看到 x 不能改 y);
+ * assertNoSymlinkOnPath 从 vault 根逐段 lstat, 任一已存在组件是 symlink 一律
+ * fail-closed(目录级 symlink 已由 paths() 构造层拒绝, 此处封住文件级)。
+ */
+function guardedFile(root: string, dir: string, name: string): string {
+  const file = guardPath(dir, name);
+  assertNoSymlinkOnPath(root, file);
+  return file;
+}
+
 export function readObject(root: string, slug: string): WorldObject {
-  const file = paths(root).world.objectFile(slug);
+  // R9 containment: 以 world/objects 为限定根(不限于 vault 根)——`../` 穿越、
+  // 指向外部的 .md symlink 与 vault 内同目录 symlink 一律拒绝(fail-closed)。
+  const file = guardedFile(root, paths(root).world.objects, `${slug}.md`);
   if (!existsSync(file)) throw new Error(`对象不存在: ${slug}`);
   const { data } = parseFrontmatter(readFileSync(file, "utf8"));
   return toWorldObject(slug, data, file);
 }
 
 export function readPendingObject(root: string, slug: string): WorldObject {
-  const file = paths(root).world.pendingFile(slug);
+  const file = guardedFile(root, paths(root).world.pending, `${slug}.md`);
   if (!existsSync(file)) throw new Error(`候选不存在: ${slug}`);
   const { data } = parseFrontmatter(readFileSync(file, "utf8"));
   return toWorldObject(slug, data, file);
@@ -68,25 +98,28 @@ function toWorldObject(slug: string, data: Record<string, unknown>, file: string
   };
 }
 
-function readDirObjects(dir: string): WorldObject[] {
+/** 限定目录内 .md 文件逐个 guardPath + 最终目标 symlink 检查: 指向目录外的
+ * symlink(外部)与 vault 内同目录 symlink(内部)一律 fail-closed 抛错。 */
+function readDirObjects(root: string, dir: string): WorldObject[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => f.endsWith(".md"))
     .map((f) => {
       const slug = f.replace(/\.md$/, "");
-      const { data } = parseFrontmatter(readFileSync(`${dir}/${f}`, "utf8"));
-      return toWorldObject(slug, data, `${dir}/${f}`);
+      const file = guardedFile(root, dir, f); // R9: 限定目录 containment + symlink 拒绝。
+      const { data } = parseFrontmatter(readFileSync(file, "utf8"));
+      return toWorldObject(slug, data, file);
     });
 }
 
 /** 已采用对象(world/objects/)。 */
 export function listObjects(root: string): WorldObject[] {
-  return readDirObjects(paths(root).world.objects);
+  return readDirObjects(root, paths(root).world.objects);
 }
 
 /** 待处理候选(world/pending/, suggestion queue = pending 目录)。 */
 export function listPending(root: string): WorldObject[] {
-  return readDirObjects(paths(root).world.pending);
+  return readDirObjects(root, paths(root).world.pending);
 }
 
 /** 标签派生(N13): 读对象 tags, 无独立标签文件。 */
@@ -98,14 +131,18 @@ export function listTags(root: string): Array<{ tag: string; count: number }> {
   return [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
 }
 
-/** 创建对象(已采用, status canonical 由作者显式; 文件即提交)。 */
-export function createObject(
+export interface PreparedWorldCreate { readonly write: PreparedCanonicalWrite; readonly slug: string }
+export interface PreparedWorldUpdate { readonly write: PreparedCanonicalWrite }
+
+/** 审批前冻结创建对象的输出字节、absent baseline 与 HEAD。 */
+export function prepareCreateObject(
   root: string,
   input: { name: string; entityType: string; aliases?: string[]; tags?: string[]; description?: string },
-): string {
+  opts: { tx?: TransactionOptions } = {},
+): PreparedWorldCreate {
   if (!input.name.trim()) throw new Error("name 必填");
   const slug = slugify(`obj-${input.name}`) || `obj-${Date.now()}`;
-  const file = paths(root).world.objectFile(slug);
+  const file = guardedFile(root, paths(root).world.objects, `${slug}.md`); // R9: 写面与读面同 gate。
   if (existsSync(file)) throw new Error(`对象已存在: ${slug}`);
   const fm: Record<string, unknown> = {
     id: slug, // N23/M7-C: object schema required 含 id(frontmatter.ts:417), 落盘即带
@@ -131,24 +168,45 @@ export function createObject(
   if (Array.isArray(fm.aliases)) lines.push(`aliases: [${fm.aliases.map((a) => JSON.stringify(a)).join(", ")}]`);
   if (Array.isArray(fm.tags)) lines.push(`tags: [${fm.tags.map((t) => JSON.stringify(t)).join(", ")}]`);
   lines.push("---", "");
-  writeFileSync(file, lines.join("\n") + `# ${input.name}\n\n${input.description ?? ""}\n`, "utf8");
-  gitAdd(root);
-  gitCommit(root, `world: create ${slug}`);
-  return slug;
+  const output = lines.join("\n") + `# ${input.name}\n\n${input.description ?? ""}\n`;
+  return Object.freeze({
+    slug,
+    write: prepareCanonicalWrite(
+      root,
+      [{ path: relOf(root, file), current: null, output }],
+      { purpose: `world: create ${slug}`, expectedHead: gitHead(root), ...(opts.tx ? { tx: opts.tx } : {}) },
+    ),
+  });
 }
 
-/** 更新对象 frontmatter(仅允许确定性字段; status 迁移走 store adopt, 不经此函数)。 */
-export function updateObject(
+export async function executePreparedCreateObject(prepared: PreparedWorldCreate): Promise<string> {
+  await executePreparedCanonicalWrite(prepared.write);
+  return prepared.slug;
+}
+
+export async function createObject(
+  root: string,
+  input: { name: string; entityType: string; aliases?: string[]; tags?: string[]; description?: string },
+  opts: { tx?: TransactionOptions } = {},
+): Promise<string> {
+  return executePreparedCreateObject(prepareCreateObject(root, input, opts));
+}
+
+/** 审批前冻结对象更新的 current/output/HEAD。 */
+export function prepareUpdateObject(
   root: string,
   slug: string,
   patch: { name?: string; description?: string; tags?: string[] },
-): void {
+  opts: { tx?: TransactionOptions } = {},
+): PreparedWorldUpdate {
   const obj = readObject(root, slug);
-  const { data, body } = (() => {
-    const raw = readFileSync(obj.file, "utf8");
-    const parsed = parseFrontmatter(raw);
-    return { data: parsed.data, body: raw.slice(raw.indexOf("\n---\n", raw.indexOf("---\n") + 4) + 5) };
-  })();
+  // 写前对最终目标再显式 symlink 检查(R9): 防 read 之后文件被换成 symlink,
+  // 确保对 x 的写不会经链接落到 y(审批看到 x 不能改 y)。
+  assertNoSymlinkOnPath(root, obj.file);
+  // 正文直接取 parseFrontmatter 的 body(手工 indexOf 提取在闭合 --- 无尾换行/CRLF 等
+  // 形态下会损坏正文; parseFrontmatter 按行切分, 各种行尾/无尾换行均稳定)。
+  const bytes = readFileSync(obj.file, "utf8");
+  const { data, body } = parseFrontmatter(bytes);
   const next = { ...data };
   if (patch.name !== undefined) next.name = patch.name;
   if (patch.tags !== undefined) next.tags = patch.tags;
@@ -158,7 +216,25 @@ export function updateObject(
     const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
     throw new StoreError("VALIDATION_FAILED", `object frontmatter 校验失败: ${detail}`, issues);
   }
-  writeFileSync(obj.file, serializeFrontmatter(next, patch.description !== undefined ? patch.description : body), "utf8");
-  gitAdd(root);
-  gitCommit(root, `world: update ${slug}`);
+  const output = serializeFrontmatter(next, patch.description !== undefined ? patch.description : body);
+  return Object.freeze({
+    write: prepareCanonicalWrite(
+      root,
+      [{ path: relOf(root, obj.file), current: bytes, output }],
+      { purpose: `world: update ${slug}`, expectedHead: gitHead(root), ...(opts.tx ? { tx: opts.tx } : {}) },
+    ),
+  });
+}
+
+export async function executePreparedUpdateObject(prepared: PreparedWorldUpdate): Promise<void> {
+  await executePreparedCanonicalWrite(prepared.write);
+}
+
+export async function updateObject(
+  root: string,
+  slug: string,
+  patch: { name?: string; description?: string; tags?: string[] },
+  opts: { tx?: TransactionOptions } = {},
+): Promise<void> {
+  return executePreparedUpdateObject(prepareUpdateObject(root, slug, patch, opts));
 }

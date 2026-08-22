@@ -42,6 +42,71 @@ describe('frontmatter parse/serialize', () => {
     expect(parsed.data).toEqual({});
     expect(parsed.body).toBe('just prose, no frontmatter');
   });
+
+  it('只把列 0 的 ---/... 当闭合符: block scalar 中缩进的 `  ---` 不截断 frontmatter', () => {
+    const text = [
+      '---',
+      'id: page-1',
+      'description: |',
+      '  ---',
+      '  ...',
+      '  正文示例',
+      '---',
+      'body-text',
+    ].join('\n');
+    const parsed = parseFrontmatter(text);
+    expect(parsed.body).toBe('body-text');
+    expect(parsed.data.id).toBe('page-1');
+    expect(parsed.data.description).toBe('---\n...\n正文示例\n'); // block scalar 内容原样保留(含尾换行)
+  });
+
+  it('闭合符带尾随空白仍识别(列 0 起始); 前导空白的行不识别为闭合', () => {
+    // 列 0 的 `---   `(尾随空白) → 正常闭合。
+    expect(parseFrontmatter(['---', 'id: a', '---   ', 'body'].join('\n')).body).toBe('body');
+    // 前导空白的 `  ---` 不闭合 → 视为无 frontmatter(data={} body=全文)。
+    const t2 = ['---', 'id: b', '  ---', 'body'].join('\n');
+    const p2 = parseFrontmatter(t2);
+    expect(p2.data).toEqual({});
+    expect(p2.body).toBe(t2);
+  });
+
+  it('opening 与 closing 同口径: `---not-frontmatter` 首行不算 opening → 无 frontmatter', () => {
+    // startsWith('---') 会误认: `---not-frontmatter` 不以换行/EOF 收尾, 必须整个视为正文。
+    const t = ['---not-frontmatter', 'some prose', '---', 'more prose'].join('\n');
+    const p = parseFrontmatter(t);
+    expect(p.data).toEqual({});
+    expect(p.body).toBe(t); // 正文原样, 不被截取。
+  });
+
+  it('opening 边界: 首行纯 `---`(尾随空白/EOF)仍是合法 opening', () => {
+    // 尾随空白 opening。
+    expect(parseFrontmatter(['---   ', 'id: a', '---', 'body'].join('\n')).data.id).toBe('a');
+    // 首行 `---` 后无换行(EOF 单行): 视为 opening, 无闭合 → body=全文。
+    const edge = parseFrontmatter('---');
+    expect(edge.data).toEqual({});
+    expect(edge.body).toBe('---');
+  });
+
+  it('body 原样切片: CRLF 行尾 / 无尾换行逐字节保留, 不归一化', () => {
+    // CRLF 全文件: 旧 split/join 会把 body 归一为 LF; 现在必须原样保留 \r\n。
+    const crlf = ['---', 'id: obj-crlf', 'name: "旧人"', 'kind: "character"', 'status: "canonical"', '---', '# 正文', '第一行'].join('\r\n');
+    const p = parseFrontmatter(crlf);
+    expect(p.data.name).toBe('旧人');
+    expect(p.data.status).toBe('canonical');
+    expect(p.body).toBe('# 正文\r\n第一行'); // 逐字节原样(含结尾无换行)。
+
+    // CRLF closing 后身体原样(含 body 内部 \r\n)。
+    const crlf2 = ['---', 'id: a', '---', '# 标题', '第二段'].join('\r\n');
+    const p2 = parseFrontmatter(crlf2);
+    expect(p2.data.id).toBe('a');
+    expect(p2.body).toBe('# 标题\r\n第二段');
+
+    // 闭合 --- 后无 body(EOF, 无尾换行) → body 为空串。
+    const empty = ['---', 'id: a', 'status: canonical', '---'].join('\n');
+    const p3 = parseFrontmatter(empty);
+    expect(p3.data.status).toBe('canonical');
+    expect(p3.body).toBe('');
+  });
 });
 
 describe('validateFrontmatter(必填/类型/状态机取值)', () => {

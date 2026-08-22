@@ -37,12 +37,37 @@ interface FeatureExtractionFn {
   }>;
 }
 
+/**
+ * optional dependency 的最小运行时形状。specifier 保持 string（非字面量 dynamic import），
+ * 让默认 `npm ci --omit=optional` profile 在未安装 transformers 时仍可 typecheck/build；
+ * 显式 BGE profile 会安装真实包并由独立测试验证此窄缝（N36）。
+ */
+interface TransformersModule {
+  env: { cacheDir: string | null };
+  pipeline(
+    task: "feature-extraction",
+    modelId: string,
+    options: { dtype: "q8" | "fp32" },
+  ): Promise<unknown>;
+}
+
+const TRANSFORMERS_PACKAGE: string = "@huggingface/transformers";
 const DEFAULT_MODEL_ID = "Xenova/bge-small-zh-v1.5";
-const BACKEND_NAME = "bge-small-zh-v1.5-q8";
+const DEFAULT_BACKEND_NAME = "bge-small-zh-v1.5-q8";
+
+type BgeErrorCode = "bge_load_failed" | "bge_embed_failed";
+
+function bgeError(code: BgeErrorCode, cause: unknown): Error & { readonly code: BgeErrorCode } {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return Object.assign(new Error(`${code}: ${detail}`, { cause }), { code });
+}
 
 export function createBgeEmbeddingBackend(opts?: BgeBackendOptions): EmbeddingBackend {
   const modelId = opts?.modelId ?? DEFAULT_MODEL_ID;
   const quantized = opts?.quantized ?? true;
+  const backendName = modelId === DEFAULT_MODEL_ID && quantized
+    ? DEFAULT_BACKEND_NAME
+    : `bge:${modelId}:${quantized ? "q8" : "fp32"}`;
   const cacheDir =
     opts?.cacheDir ??
     path.join(process.env.DSH_HOME ?? path.join(os.homedir(), ".dsh"), "novelcraft", "models");
@@ -54,7 +79,7 @@ export function createBgeEmbeddingBackend(opts?: BgeBackendOptions): EmbeddingBa
       // 测试注入缝: 由调用方提供假 pipeline, 零网络。
       return (await opts.pipelineFactory(modelId, { quantized })) as FeatureExtractionFn;
     }
-    const mod = await import("@huggingface/transformers");
+    const mod = (await import(TRANSFORMERS_PACKAGE)) as TransformersModule;
     // env.cacheDir 是 transformers.js 的全局缓存目录(实际类型: env.d.ts cacheDir: string | null)。
     mod.env.cacheDir = cacheDir;
     // v4 加载选项已由 v3 的 quantized 改为 dtype(实际类型: PretrainedModelOptions.dtype):
@@ -68,21 +93,21 @@ export function createBgeEmbeddingBackend(opts?: BgeBackendOptions): EmbeddingBa
     if (pipelinePromise === undefined) {
       pipelinePromise = load().catch((err) => {
         pipelinePromise = undefined; // 加载失败不缓存, 下次 embed 重试。
-        throw new Error(`bge_load_failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw bgeError("bge_load_failed", err);
       });
     }
     return pipelinePromise;
   };
 
   return {
-    name: BACKEND_NAME,
+    name: backendName,
     async embed(texts: string[]): Promise<number[][]> {
       if (texts.length === 0) return [];
       let fn: FeatureExtractionFn;
       try {
         fn = await ensurePipeline();
       } catch (err) {
-        throw err instanceof Error ? err : new Error(`bge_load_failed: ${String(err)}`);
+        throw err instanceof Error && "code" in err ? err : bgeError("bge_load_failed", err);
       }
       try {
         const out = await fn(texts, { pooling: "mean", normalize: true });
@@ -92,7 +117,7 @@ export function createBgeEmbeddingBackend(opts?: BgeBackendOptions): EmbeddingBa
         }
         return vectors;
       } catch (err) {
-        throw new Error(`bge_embed_failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw bgeError("bge_embed_failed", err);
       }
     },
   };

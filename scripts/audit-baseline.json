@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "profiles": {
+    "default": {
+      "maxHigh": 0,
+      "maxCritical": 0,
+      "allowedHighAdvisories": []
+    },
+    "bge": {
+      "maxHigh": 4,
+      "maxCritical": 0,
+      "allowedHighAdvisories": [
+        {
+          "source": 1123686,
+          "name": "adm-zip",
+          "dependency": "adm-zip",
+          "title": "adm-zip: Crafted ZIP file triggers 4GB memory allocation",
+          "url": "https://github.com/advisories/GHSA-xcpc-8h2w-3j85",
+          "severity": "high"
+        },
+        {
+          "source": 1124066,
+          "name": "sharp",
+          "dependency": "sharp",
+          "title": "sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591",
+          "url": "https://github.com/advisories/GHSA-f88m-g3jw-g9cj",
+          "severity": "high"
+        }
+      ]
+    }
+  }
+}

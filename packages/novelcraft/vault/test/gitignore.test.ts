@@ -1,7 +1,7 @@
 /**
  * ensureVaultGitignore 行为契约(M6 Track A1: 派生索引不提交 git)。
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -70,5 +70,78 @@ describe('initVault(M6: 派生索引 .gitignore 行)', () => {
     initVault(root, { title: 'B' }); // book.yml 已存在 → 提前返回, 不重写。
     const lines = readFileSync(path.join(root, '.gitignore'), 'utf8').split('\n');
     expect(lines.filter((l) => l === '.assistant/rag-index.json')).toHaveLength(1);
+  });
+});
+
+describe('ensureVaultGitignore 自身 fail-closed(helper 内 guard + symlink 检查, 所有调用面生效)', () => {
+  // 文件 symlink 探测(Windows 需特权; 失败则整组跳过)。
+  const fileSymlinksSupported = (() => {
+    const base = mkdtempSync(path.join(os.tmpdir(), 'nvc-gi-linkprobe-'));
+    try {
+      writeFileSync(path.join(base, 't.txt'), 'x');
+      symlinkSync(path.join(base, 't.txt'), path.join(base, 'l.txt'));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  })();
+
+  it.skipIf(!fileSymlinksSupported)(
+    '有效外部 .gitignore symlink: 直接调用即拒, 外部哨兵零修改(不经 init 调用面)',
+    () => {
+      const root = tmpRoot();
+      const outside = path.join(os.tmpdir(), `ncvl-gi-direct-${Date.now()}.gitignore`);
+      writeFileSync(outside, '外部哨兵, 不得被改写\n');
+      try {
+        symlinkSync(outside, path.join(root, '.gitignore'));
+        expect(() => ensureVaultGitignore(root, ['world/atlas/images/'])).toThrow(
+          /escapes vault root/,
+        );
+        expect(readFileSync(outside, 'utf8')).toBe('外部哨兵, 不得被改写\n');
+      } finally {
+        rmSync(outside, { force: true });
+      }
+    },
+  );
+
+  it.skipIf(!fileSymlinksSupported)(
+    'dangling 外部 .gitignore symlink: 直接调用即拒, 外部目标零创建',
+    () => {
+      const root = tmpRoot();
+      const outside = path.join(os.tmpdir(), `ncvl-gi-direct-dangle-${Date.now()}.gitignore`);
+      symlinkSync(outside, path.join(root, '.gitignore')); // 目标不存在 → dangling。
+      expect(() => ensureVaultGitignore(root, ['world/atlas/images/'])).toThrow(
+        /Cannot resolve real path|escapes vault root/,
+      );
+      expect(existsSync(outside)).toBe(false); // writeFileSync 未被跟随执行。
+      rmSync(outside, { force: true });
+    },
+  );
+
+  it.skipIf(!fileSymlinksSupported)(
+    'vault 内 .gitignore symlink→其他文件: 直接调用即拒, 目标哨兵零修改',
+    () => {
+      const root = tmpRoot();
+      writeFileSync(path.join(root, 'bible.md'), '哨兵, 不得被改写');
+      symlinkSync(path.join(root, 'bible.md'), path.join(root, '.gitignore'));
+      expect(() => ensureVaultGitignore(root, ['world/atlas/images/'])).toThrow(
+        /crosses a symlink/,
+      );
+      expect(readFileSync(path.join(root, 'bible.md'), 'utf8')).toBe('哨兵, 不得被改写');
+    },
+  );
+
+  it('root 自身为 symlink 时仍允许(helper 以真实位置为 canonical root)', () => {
+    const real = tmpRoot();
+    const alias = path.join(tmpRoot(), 'alias');
+    try {
+      symlinkSync(real, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return; // 平台不支持, 跳过。
+    }
+    expect(ensureVaultGitignore(alias, ['x'])).toEqual(['x']);
+    expect(existsSync(path.join(real, '.gitignore'))).toBe(true);
   });
 });

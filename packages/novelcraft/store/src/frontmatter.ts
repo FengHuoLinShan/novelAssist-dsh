@@ -13,34 +13,52 @@ export interface ParsedMarkdown {
   body: string;
 }
 
-/** 解析 `---\n...\n---` 包裹的 frontmatter; 无 frontmatter 时 data={} 且 body=全文。 */
+/**
+ * 行扫描工具(原文本 offset): 返回行内容结束偏移(行终止符起点或 EOF)与下一行起点。
+ * 终止符 = '\r\n' | '\n' | '\r'(孤立) | EOF。
+ */
+function scanLine(text: string, lineStart: number): { end: number; next: number } {
+  let end = lineStart;
+  while (end < text.length && text[end] !== '\n' && text[end] !== '\r') end++;
+  if (end >= text.length) return { end, next: end };
+  if (text[end] === '\r') return { end, next: end + (text[end + 1] === '\n' ? 2 : 1) };
+  return { end, next: end + 1 };
+}
+
+/**
+ * 解析 `---\n...\n---` 包裹的 frontmatter; 无 frontmatter 时 data={} 且 body=全文。
+ * opening/closing 都只认列 0 delimiter(允许尾随空白), 用原文本 offset 逐行扫描,
+ * 不重建文本——body 必须是 text.slice(bodyStart) 原样切片: CRLF/无尾换行逐字节保留
+ * (行尾归一化会破坏 updateObject 等「正文原样回写」的语义)。
+ */
 export function parseFrontmatter(text: string): ParsedMarkdown {
-  if (!text.startsWith('---')) {
+  const opening = scanLine(text, 0);
+  // opening 与 closing 同口径: 首行仅列 0 `---` + 可选尾随空白(随后换行/EOF);
+  // `---not-frontmatter` 不算 opening, 整个文本视为无 frontmatter。BOM 不剥离。
+  if (!/^(?:---)[ \t]*$/.test(text.slice(0, opening.end))) {
     return { data: {}, body: text };
   }
-  const lines = text.split(/\r?\n/);
-  let end = -1;
-  for (let i = 1; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed === '---' || trimmed === '...') {
-      end = i;
-      break;
+  // 逐行 offset 扫描 closing: 列 0 的 `---`/`...` + 可选尾随空白; 缩进行
+  // (YAML block scalar 内容, 如 `  ---`)不匹配, 不误切。
+  let lineStart = opening.next;
+  while (lineStart < text.length) {
+    const line = scanLine(text, lineStart);
+    if (/^(?:---|\.\.\.)[ \t]*$/.test(text.slice(lineStart, line.end))) {
+      const yamlText = text.slice(opening.next, lineStart);
+      const body = text.slice(line.next); // 原样切片, 不重建。
+      let data: Frontmatter = {};
+      if (yamlText.trim().length > 0) {
+        const parsed = parseYaml(yamlText);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          data = parsed as Frontmatter;
+        }
+      }
+      return { data, body };
     }
+    lineStart = line.next;
   }
-  if (end === -1) {
-    // 无闭合分隔符: 视为无 frontmatter。
-    return { data: {}, body: text };
-  }
-  const yamlText = lines.slice(1, end).join('\n');
-  const body = lines.slice(end + 1).join('\n');
-  let data: Frontmatter = {};
-  if (yamlText.trim().length > 0) {
-    const parsed = parseYaml(yamlText);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      data = parsed as Frontmatter;
-    }
-  }
-  return { data, body };
+  // 无闭合分隔符: 视为无 frontmatter。
+  return { data: {}, body: text };
 }
 
 /** 序列化 frontmatter + body 为完整 markdown 文件(确定性: lineWidth=0 不折行)。 */

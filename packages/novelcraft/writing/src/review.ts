@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
+import { gitAdd, gitCommit, relOf } from "@novelcraft/store";
 import { runStep, registerSpec } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import type { StepResult } from "@novelcraft/llm-step";
@@ -142,6 +143,8 @@ export async function reviewChapter(
   };
   const file = paths(root).assistant.reviewFile(`semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`);
   writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  gitAdd(root, [relOf(root, file)]);
+  gitCommit(root, `review chapter ${chapterIndex}: ${reviewId}`);
   return { ok: true, review: record };
 }
 
@@ -150,7 +153,10 @@ export function latestReview(root: string, chapterIndex: number): ReviewRecord |
   const dir = paths(root).assistant.reviews;
   if (!existsSync(dir)) return undefined;
   const prefix = `semantic-review-${String(chapterIndex).padStart(3, "0")}-`;
-  const files = readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".json"));
+  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.startsWith(prefix) && e.name.endsWith(".json"))
+    .map((e) => e.name);
   if (files.length === 0) return undefined;
   files.sort();
   return JSON.parse(readFileSync(`${dir}/${files[files.length - 1]}`, "utf8")) as ReviewRecord;
@@ -160,7 +166,10 @@ export function latestReview(root: string, chapterIndex: number): ReviewRecord |
 export function rejectFinding(root: string, chapterIndex: number, reviewId: string, findingIndex: number): void {
   const dir = paths(root).assistant.reviews;
   const prefix = `semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`;
-  const files = readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".json"));
+  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.startsWith(prefix) && e.name.endsWith(".json"))
+    .map((e) => e.name);
   if (files.length === 0) throw new Error(`审查记录不存在: ${reviewId}`);
   const file = `${dir}/${files[0]}`;
   const record = JSON.parse(readFileSync(file, "utf8")) as ReviewRecord;
@@ -170,6 +179,8 @@ export function rejectFinding(root: string, chapterIndex: number, reviewId: stri
   record.rejected_findings = record.rejected_findings ?? {};
   record.rejected_findings[String(findingIndex)] = { at: new Date().toISOString() };
   writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  gitAdd(root, [relOf(root, file)]);
+  gitCommit(root, `reject finding ${reviewId}:${findingIndex}`);
 }
 
 /**
@@ -179,7 +190,10 @@ export function rejectFinding(root: string, chapterIndex: number, reviewId: stri
 export function rejectFindingById(root: string, chapterIndex: number, reviewId: string, findingId: string): void {
   const dir = paths(root).assistant.reviews;
   const prefix = `semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`;
-  const files = readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".json"));
+  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.startsWith(prefix) && e.name.endsWith(".json"))
+    .map((e) => e.name);
   if (files.length === 0) throw new Error(`审查记录不存在: ${reviewId}`);
   const file = `${dir}/${files[0]}`;
   const record = JSON.parse(readFileSync(file, "utf8")) as ReviewRecord;
@@ -189,6 +203,8 @@ export function rejectFindingById(root: string, chapterIndex: number, reviewId: 
   record.rejected_findings = record.rejected_findings ?? {};
   record.rejected_findings[findingId] = { at: new Date().toISOString() };
   writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  gitAdd(root, [relOf(root, file)]);
+  gitCommit(root, `reject finding ${reviewId}:${findingId}`);
 }
 
 export { registerWritingSpecsOnce };

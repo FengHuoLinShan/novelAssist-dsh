@@ -2,7 +2,7 @@
 // 断言引 seam 契约 + 设计文档 §22.2「索引规则」: 派生索引进 domain KV(可选
 // 持久化), 文件仍是唯一真相; domain 记录经 zod 边界校验; 关闭后重开从
 // 介质恢复(json backend, 内存态重建)。
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NovelcraftCache, novelcraftDomain } from '../src/index.js';
 import { makeContext } from './helpers.js';
 
@@ -30,6 +30,9 @@ describe('NovelcraftCache(真实 storage-domain + json backend)', () => {
     const all = await cache.listSessions();
     expect(all).toHaveLength(1);
     expect(all[0][1].book).toBe('测试书');
+    expect(await cache.deleteSession('session-1')).toBe(true); // N34 disposed 清缓存
+    await expect(cache.resolveSession('session-1')).resolves.toBeUndefined();
+    expect(await cache.deleteSession('session-1')).toBe(false);
     await cache.close();
   });
 
@@ -42,6 +45,48 @@ describe('NovelcraftCache(真实 storage-domain + json backend)', () => {
     const cache2 = new NovelcraftCache(h.ctx);
     await expect(cache2.resolveSession('session-1')).resolves.toBe('/tmp/vault-b');
     await cache2.close();
+  });
+
+  it('close 会封住并等待 in-flight open，HMR 新实例不会命中 already-open', async () => {
+    const h = await makeContext();
+    const facility = (h.ctx as unknown as { get(name: string): { open(spec: unknown): Promise<unknown> } }).get('storageDomain');
+    const originalOpen = facility.open.bind(facility);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(facility, 'open').mockImplementation(async (spec) => {
+      await gate;
+      return originalOpen(spec);
+    });
+    const oldCache = new NovelcraftCache(h.ctx);
+    const opening = oldCache.open();
+    const closing = oldCache.close();
+    release();
+    await expect(opening).rejects.toThrow(/关闭/);
+    await closing;
+    const newCache = new NovelcraftCache(h.ctx);
+    await expect(newCache.open()).resolves.toBeDefined();
+    await newCache.close();
+  });
+
+  it('并发 close 共享同一 domain teardown，不允许第二个调用提前返回', async () => {
+    const h = await makeContext();
+    const cache = new NovelcraftCache(h.ctx);
+    const domain = await cache.open();
+    const originalClose = domain.close.bind(domain);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(domain, 'close').mockImplementation(async () => {
+      await gate;
+      await originalClose();
+    });
+    const first = cache.close();
+    let secondDone = false;
+    const second = cache.close().then(() => { secondDone = true; });
+    await Promise.resolve();
+    expect(secondDone).toBe(false);
+    release();
+    await Promise.all([first, second]);
+    expect(secondDone).toBe(true);
   });
 
   it('domain 规格自检: 名称/版本/表集(挂载契约)', () => {

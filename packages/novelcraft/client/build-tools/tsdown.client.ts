@@ -54,13 +54,17 @@ export function clientConfig(id: string, entry: string): UserConfig {
     dts: false,
     sourcemap: true,
     clean: false,
-    external: [...CLIENT_EXTERNALS],
+    deps: {
+      // tsdown ≥0.21 的等价形态: external → deps.neverBundle、noExternal → deps.alwaysBundle。
+      // 保持既有语义: CLIENT_EXTERNALS 外置, 其余依赖强制 bundle。
+      neverBundle: [...CLIENT_EXTERNALS],
+      alwaysBundle: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
+    },
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
     },
-    noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
     plugins: [{
       name: 'dsh-client-bundle-purity',
       resolveId(source: string) {

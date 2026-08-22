@@ -3,9 +3,19 @@
 // 本层只做「决定记录 + 动作描述符」; 实际资产写入由上层调用 store 完成
 // (adopt/merge 等), 收件箱永不直接改资产。
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { paths } from "@novelcraft/vault";
-import { createSignal, isStale, sortInbox, type Signal, type SignalStatus } from "./signals.js";
+import { assertNoSymlinkOnPath, guardPath, paths } from "@novelcraft/vault";
+import {
+  createSignal,
+  isStale,
+  RADARS,
+  SEVERITIES,
+  SIGNAL_STATUSES,
+  sortInbox,
+  type RadarKind,
+  type Severity,
+  type Signal,
+  type SignalStatus,
+} from "./signals.js";
 
 export type InboxAction = "accept" | "reject" | "modify" | "defer";
 
@@ -27,28 +37,79 @@ export interface ActionDescriptor {
   microflow?: string;
 }
 
+/**
+ * guardPath 之后对最终目标追加 vault 根级逐段 symlink 检查(R9): guardPath 的
+ * real containment 会放行指向 vault 内其他文件的 symlink(同目录 a.json →
+ * b.json), 跟随读写会把对 a 的写落到 b(审批看到 a 不能改 b);
+ * assertNoSymlinkOnPath 从 vault 根逐段 lstat, 任一已存在组件是 symlink 一律
+ * fail-closed(目录级 symlink 已由 paths() 构造层拒绝, 此处封住文件级)。
+ */
+function guardedSignalFile(root: string, dir: string, name: string): string {
+  const file = guardPath(dir, name);
+  assertNoSymlinkOnPath(root, file);
+  return file;
+}
+
 /** 保存信号(单文件即状态, 覆盖写)。 */
 export function saveSignal(root: string, signal: Signal): void {
-  const p = paths(root);
-  writeFileSync(p.assistant.signalFile(signal.id), JSON.stringify(signal, null, 2) + "\n", "utf8");
+  const dir = paths(root).assistant.signals;
+  // R9 containment: 以 .assistant/signals 为限定根——id 含 `../`、指向目录外
+  // 的 symlink 或 vault 内同目录 symlink → 拒绝(fail-closed), 无法经信号 id
+  // 跨目录写 vault 外文件或改写其他信号。
+  const file = guardedSignalFile(root, dir, `${signal.id}.json`);
+  writeFileSync(file, JSON.stringify(signal, null, 2) + "\n", "utf8");
 }
 
 /** 读单信号; 不存在返回 undefined。 */
 export function loadSignal(root: string, signalId: string): Signal | undefined {
-  const p = paths(root);
-  const file = p.assistant.signalFile(signalId);
+  const dir = paths(root).assistant.signals;
+  const file = guardedSignalFile(root, dir, `${signalId}.json`);
   if (!existsSync(file)) return undefined;
   return JSON.parse(readFileSync(file, "utf8")) as Signal;
 }
 
+/**
+ * 最小 Signal shape 校验(R12 目录容错): 内容不合规返回 null(按文件 skip),
+ * 防垃圾对象进入 sortInbox(缺字段会让排序/过滤崩)。JSON.parse 失败直接抛,
+ * 由调用方 try/catch 按文件跳过。
+ * 必检字段至少 id/status/radar/severity/title/proposed_action 类型 + evidence 数组;
+ * observed_at 是 sortInbox 的排序键, 缺失会让排序崩, 一并纳入最小 shape。
+ */
+function signalFromJson(text: string): Signal | null {
+  const raw: unknown = JSON.parse(text);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.id !== "string") return null;
+  if (typeof s.status !== "string" || !SIGNAL_STATUSES.includes(s.status as SignalStatus)) return null;
+  if (typeof s.radar !== "string" || !RADARS.includes(s.radar as RadarKind)) return null;
+  if (typeof s.severity !== "string" || !SEVERITIES.includes(s.severity as Severity)) return null;
+  if (typeof s.title !== "string") return null;
+  if (typeof s.proposed_action !== "string") return null;
+  if (!Array.isArray(s.evidence) || !s.evidence.every((e) => typeof e === "string")) return null;
+  if (typeof s.observed_at !== "string") return null;
+  return s as unknown as Signal;
+}
+
 /** 列出全部信号(读 signals 目录)。 */
 export function listSignals(root: string): Signal[] {
-  const p = paths(root);
-  const dir = p.assistant.signals;
+  const dir = paths(root).assistant.signals;
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as Signal);
+  const signals: Signal[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".json")) continue;
+    // R9: 逐文件 guard + symlink 检查——signals 内 .json symlink(指向目录外或
+    // vault 内同目录)一律 fail-closed 抛错。guard 保持在 try/catch 外: 路径
+    // 逃逸等安全错误必须抛, 不得被坏 JSON 容错吞掉; 只对 read/JSON parse/
+    // 最小 Signal shape 错误按文件 skip。
+    const file = guardedSignalFile(root, dir, f);
+    try {
+      const signal = signalFromJson(readFileSync(file, "utf8"));
+      if (signal !== null) signals.push(signal);
+    } catch {
+      // 单个普通损坏/不合规信号文件跳过(收件箱/watch RPC 不因一个坏文件崩)。
+    }
+  }
+  return signals;
 }
 
 /** 收件箱视图: 过滤新鲜信号, 风险前置排序(§8/§9)。 */

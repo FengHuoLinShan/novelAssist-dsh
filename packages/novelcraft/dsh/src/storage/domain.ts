@@ -55,6 +55,7 @@ const presetSchema = z.object({
   top_p: z.number().optional(),
   max_tokens: z.number().optional(),
   timeout_ms: z.number().optional(),
+  workflow_budget: z.number().int().min(1).max(1_000_000_000).optional(),
   updatedAt: z.string().min(1),
 });
 
@@ -87,6 +88,8 @@ export class NovelcraftCache {
   private readonly ctx: Context;
   private domainPromise?: Promise<NovelcraftDomain>;
   private domain?: NovelcraftDomain;
+  private closed = false;
+  private closePromise?: Promise<void>;
   /** 最近写入(durable 落盘前的同步读面; 文件真相下缓存只是加速, 允许短暂不一致)。 */
   private readonly pending = new Map<string, IndexCacheRecord>();
 
@@ -96,17 +99,27 @@ export class NovelcraftCache {
 
   /** 惰性打开 domain(幂等; 同一 context 内只 open 一次)。 */
   async open(): Promise<NovelcraftDomain> {
-    if (!this.domain) {
-      if (!this.domainPromise) {
-        const facility = svc<DomainFacility>(this.ctx, 'storageDomain');
-        if (!facility) {
-          throw new Error('ctx.storageDomain 服务不可用(索引缓存需要 storage-domain 插件; 文件真相不受影响)');
-        }
-        this.domainPromise = facility.open(novelcraftDomain);
+    if (this.closed) throw new Error('NovelcraftCache 已关闭');
+    if (this.domain) return this.domain;
+    if (!this.domainPromise) {
+      const facility = svc<DomainFacility>(this.ctx, 'storageDomain');
+      if (!facility) {
+        throw new Error('ctx.storageDomain 服务不可用(索引缓存需要 storage-domain 插件; 文件真相不受影响)');
       }
-      this.domain = await this.domainPromise;
+      const opening = facility.open(novelcraftDomain).then(async (domain) => {
+        if (this.closed) {
+          await domain.close();
+          throw new Error('NovelcraftCache 在打开期间已关闭');
+        }
+        this.domain = domain;
+        return domain;
+      });
+      this.domainPromise = opening.catch((error) => {
+        this.domainPromise = undefined;
+        throw error;
+      });
     }
-    return this.domain;
+    return this.domainPromise;
   }
 
   /** 覆盖写派生索引缓存(durable, 写链序; 落盘前 pending 即读可见)。 */
@@ -149,6 +162,12 @@ export class NovelcraftCache {
     return domain.table('sessions').get(sessionId)?.vaultRoot;
   }
 
+  /** 删除会话绑定(session/disposed; domain 仅缓存, 删除失败由调用方容错)。 */
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const domain = await this.open();
+    return domain.table('sessions').delete(sessionId);
+  }
+
   /** 会话绑定记录全量(诊断面)。 */
   async listSessions(): Promise<Array<[string, SessionBindingRecord]>> {
     const domain = await this.open();
@@ -175,14 +194,26 @@ export class NovelcraftCache {
     return [...domain.table('presets').entries()].map(([, v]) => v);
   }
 
-  /** 关闭 domain(宿主 effect disposer 调用; 幂等)。 */
-  async close(): Promise<void> {
+  /** 关闭 domain(宿主 effect disposer 调用; 幂等且并发调用共享同一 drain)。 */
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.closePromise = this.performClose();
+    return this.closePromise;
+  }
+
+  private async performClose(): Promise<void> {
     this.pending.clear();
+    const opening = this.domainPromise;
+    if (!this.domain && opening) {
+      // Join an in-flight open. Its closed fence closes the eventual handle before rejecting.
+      await opening.catch(() => undefined);
+    }
     if (this.domain) {
       const domain = this.domain;
       this.domain = undefined;
-      this.domainPromise = undefined;
       await domain.close();
     }
+    this.domainPromise = undefined;
   }
 }

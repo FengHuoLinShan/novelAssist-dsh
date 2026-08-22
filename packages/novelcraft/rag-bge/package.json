@@ -1,6 +1,8 @@
 {
   "name": "@novelcraft/rag-bge",
   "version": "0.0.1",
+  "private": true,
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,12 +12,14 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.2.0",
     "@novelcraft/rag": "*"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "4.2.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
+    "vitest": "^3.2.6"
   }
 }

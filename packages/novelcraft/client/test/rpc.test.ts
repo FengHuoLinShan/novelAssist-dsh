@@ -7,10 +7,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
 import { pushSignal } from '@novelcraft/assistant';
-import { writeAtlasNode, writeAtlasPage } from '@novelcraft/world';
+import { readAtlasTree, writeAtlasNode, writeAtlasPage } from '@novelcraft/world';
 import { initVault } from '@novelcraft/vault';
 import { describe, expect, it } from 'vitest';
-import { createNovelcraftHandlers, type NovelcraftHostService } from '../src/index.js';
+import {
+  apply as applyHostPlugin,
+  createNovelcraftHandlers,
+  ENDPOINTS,
+  RPC_CHANNEL,
+  type NovelcraftHostService,
+} from '../src/index.js';
 
 interface TestEnv {
   ctx: Context;
@@ -632,6 +638,283 @@ describe('atlas 端点(Phase 6)', () => {
     // page 资产未被改(annotations 仍空)
     const tree = (await import('@novelcraft/world')).readAtlasTree(env.root);
     expect(tree.pendingPages[0]?.annotations.length).toBe(0);
+    env.cleanup();
+  });
+});
+
+// ===========================================================================
+// apply/connection 真实分发: 走 src/index.ts 的 apply 注册的通道 handler
+// (ENDPOINTS 常量 → switch 分发 → 处理器), 而非直调 createNovelcraftHandlers。
+// 覆盖 ENDPOINTS.atlasView / atlasAnnotationRequest; 非法 page_ref/runId/signalId/
+// action/NaN 坐标拒绝且无越界文件(文件真相 + R9/N19 写边界)。
+// ===========================================================================
+
+interface CapturedChannel {
+  channel?: string;
+  options?: { authority?: string };
+  handler?: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<{
+    ok: boolean;
+    value?: unknown;
+    error?: { code: string; message: string; details?: unknown };
+  }>;
+}
+
+type SetupOptions = { service?: Partial<NovelcraftHostService>; llm?: { listProviders?: () => string[] } };
+
+/** setup() + 注册假 connection + 跑宿主 apply; 返回可经通道分发的 handler。 */
+function setupDispatchApp(overrides: SetupOptions = {}) {
+  const env = setup(overrides);
+  const captured: CapturedChannel = {};
+  env.ctx.provide('connection', {
+    rpc: {
+      handle: (channel: string, handler: unknown, options: unknown) => {
+        captured.channel = channel;
+        captured.options = options as { authority?: string };
+        captured.handler = handler as CapturedChannel['handler'];
+        return async () => undefined;
+      },
+    },
+  });
+  applyHostPlugin(env.ctx);
+  const dispatch = async (endpoint: string, payload: unknown) => {
+    if (!captured.handler) throw new Error('apply 未注册 connection handler');
+    return captured.handler(endpoint, payload, new AbortController().signal);
+  };
+  return { ...env, captured, dispatch };
+}
+
+/** 拒绝后无越界文件: vault 根(含子目录, 跨目录拼写)下不存在任何同名文件。 */
+async function expectNoFileNamed(root: string, name: string): Promise<void> {
+  const { existsSync, readdirSync } = await import('node:fs');
+  const walk = (dir: string): string[] => {
+    if (!existsSync(dir)) return [];
+    const found: string[] = [];
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) found.push(...walk(p));
+      else if (ent.name === name) found.push(p);
+    }
+    return found;
+  };
+  expect(walk(root)).toEqual([]);
+}
+
+describe('apply/connection 通道分发(真实 handler 走线)', () => {
+  it('注册到 loopback 通道(RPC_CHANNEL); 未知端点 → 作者语言错误', async () => {
+    const env = setupDispatchApp();
+    expect(env.captured.channel).toBe(RPC_CHANNEL);
+    // 铁律 3: 客户端 RPC 通道 authority=loopback(只读信号 + 记录决定, 不写资产)。
+    expect(env.captured.options?.authority).toBe('loopback');
+    const res = await env.dispatch('atlas/nope', {});
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error?.message).toContain('unknown endpoint');
+    env.cleanup();
+  });
+
+  it('ENDPOINTS.atlasView 经通道分发: 未绑定空态 / 绑定树投影', async () => {
+    const env = setupDispatchApp();
+    let res = await env.dispatch(ENDPOINTS.atlasView, { sessionId: 'unknown' });
+    expect(res.ok).toBe(true);
+    const empty = res.value as { bound: { book: string } | null; adopted: { nodes: unknown[] } };
+    expect(empty.bound).toBeNull();
+    expect(empty.adopted.nodes).toHaveLength(0);
+
+    writeAtlasNode(env.root, {
+      id: 'n1', parent_ref: null, location_ref: null, semantic_key: 'entity:n1',
+      level: 'world', title: '临水城', status: 'provisional', sort_order: 0,
+    });
+    writeAtlasPage(env.root, {
+      id: 'pg1', run_ref: 'run-t', node_ref: 'n1', generation_status: 'prompt_only',
+      review_status: 'candidate', title: '临水城', visual_brief: 'v', prompt: 'p',
+      evidence: { supported: [], visual_fill: [], conflicts: [] },
+      source_manifest: [], annotations: [], review_note: null,
+      adopted_at: null, rejected_at: null, deprecated_at: null, content_hash: 'h-pg1',
+    });
+    res = await env.dispatch(ENDPOINTS.atlasView, { sessionId: 's1' });
+    expect(res.ok).toBe(true);
+    const bound = res.value as { bound: { book: string } | null; pending: { nodes: Array<{ title: string }> } };
+    expect(bound.bound?.book).toBe('测试书');
+    expect(bound.pending.nodes[0]?.title).toBe('临水城');
+    env.cleanup();
+  });
+
+  it('ENDPOINTS.atlasAnnotationRequest 经通道分发: 合法 op 落队列 + 信号, 不写 page 资产', async () => {
+    const env = setupDispatchApp();
+    writeAtlasPage(env.root, {
+      id: 'pg1', run_ref: 'run-t', node_ref: 'n1', generation_status: 'prompt_only',
+      review_status: 'candidate', title: '临水城', visual_brief: 'v', prompt: 'p',
+      evidence: { supported: [], visual_fill: [], conflicts: [] },
+      source_manifest: [], annotations: [], review_note: null,
+      adopted_at: null, rejected_at: null, deprecated_at: null, content_hash: 'h-pg1',
+    });
+    const res = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+      sessionId: 's1', page_ref: 'pg1', base_content_hash: 'h-pg1',
+      ops: [{ op: 'add', id: 'ann-9', label: '洛阳', position_x: 0.2, position_y: 0.8 }],
+    });
+    expect(res.ok).toBe(true);
+    const value = res.value as { queued: number; file: string };
+    expect(value.queued).toBe(1);
+    const { existsSync, readFileSync } = await import('node:fs');
+    expect(existsSync(value.file)).toBe(true);
+    const payload = JSON.parse(readFileSync(value.file, 'utf8'));
+    expect(payload.ops[0].label).toBe('洛阳');
+    // page 资产未被改(annotations 仍空; 队列是记录面, 非资产)。
+    expect(readAtlasTree(env.root).pendingPages[0]?.annotations.length).toBe(0);
+    env.cleanup();
+  });
+
+  it('非法 page_ref 拒绝且无越界文件(跨目录拼写不落盘)', async () => {
+    const env = setupDispatchApp();
+    for (const pageRef of ['../evil', '..', 'a/b', '']) {
+      const res = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+        sessionId: 's1', page_ref: pageRef, base_content_hash: 'h',
+        ops: [{ op: 'add', label: 'x', position_x: 0.5, position_y: 0.5 }],
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error?.message).toContain('page_ref');
+      await expectNoFileNamed(env.root, 'evil.json');
+    }
+    // 拒绝不是端点全拒: 合法 page_ref 照常入队。
+    const ok = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+      sessionId: 's1', page_ref: 'pg-ok', base_content_hash: 'h',
+      ops: [{ op: 'add', label: 'x', position_x: 0.5, position_y: 0.5 }],
+    });
+    expect(ok.ok).toBe(true);
+    env.cleanup();
+  });
+
+  it('队列目标被预置为内部 symlink(指向 signals 文件)时拒绝: 哨兵不变, ok:false, 无队列 payload', async () => {
+    const env = setupDispatchApp();
+    const { symlinkSync, readFileSync, readdirSync, lstatSync, writeFileSync } = await import('node:fs');
+    // 哨兵: signals 内既有文件(R9 读面会显示它; 写面若跟随内部链接就会改写它)。
+    const sentinel = path.join(env.root, '.assistant', 'signals', 'sig-sentinel.json');
+    const sentinelBody = JSON.stringify({ id: 'sig-sentinel', status: 'open', title: '哨兵' });
+    writeFileSync(sentinel, sentinelBody, 'utf8');
+    // 预置内部 symlink: annotation-queue/<page>.json → ../../signals/sig-sentinel.json。
+    // guardPath 的 real containment 会放行(指向 vault 内), assertNoSymlinkOnPath 必须拒绝。
+    const queueDir = path.join(env.root, '.assistant', 'atlas', 'annotation-queue');
+    symlinkSync(path.join('..', '..', 'signals', 'sig-sentinel.json'), path.join(queueDir, 'sig-sentinel.json'));
+    const res = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+      sessionId: 's1', page_ref: 'sig-sentinel', base_content_hash: 'h',
+      ops: [{ op: 'add', label: 'x', position_x: 0.5, position_y: 0.5 }],
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error?.message).toContain('symlink');
+    // 哨兵未被跟随改写(链接未被 writeFileSync 穿透)。
+    expect(readFileSync(sentinel, 'utf8')).toBe(sentinelBody);
+    // 队列目录无真实 payload: 链接原样保留(仍是 symlink), 无任何普通 .json 队列文件。
+    const entries = readdirSync(queueDir, { withFileTypes: true });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].isSymbolicLink()).toBe(true);
+    expect(lstatSync(path.join(queueDir, 'sig-sentinel.json')).isSymbolicLink()).toBe(true);
+    env.cleanup();
+  });
+
+  it('队列目标为悬空 / 指向 vault 外 symlink 时同样拒绝, 不写任何队列 payload', async () => {
+    const env = setupDispatchApp();
+    const { symlinkSync, readFileSync, readdirSync, writeFileSync } = await import('node:fs');
+    // 外部受害者文件(独立临时目录, 在 vault 外): 链接若被跟随, 内容将被改写。
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'nc-client-outside-'));
+    try {
+      const victim = path.join(outside, 'victim.txt');
+      writeFileSync(victim, 'victim', 'utf8');
+      const queueDir = path.join(env.root, '.assistant', 'atlas', 'annotation-queue');
+      symlinkSync('no-such-target.json', path.join(queueDir, 'dangling.json')); // 悬空链接
+      symlinkSync(victim, path.join(queueDir, 'outside.json')); // 指向 vault 外
+      for (const pageRef of ['dangling', 'outside']) {
+        const res = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+          sessionId: 's1', page_ref: pageRef, base_content_hash: 'h',
+          ops: [{ op: 'add', label: 'x', position_x: 0.5, position_y: 0.5 }],
+        });
+        expect(res.ok).toBe(false);
+        if (!res.ok) expect(res.error?.message.length).toBeGreaterThan(0);
+      }
+      // 两个链接原样保留; 目录内无任何普通 .json 队列文件; 外部目标未被写。
+      const entries = readdirSync(queueDir, { withFileTypes: true });
+      expect(entries).toHaveLength(2);
+      expect(entries.every((e) => e.isSymbolicLink())).toBe(true);
+      expect(readFileSync(victim, 'utf8')).toBe('victim');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+    env.cleanup();
+  });
+
+  it('非法 runId 拒绝(atlasView 只读端点); 非法 signalId/action 拒绝且不动信号文件', async () => {
+    const env = setupDispatchApp();
+    for (const runId of ['..', 'a/b', 'x'.repeat(129)]) {
+      const res = await env.dispatch(ENDPOINTS.atlasView, { sessionId: 's1', runId });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error?.message).toContain('runId');
+    }
+    const sig = pushSignal(env.root, {
+      radar: 'dedup', severity: 'risk', title: '重复', evidence: ['第1章'],
+      proposed_action: '合并', reversibility: true,
+    });
+    const badRef = await env.dispatch(ENDPOINTS.inboxAct, {
+      sessionId: 's1', signalId: '../sig', action: 'accept',
+    });
+    expect(badRef.ok).toBe(false);
+    if (!badRef.ok) expect(badRef.error?.message).toContain('signalId');
+    const badAction = await env.dispatch(ENDPOINTS.inboxAct, {
+      sessionId: 's1', signalId: sig.id, action: 'nope',
+    });
+    expect(badAction.ok).toBe(false);
+    if (!badAction.ok) expect(badAction.error?.message).toContain('action');
+    // 信号仍 open(记录面未被写坏/越界)。
+    const { readFileSync } = await import('node:fs');
+    const stored = JSON.parse(readFileSync(path.join(env.root, '.assistant', 'signals', `${sig.id}.json`), 'utf8'));
+    expect(stored.status).toBe('open');
+    await expectNoFileNamed(env.root, 'sig.json');
+    env.cleanup();
+  });
+
+  it('非法 op / NaN·Infinity·字符串·越界坐标拒绝, 中途绝无队列文件写坏', async () => {
+    const env = setupDispatchApp();
+    const badOps: Array<Record<string, unknown>> = [
+      { op: 'bogus', label: 'x', position_x: 0.5, position_y: 0.5 },
+      { op: 'add', label: 'x', position_x: Number.NaN, position_y: 0.5 },
+      { op: 'add', label: 'x', position_x: 0.5, position_y: Infinity },
+      { op: 'add', label: 'x', position_x: '0.5', position_y: 0.5 },
+      { op: 'add', label: 'x', position_x: 1.5, position_y: 0 },
+      { op: 'add', label: 'x', position_x: -0.1, position_y: 0 },
+    ];
+    for (const op of badOps) {
+      const res = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+        sessionId: 's1', page_ref: 'pg1', base_content_hash: 'h', ops: [op],
+      });
+      expect(res.ok).toBe(false);
+    }
+    // 空数组 / 非数组 / 含 null 条目也拒(形状校验)。
+    for (const ops of [[], 'nope', null, [null]]) {
+      const res = await env.dispatch(ENDPOINTS.atlasAnnotationRequest, {
+        sessionId: 's1', page_ref: 'pg1', base_content_hash: 'h', ops,
+      } as never);
+      expect(res.ok).toBe(false);
+    }
+    await expectNoFileNamed(env.root, 'pg1.json');
+    env.cleanup();
+  });
+
+  it('inbox/act modify 经通道分发: 修改文本(modified* wire 字段)落进信号记录', async () => {
+    const env = setupDispatchApp();
+    const sig = pushSignal(env.root, {
+      radar: 'writing', severity: 'note', title: '节奏偏慢', evidence: ['第1章'],
+      proposed_action: '删冗余段', reversibility: true,
+    });
+    const res = await env.dispatch(ENDPOINTS.inboxAct, {
+      sessionId: 's1', signalId: sig.id, action: 'modify',
+      reason: '改为建议修词',
+      modifiedTitle: '节奏偏慢, 建议合并段落',
+      modifiedProposedAction: '合并 2–3 段并精简描写',
+    });
+    expect(res.ok).toBe(true);
+    const { readFileSync } = await import('node:fs');
+    const stored = JSON.parse(readFileSync(path.join(env.root, '.assistant', 'signals', `${sig.id}.json`), 'utf8'));
+    // 修改文本真实发到 wire 并落盘: title/proposed_action 按修改覆盖。
+    expect(stored.title).toBe('节奏偏慢, 建议合并段落');
+    expect(stored.proposed_action).toBe('合并 2–3 段并精简描写');
+    expect(stored.status).toBe('accepted');
     env.cleanup();
   });
 });

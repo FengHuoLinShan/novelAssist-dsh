@@ -7,8 +7,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NovelCraftService } from '../src/index.js';
+import { optionalBgeLoader } from '../src/optional-bge.js';
 import { makeContext, type HarnessServices } from './helpers.js';
 
 const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
@@ -53,6 +54,7 @@ async function setup(): Promise<TestEnv> {
   return env;
 }
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const e of envs.splice(0)) {
     rmSync(e.vaultsDir, { recursive: true, force: true });
   }
@@ -88,20 +90,29 @@ describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
     expect(String(r.message)).toContain('embedding: bge-local-v1');
   });
 
-  it('llm.yml 写 embedding: bge-local-v1 → embeddingBackendFor 返回非 undefined(动态 import 可解析; 只断言创建, 绝不调 embed)', async () => {
+  it('llm.yml 写 embedding: bge-local-v1 → 通过可注入 optional loader 创建 backend(零真实安装依赖)', async () => {
     const env = await setup();
     expect(await env.service.embeddingBackendFor(undefined)).toBeUndefined(); // 无 root → undefined
     expect(await env.service.embeddingBackendFor(env.root)).toBeUndefined(); // 未配置 → undefined
-    // 写入 embedding 键(行级单键, N5: llm.yml 只存键名与参数)。
+    const embed = vi.fn(async (texts: string[]) => texts.map(() => [1]));
+    vi.spyOn(optionalBgeLoader, 'load').mockResolvedValue({
+      createBgeEmbeddingBackend: () => ({ name: 'fake-bge', embed }),
+    });
     writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'embedding: bge-local-v1\n', 'utf8');
     const backend = await env.service.embeddingBackendFor(env.root);
-    expect(backend).toBeDefined(); // workspace 内 @novelcraft/rag-bge 动态 import 可解析
-    expect(backend?.name).toBe('bge-small-zh-v1.5-q8');
-    // 绝不调 backend.embed(会触发真实模型加载/下载 —— 测试零网络, AGENTS.md)。
+    expect(backend?.name).toBe('fake-bge');
+    expect(embed).not.toHaveBeenCalled();
     expect(env.h.adapter.requests.length).toBe(0);
-    // embedding: off → 不启用
     writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'embedding: off\n', 'utf8');
     expect(await env.service.embeddingBackendFor(env.root)).toBeUndefined();
+  });
+
+  it('默认 profile optional adapter 缺失 → embeddingBackendFor fail-soft undefined, ragEmbed 安全降级(N36)', async () => {
+    const env = await setup();
+    vi.spyOn(optionalBgeLoader, 'load').mockRejectedValue(Object.assign(new Error('missing optional adapter'), { code: 'ERR_MODULE_NOT_FOUND' }));
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'embedding: bge-local-v1\n', 'utf8');
+    expect(await env.service.embeddingBackendFor(env.root)).toBeUndefined();
+    await expect(env.service.ragEmbed(env.root)).resolves.toMatchObject({ embedded: 0, failed: 0, skipped: 0 });
   });
 
   it('rag_search 在 embedding 未配置时行为与之前一致(L0/L1)', async () => {

@@ -1,8 +1,10 @@
 // world/map-atlas · 写面(guardPath 校验 + 文本 git add/commit; 图片只写本地 gitignore 目录)。
 // 依据: map-atlas 实施计划 §2/§4 Phase 1/附录 A.2(N28/N29)。
-// 铁律: 图片字节绝不 git add; 文本资产(page/node/run)每次写 = guardPath + gitAdd + 单 gitCommit。
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+// 铁律: 图片字节绝不 git add; 文本资产(page/node/run)每次写 = guardPath + gitAdd + 单 gitCommit;
+//  gitAdd 一律用「本次操作涉及文件的完整精确相对 POSIX pathspec」(绝不 -A / 空 pathspec):
+//  git ≥ 2.0 默认 pathspec 语义同时记录该路径的增/改/删, 无关 staged/unstaged 原样保留。
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ensureVaultGitignore, guardPath, paths } from '@novelcraft/vault';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
@@ -40,12 +42,26 @@ function assertSafeSegment(seg: string, name: string): void {
   }
 }
 
+/**
+ * 文件相对 root 的完整精确 POSIX pathspec(绝对路径 → 相对, `/` 分隔);
+ * 前缀 `:(literal)` 关闭 git pathspec 的 glob/magic 解释——slug 段虽经
+ * assertSafePathSegment/guardPath 校验, 但可能含 `*?:[]` 等字面字符, literal 保证精确命中。
+ * 依据: ADR-0021 §6 业务写面禁用 `git add -A`; git ≥ 2.0 默认 pathspec 语义同时记录
+ * 该路径的增/改/删(含删除), 无关 staged/unstaged 原样保留。
+ */
+function relPosixPathspec(root: string, abs: string): string {
+  const rel = path.relative(path.resolve(root), abs).split(path.sep).join('/');
+  return `:(literal)${rel}`;
+}
+
 /** guardPath 校验 + 写文本 + git add/commit(单次原子提交)。 */
 function writeCommitted(root: string, absFile: string, content: string, message: string): void {
   const p = guardPath(root, absFile); // 防路径穿越(R9)。
   mkdirSync(path.dirname(p), { recursive: true });
   writeFileSync(p, content, 'utf8');
-  gitAdd(root);
+  // N35/ADR-0021 §6: 只 stage 本次写的这一个文件(完整精确相对 POSIX pathspec, 绝不 -A);
+  // 作者手改/编辑器自动保存等写面外改动不进本 commit。
+  gitAdd(root, [relPosixPathspec(root, p)]);
   gitCommit(root, message);
 }
 
@@ -118,12 +134,39 @@ export function writeAtlasPage(root: string, page: AtlasPage, opts?: { adopted?:
 /** 写 run JSON(.assistant/atlas/runs/<id>.json); run 是工作产物, 提交。 */
 export function writeAtlasRun(root: string, run: AtlasRun): void {
   const p = paths(root);
-  const file = p.assistant.atlas.runFile(run.id);
+  const file = guardPath(root, p.assistant.atlas.runFile(run.id)); // R9 防穿越(runFile 已单段校验 + guard)。
   const toWrite: AtlasRun = { ...run };
   if (toWrite.created_at === undefined) {
     toWrite.created_at = new Date().toISOString(); // 工作产物; 用于确定性排序。
   }
-  writeCommitted(root, file, JSON.stringify(toWrite, null, 2) + '\n', `atlas: write run ${run.id}`);
+  const content = JSON.stringify(toWrite, null, 2) + '\n';
+  mkdirSync(path.dirname(file), { recursive: true });
+  // 原子替换: 同目录临时文件 + rename(读者/并发写永不读到半截 JSON)。
+  // 临时文件在 rename 前即消失, 不会进入 gitAdd/commit; finally 清理残余。
+  // R9: 固定名 `${file}.tmp` 可被预置 symlink 利用(writeFileSync 跟随链接写 vault 外),
+  // 因此用不可预测唯一名(randomUUID) + guardPath + O_EXCL('wx'): 预置文件/链接 → EEXIST 拒绝。
+  const tmp = guardPath(
+    root,
+    path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`),
+  );
+  let created = false;
+  try {
+    writeFileSync(tmp, content, { encoding: 'utf8', flag: 'wx' });
+    created = true;
+    renameSync(tmp, file);
+  } finally {
+    // 仅清理本次确实创建的临时文件; 预置的异名文件(EEXIST 未创建)不触碰。
+    if (created && existsSync(tmp)) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* 清理失败不掩盖原错误 */
+      }
+    }
+  }
+  // N35/ADR-0021 §6: 只 stage run 文件本身(完整精确相对 POSIX pathspec, 绝不 -A)。
+  gitAdd(root, [relPosixPathspec(root, file)]);
+  gitCommit(root, `atlas: write run ${run.id}`);
 }
 
 /**
@@ -155,7 +198,11 @@ export function writeAtlasCandidates(
     mkdirSync(path.dirname(f.abs), { recursive: true });
     writeFileSync(f.abs, f.content, 'utf8');
   }
-  gitAdd(root);
+  // N35/ADR-0021 §6: 只 stage 本次批量写的全部候选文件(完整精确相对 POSIX pathspec,
+  // 绝不 -A); 空写面 → 无任何 git 动作(空 pathspec 的 git add 是 no-op, 且 gitCommit
+  // 会扫入索引中无关的预暂存项)。
+  if (files.length === 0) return;
+  gitAdd(root, files.map((f) => relPosixPathspec(root, f.abs)));
   gitCommit(root, message);
 }
 

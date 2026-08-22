@@ -1,6 +1,8 @@
 {
   "name": "@novelcraft/context",
   "version": "0.0.1",
+  "private": true,
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@novelcraft/store": "*",
     "@novelcraft/vault": "*"
   }
 }

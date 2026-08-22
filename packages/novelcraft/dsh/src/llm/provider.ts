@@ -5,6 +5,8 @@
 // StepRequest.overrides 传入, 本适配器不重复读文件)。
 // 依据: 设计文档 §12/§22.5(llm_step 直连 ctx.llm, 无内部桥)、D14(无隐私模式,
 // 原文直通 —— 本适配器只转发, 不落盘、不记录正文)。
+// 审查项 6: 取消三条路径(finish aborted / adapter AbortError / signal abort)统一抛
+// name=AbortError + retryable=false, llm-step 对其零重试(provider 前 fail-closed)。
 import { createUserMessage, LlmError, type LlmRuntime } from '@deepseek-ai/dsh-llm';
 import type {
   GenerateOptions,
@@ -40,10 +42,25 @@ function mapFailure(failure: LlmFailure): Error {
   return err;
 }
 
+/** 审查项 6: 统一取消错误 —— name=AbortError + retryable=false(llm-step classifyError 零重试)。 */
+function abortError(message: string): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  (err as Error & { retryable?: boolean }).retryable = false;
+  return err;
+}
+
+/** 判断抛出的错误是否属「取消/中止」(adapter AbortError / LlmError ABORTED 码)。 */
+function isAbortError(err: unknown): boolean {
+  if (err instanceof LlmError) return err.failure.code === 'ABORTED';
+  return (err as Error | undefined)?.name === 'AbortError';
+}
+
 /**
  * llm-step Provider 的 DSH 实现: 每次 complete 组装一次 GenerateOptions,
  * 把 system 消息放进 system 槽、user/assistant 消息转 dsh-llm Message,
- * 消费块流拼装文本, usage 块透传, error/aborted 终止映射为可分类错误。
+ * 消费块流拼装文本, usage 块透传, error 终止映射为可分类错误,
+ * 取消/中止(aborted)统一抛 name=AbortError + retryable=false(审查项 6)。
  */
 export class DshProvider implements Provider {
   private readonly opts: DshProviderOptions;
@@ -53,6 +70,16 @@ export class DshProvider implements Provider {
   }
 
   async complete(req: ProviderRequest): Promise<ProviderResponse> {
+    // 审查项 4: DSH llm 执行契约(GenerateOptions)明确不支持 top_p(无该字段、无等价
+    // 透传面)—— 绝不静默丢弃: 请求携带 top_p 时 fail-closed 拒绝, 由编排/调用方
+    // 显式感知契约缺口(错误不可重试, 在 llm.stream 之前抛出, 零 provider 成本)。
+    if (req.top_p !== undefined) {
+      const err = new Error(
+        'DSH llm 执行契约不支持 top_p(GenerateOptions 无该字段; 契约明确不支持则 fail-closed, 不静默丢弃)',
+      );
+      (err as Error & { retryable: boolean }).retryable = false;
+      throw err;
+    }
     const { ctx, provider } = this.opts;
     const sourcePlugin = this.opts.sourcePlugin ?? '@novelcraft/dsh';
 
@@ -92,6 +119,7 @@ export class DshProvider implements Provider {
     let text = '';
     let usage: TokenUsage | undefined;
     let failure: LlmFailure | undefined;
+    let aborted = false;
     try {
       for await (const chunk of llm.stream(options) as AsyncIterable<StreamChunk>) {
         switch (chunk.type) {
@@ -102,7 +130,13 @@ export class DshProvider implements Provider {
             usage = chunk.usage;
             break;
           case 'finish':
-            if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+            // 审查项 6: finish aborted(适配器抛错经 dsh-llm 流协议转 terminal finish,
+            // signal abort 或 failure.code==='ABORTED' → kind 'aborted')单独记取消;
+            // kind 'error' 仍走 mapFailure 可重试分类。
+            if (chunk.reason.kind === 'aborted') {
+              aborted = true;
+              failure = chunk.reason.failure;
+            } else if (chunk.reason.kind === 'error') {
               failure = chunk.reason.failure;
             }
             break;
@@ -111,14 +145,35 @@ export class DshProvider implements Provider {
         }
       }
     } catch (err) {
-      // LlmRuntime 之外的中间件/消费方错误仍然抛出; LlmError 直接带分类。
+      // LlmRuntime 之外的中间件/消费方错误仍然抛出; 取消/中止类(adapter AbortError、
+      // LlmError ABORTED 码)统一映射为 AbortError, 其余 LlmError 走 mapFailure 分类。
       if (err instanceof LlmError) {
+        if (err.failure.code === 'ABORTED') {
+          throw abortError(`调用已被取消(aborted): ${err.failure.message}`);
+        }
         throw mapFailure(err.failure);
+      }
+      if (isAbortError(err)) {
+        throw abortError('调用已被取消(aborted)');
       }
       throw err;
     }
+    // 审查项 6: 三条取消路径(finish aborted / adapter AbortError / signal abort)统一
+    // 抛 name=AbortError + retryable=false —— 不返回半截文本、不产生「假成功」,
+    // llm-step classifyError 对其零重试(provider 前 fail-closed)。
+    if (aborted) {
+      throw abortError(
+        failure ? `调用已被取消(aborted): ${failure.code} ${failure.message}` : '调用已被取消(aborted)',
+      );
+    }
     if (failure) {
       throw mapFailure(failure);
+    }
+    // P2 修复: 调用因 signal abort 提前结束(流已消费完但信号已 abort, 如 wall-clock
+    // 超时掐断)→ 视为取消(AbortError, 不可重试), 而非返回半截文本 ——
+    // trace(provider 层 llm_step ok:false)与 runStep 超时语义对齐, 不产生「假成功」。
+    if (req.signal?.aborted) {
+      throw abortError('调用已被取消(aborted)');
     }
     return {
       text,

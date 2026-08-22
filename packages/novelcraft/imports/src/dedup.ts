@@ -2,6 +2,7 @@
 // L0 = store 确定性分组; L1/L2 = dedup_judge; L3 = 报告 + 候选态合并执行。
 // 候选态合并 = 免费可逆(设计 §6.1), 与 store 的已采用合并(R36/R37)是两套语义。
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { relative } from "node:path";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
@@ -36,8 +37,10 @@ interface PendingCandidate {
 function listPending(root: string): PendingCandidate[] {
   const dir = paths(root).world.pending;
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
+  // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => e.name)
     .map((f) => {
       const file = `${dir}/${f}`;
       const { data } = parseFrontmatter(readFileSync(file, "utf8"));
@@ -52,6 +55,11 @@ function listPending(root: string): PendingCandidate[] {
 
 function normalizeName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+/** vault 相对路径(gitAdd 精确 pathspec; 归一为 `/` 分隔, git 全平台接受)。 */
+function relativePathOf(root: string, file: string): string {
+  return relative(root, file).split("\\").join("/");
 }
 
 /** L0 确定性分组(R28 同名同型, 本地实现避免 store 泛型形状要求)。 */
@@ -140,6 +148,10 @@ export function applyDedup(
   const bySlug = new Map(pending.map((c) => [c.slug, c]));
   const merged = 0;
   const log: string[] = [];
+  // gitAdd 精确 pathspec 收集: 本操作实际写入的 vault 相对文件; 绝不 -A(避免捕获
+  // 并发无关/预存 staged 用户改动, R17 范围语义)。git add <path> 对已删除路径同样
+  // 记录删除, 故完整 touched 集合天然含删除路径。
+  const touched = new Set<string>();
 
   // L0: 组内第一个保留, 其余 merged_into 第一个
   for (const group of report.l0_groups) {
@@ -162,6 +174,7 @@ export function applyDedup(
         ),
         "utf8",
       );
+      touched.add(target.file).add(src.file);
       log.push(`L0 merge: ${src.slug} -> ${target.slug}`);
     }
   }
@@ -191,12 +204,14 @@ export function applyDedup(
         ),
         "utf8",
       );
+      touched.add(target.file).add(src.file);
       log.push(`L1 merge: ${src.slug} -> ${target.slug}`);
     }
   }
 
   if (log.length > 0) {
-    gitAdd(root);
+    // 只暂存本操作触摸的精确相对路径(含删除路径语义), 绝不 -A。
+    gitAdd(root, [...touched].map((f) => relativePathOf(root, f)));
     gitCommit(root, `dedup apply: ${log.length} merges`);
   }
   return { merged: log.length, log };

@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
-import type { Provider } from "@novelcraft/llm-step";
+import type { Provider, WorkflowBudget } from "@novelcraft/llm-step";
 import { registerImportSpecs } from "./specs-imports.js";
 
 export interface SceneCandidate {
@@ -52,22 +52,29 @@ export function readChapterText(root: string, chapterIndex: number): string {
 }
 
 /** Phase 1a: 逐章切分。单章失败 → 该章整章 fallback(降级条款: 不部分采用),
- *  不影响他章; fallback 候选 quality=failed + fallback_required。 */
+ *  不影响他章; fallback 候选 quality=failed + fallback_required。
+ *  opts.budget(审查项 3, 加法): 工作流累计预算 tracker —— 编排(runDeepImport)启动时
+ *  按 ExecutionProfile.workflowBudget 创建一次, 逐 runStep 共享消费; 超支在 provider
+ *  前 fail-closed(现有 RunStep budget API: runStep(provider, req, { budget }))。 */
 export async function sliceChapterBatch(
   provider: Provider,
   root: string,
   chapterIndices: number[],
-  opts: { phase1aContext?: string } = {},
+  opts: { phase1aContext?: string; budget?: WorkflowBudget } = {},
 ): Promise<BatchResult<SceneCandidate>> {
   registerImportSpecs();
   const items: SceneCandidate[] = [];
   const failed: number[] = [];
   for (const ch of chapterIndices) {
     const text = readChapterText(root, ch);
-    const r = await runStep(provider, {
-      specRef: "scene_slicing",
-      input: `【第 ${ch} 章正文】\n${text}\n${opts.phase1aContext ? `【Phase1a 上下文】\n${opts.phase1aContext}` : ""}`,
-    });
+    const r = await runStep(
+      provider,
+      {
+        specRef: "scene_slicing",
+        input: `【第 ${ch} 章正文】\n${text}\n${opts.phase1aContext ? `【Phase1a 上下文】\n${opts.phase1aContext}` : ""}`,
+      },
+      { budget: opts.budget },
+    );
     if (!r.ok) {
       failed.push(ch);
       items.push({
@@ -135,10 +142,12 @@ export async function sliceChapterBatch(
   return { items, failed_chapters: failed };
 }
 
-/** Phase 1b: 逐 Scene 补全。provider 失败 → 空语义进复核(降级条款)。 */
+/** Phase 1b: 逐 Scene 补全。provider 失败 → 空语义进复核(降级条款)。
+ *  opts.budget(审查项 3, 加法): 工作流累计预算 tracker, 见 sliceChapterBatch。 */
 export async function enrichSceneBatch(
   provider: Provider,
   scenes: SceneCandidate[],
+  opts: { budget?: WorkflowBudget } = {},
 ): Promise<SceneCandidate[]> {
   registerImportSpecs();
   const out: SceneCandidate[] = [];
@@ -147,10 +156,14 @@ export async function enrichSceneBatch(
       out.push(sc);
       continue;
     }
-    const r = await runStep(provider, {
-      specRef: "scene_enrichment",
-      input: `【Scene 卡】\n${JSON.stringify(sc.payload)}\n`,
-    });
+    const r = await runStep(
+      provider,
+      {
+        specRef: "scene_enrichment",
+        input: `【Scene 卡】\n${JSON.stringify(sc.payload)}\n`,
+      },
+      { budget: opts.budget },
+    );
     if (!r.ok) {
       out.push({
         ...sc,
@@ -186,19 +199,25 @@ export interface FusionDecision {
   confidence: number;
 }
 
-/** Phase 1c: 成对边界复核。operation 归一(R60): 非法值拒绝该条。 */
+/** Phase 1c: 成对边界复核。operation 归一(R60): 非法值拒绝该条。
+ *  opts.budget(审查项 3, 加法): 工作流累计预算 tracker, 见 sliceChapterBatch。 */
 export async function fuseSceneBatch(
   provider: Provider,
   pairs: Array<{ left: SceneCandidate; right: SceneCandidate }>,
+  opts: { budget?: WorkflowBudget } = {},
 ): Promise<FusionDecision[]> {
   registerImportSpecs();
   const decisions: FusionDecision[] = [];
   const VALID: FusionDecision["relation"][] = ["same_scene", "duplicate", "overlap", "separate", "uncertain"];
   for (const pair of pairs) {
-    const r = await runStep(provider, {
-      specRef: "scene_fusion",
-      input: `【左候选】\n${JSON.stringify(pair.left.payload)}\n【右候选】\n${JSON.stringify(pair.right.payload)}\n`,
-    });
+    const r = await runStep(
+      provider,
+      {
+        specRef: "scene_fusion",
+        input: `【左候选】\n${JSON.stringify(pair.left.payload)}\n【右候选】\n${JSON.stringify(pair.right.payload)}\n`,
+      },
+      { budget: opts.budget },
+    );
     if (!r.ok) {
       decisions.push({
         left_candidate_id: pair.left.candidate_id,

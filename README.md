@@ -13,8 +13,8 @@
 | 目录 | 内容 |
 |---|---|
 | `packages/novelcraft/` | 16 个纯 TS 包: vault/store/llm-step/writing/imports/world/outline/memory/context/rag/rag-bge(可选 BGE 嵌入后端, N22)/assistant(13 核心)+ dsh(唯一 DSH 接触面)+ client(双面包 UI)+ trace(trace contract 框架)+ preset |
-| `specs/` | R0 规格: assets(资产 schema)/ prompts(catalog 34 spec)/ rules(store-rules R1–R64 + policy-defaults)/ adjudications(五批裁定, N1–N25) |
-| `docs/adr/` | ADR-0016(M4 重写)/ 0017(仓库形态 + 挂载)/ 0018(DSH 共享层政策) |
+| `specs/` | R0 规格: assets(资产 schema)/ prompts(catalog 34 spec)/ rules(store-rules R1–R64 + policy-defaults)/ adjudications(八批裁定, N1–N36) |
+| `docs/adr/` | ADR-0016～0025(M4 重写、仓库/共享层、结构关系、map atlas、事务/恢复、生命周期、capability 与源码分发) |
 | `docs/agent/dsh-rebuild/` | M4 交接/设计/验收文档(单一事实入口: 跨会话交接.md; 总进度: STATUS-M4.md) |
 | `starter/` | 一键安装 starter |
 
@@ -30,12 +30,32 @@
 
 ## 快速开始
 
+运行时要求 Node `^22.19.0 || >=24.0.0`。M4 仅以本 monorepo/DSH 插件源码分发，
+所有 workspace 均为 `private: true`，不发布 npm 包、不承诺公共 semver；仓库保持 PUBLIC 与
+workspace 禁止 publish 并不冲突。
+
+默认 profile 不安装可选 BGE/Transformers 链：
+
 ```sh
-npm install
-npm test            # 440 测试全绿
+npm ci --omit=optional
+npm run build       # 固定依赖拓扑构建
+npm test            # 全仓测试全绿
 npm run typecheck   # 零错误
-npm run build --workspaces   # 全部分包构建(注意: 需按拓扑序, 见 docs/agent/dsh-rebuild/跨会话交接.md)
+npm run check:distribution
+npm run check:audit-gate && npm run audit:default
 ```
+
+仅在需要本地 BGE 嵌入时显式安装 optional profile，并单独验证：
+
+```sh
+npm ci --include=optional
+node --input-type=module -e "const m=await import('@huggingface/transformers'); if(typeof m.pipeline!=='function'||!m.env) throw Error('invalid runtime')"
+npm test -w @novelcraft/rag -w @novelcraft/rag-bge
+npm run audit:bge
+```
+
+默认 `embedding: off`；可选包缺失或加载失败时检索降级到文本链并记录
+`embedding_failed`，不会阻断写作。
 
 ## 文档
 

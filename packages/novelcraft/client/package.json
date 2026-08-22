@@ -1,6 +1,8 @@
 {
   "name": "@novelcraft/client",
   "version": "0.0.1",
+  "private": true,
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "description": "NovelCraft M4 client UI (phase B): pet (four states), inbox (cards + four verbs + keyboard flow), reading .assistant/signals via a loopback RPC channel; actions call core deterministic functions on the host",
   "type": "module",
   "main": "dist/index.js",
@@ -52,6 +54,7 @@
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-host-apiproxy": "^0.1.0-rc.6",
     "react": "^18.2.0",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6"
@@ -62,6 +65,7 @@
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-host-apiproxy": "^0.1.0-rc.6",
     "react": "^18.2.0",
     "@types/react": "~18.3.1",
@@ -69,7 +73,7 @@
     "lightningcss": "^1.32.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
+    "vitest": "^3.2.6",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6"
   }
 }

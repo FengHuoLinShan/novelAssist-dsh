@@ -9,7 +9,7 @@
 // - 索引里有但源文件已消失 → 丢弃(removed);
 // - 非三类源 chunk(memory/outline 等, 本函数不管理)原样保留, 不计数。
 // 确定性: 同输入(含相同 now)恒同输出; now 仅影响 rebuilt_at。
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { contentHash, parseFrontmatter } from "@novelcraft/store";
 import { paths } from "@novelcraft/vault";
@@ -102,11 +102,13 @@ export function syncRagIndex(root: string, now: Date = new Date()): RagSyncStats
   // 1. 扫描三类源(仅顶层, 不递归 chapters/pending 等子目录)。
   const sources: SourceFile[] = [];
   if (existsSync(p.chapters.dir)) {
-    for (const f of readdirSync(p.chapters.dir)) {
-      const m = /^(\d+)\.md$/.exec(f);
+    // R9(目录枚举扫描): withFileTypes 只接收 entry.isFile() 的章节普通文件(*.md);
+    // 仓库内 symlink(含指向 vault 外)与子目录(如 pending/)一律忽略, 不跟随。
+    for (const entry of readdirSync(p.chapters.dir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const m = /^(\d+)\.md$/.exec(entry.name);
       if (!m) continue;
-      const abs = join(p.chapters.dir, f);
-      if (!statSync(abs).isFile()) continue; // 跳过目录条目(如 pending/)。
+      const abs = join(p.chapters.dir, entry.name);
       const { body } = parseFrontmatter(readFileSync(abs, "utf8"));
       const chapterIndex = parseInt(m[1], 10);
       sources.push({
@@ -119,22 +121,23 @@ export function syncRagIndex(root: string, now: Date = new Date()): RagSyncStats
     }
   }
   if (existsSync(p.world.dir)) {
-    for (const f of readdirSync(p.world.dir)) {
-      if (!f.endsWith(".md")) continue;
-      const abs = join(p.world.dir, f);
-      if (!statSync(abs).isFile()) continue; // 跳过 world/objects、world/pending 等子目录。
+    // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)与子目录
+    // (world/objects、world/pending 等)一律忽略, 不跟随。
+    for (const entry of readdirSync(p.world.dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const abs = join(p.world.dir, entry.name);
       const { body } = parseFrontmatter(readFileSync(abs, "utf8"));
-      const basename = f.slice(0, -3);
+      const basename = entry.name.slice(0, -3);
       sources.push({ key: `char:${basename}`, kind: "character", basename, hash: contentHash(body), body });
     }
   }
   if (existsSync(p.world.objects)) {
-    for (const f of readdirSync(p.world.objects)) {
-      if (!f.endsWith(".md")) continue;
-      const abs = join(p.world.objects, f);
-      if (!statSync(abs).isFile()) continue;
+    // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+    for (const entry of readdirSync(p.world.objects, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const abs = join(p.world.objects, entry.name);
       const { body } = parseFrontmatter(readFileSync(abs, "utf8"));
-      const basename = f.slice(0, -3);
+      const basename = entry.name.slice(0, -3);
       sources.push({ key: `obj:${basename}`, kind: "world_entity", basename, hash: contentHash(body), body });
     }
   }

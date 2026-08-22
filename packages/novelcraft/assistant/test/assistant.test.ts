@@ -1,19 +1,22 @@
 // R6 assistant 核心行为契约(设计文档 §8/§9/§11 + N1/N3)
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { initVault } from "@novelcraft/vault";
+import { initVault, paths } from "@novelcraft/vault";
 import {
   appendCalibration,
   createSignal,
   HEALTH_KEYS,
   inboxView,
   isStale,
+  listSignals,
+  loadSignal,
   needsAttention,
   pushSignal,
   readCalibration,
   recordRejection,
+  saveSignal,
   sortInbox,
 } from "../src/index";
 import { act } from "../src/index";
@@ -29,6 +32,26 @@ function makeRoot() {
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
+
+// 文件 symlink 探测(Windows 需开发者模式/管理员; 失败则整组跳过)。
+let symlinkCapable: boolean | undefined;
+function symlinksSupported(): boolean {
+  if (symlinkCapable === undefined) {
+    const probe = mkdtempSync(join(tmpdir(), "nca-link-"));
+    try {
+      const target = join(probe, "t");
+      const link = join(probe, "l");
+      writeFileSync(target, "x");
+      symlinkSync(target, link);
+      symlinkCapable = true;
+    } catch {
+      symlinkCapable = false;
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+    }
+  }
+  return symlinkCapable;
+}
 
 describe("createSignal(§8 信号模型)", () => {
   it("合法创建, 状态 open", () => {
@@ -75,6 +98,112 @@ describe("isStale(§8 新鲜度)", () => {
     expect(isStale(s, "aaa")).toBe(false);
     const s2 = createSignal({ radar: "plot", severity: "note", title: "t", evidence: ["e"], proposed_action: "a", reversibility: false });
     expect(isStale(s2, "zzz")).toBe(false);
+  });
+});
+
+describe("listSignals(R12 目录容错 + R9 fail-closed)", () => {
+  it("坏普通 JSON 与好 signal 并存 → 只返回好; 垃圾对象不进 sort", () => {
+    const root = makeRoot();
+    pushSignal(root, {
+      radar: "dedup", severity: "risk", title: "合并 A/B", evidence: ["e"],
+      proposed_action: "merge", reversibility: true,
+    });
+    const dir = paths(root).assistant.signals;
+    // 普通损坏 JSON(非 symlink)与各种垃圾对象——全部按文件 skip。
+    writeFileSync(join(dir, "broken.json"), "{not valid json", "utf8");
+    writeFileSync(join(dir, "garbage.json"), JSON.stringify({ foo: 1 }), "utf8"); // 对象但非 Signal
+    writeFileSync(join(dir, "array.json"), JSON.stringify([1, 2, 3]), "utf8"); // 顶层数组
+    writeFileSync(join(dir, "missing-fields.json"), JSON.stringify({ id: "x", title: "缺字段" }), "utf8");
+    writeFileSync(join(dir, "null.json"), "null", "utf8");
+    const signals = listSignals(root);
+    expect(signals).toHaveLength(1); // 只返回好信号
+    expect(signals[0].title).toBe("合并 A/B");
+    expect(inboxView(root)).toHaveLength(1); // 排序/过滤不被垃圾对象炸
+    expect(needsAttention(root, 1)).toBe(true);
+  });
+
+  it("指向 vault 外 symlink 仍 fail-closed 抛(不吞、不读)", () => {
+    const root = makeRoot();
+    pushSignal(root, {
+      radar: "suggest", severity: "note", title: "t", evidence: ["e"],
+      proposed_action: "a", reversibility: false,
+    });
+    const dir = paths(root).assistant.signals;
+    const outside = join(tmpdir(), `nca-outside-${Math.random().toString(36).slice(2, 8)}.json`);
+    writeFileSync(outside, JSON.stringify({ id: "evil", status: "open", radar: "risk", severity: "risk", title: "x", proposed_action: "x", evidence: ["e"], observed_at: "2026-01-01T00:00:00.000Z" }), "utf8");
+    symlinkSync(outside, join(dir, "evil.json"));
+    try {
+      // 逐文件 guardPath 在 try/catch 外: 路径逃逸错误必须抛, 不得被坏 JSON 容错吞掉。
+      expect(() => listSignals(root)).toThrow(/escapes vault root/i);
+      expect(() => inboxView(root)).toThrow(/escapes vault root/i);
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
+});
+
+describe("saveSignal/loadSignal symlink fail-closed(R9: 同目录内部 symlink 不跟随, 审批看到 a 不能改 b)", () => {
+  it.skipIf(!symlinksSupported())("内部 symlink a.json→b.json: save/load/act 拒绝, b 哨兵不变", () => {
+    const root = makeRoot();
+    const dir = paths(root).assistant.signals;
+    const b = join(dir, "sig-b.json");
+    const sentinel = JSON.stringify({
+      id: "sig-b", status: "open", radar: "dedup", severity: "risk", title: "B",
+      evidence: ["e"], proposed_action: "a", reversibility: true,
+      observed_at: "2026-01-01T00:00:00.000Z",
+    });
+    writeFileSync(b, sentinel, "utf8");
+    symlinkSync(b, join(dir, "sig-a.json")); // 同目录内部 symlink。
+    const sigA = createSignal({ radar: "dedup", severity: "risk", title: "A", evidence: ["e"], proposed_action: "a", reversibility: true, id: "sig-a" });
+    // guardPath 的 real containment 放行 root 内 symlink; 最终目标必须逐段 lstat 拒绝。
+    expect(() => saveSignal(root, sigA)).toThrow(/symlink/i); // 写不跟随: a 不改 b。
+    expect(readFileSync(b, "utf8")).toBe(sentinel); // b 哨兵不变。
+    expect(() => loadSignal(root, "sig-a")).toThrow(/symlink/i); // 读不跟随。
+    expect(() => act(root, { signalId: "sig-a", action: "accept" })).toThrow(/symlink/i); // 审批看到 a 不能改 b。
+  });
+
+  it.skipIf(!symlinksSupported())("listSignals/inboxView 遇内部 symlink fail-closed 抛(不吞)", () => {
+    const root = makeRoot();
+    pushSignal(root, { radar: "suggest", severity: "note", title: "t", evidence: ["e"], proposed_action: "a", reversibility: false });
+    const dir = paths(root).assistant.signals;
+    const b = join(dir, "sig-b.json");
+    writeFileSync(b, JSON.stringify({ id: "sig-b", status: "open", radar: "dedup", severity: "risk", title: "B", evidence: ["e"], proposed_action: "a", reversibility: true, observed_at: "2026-01-01T00:00:00.000Z" }), "utf8");
+    symlinkSync(b, join(dir, "sig-a.json"));
+    // guard 在 try/catch 外: symlink 安全错误必须抛, 不得被坏 JSON 容错吞掉。
+    expect(() => listSignals(root)).toThrow(/symlink/i);
+    expect(() => inboxView(root)).toThrow(/symlink/i);
+  });
+
+  it.skipIf(!symlinksSupported())("外部 symlink 语义保持: saveSignal 拒绝, 外部哨兵不变", () => {
+    const root = makeRoot();
+    const outside = join(tmpdir(), `nca-out-sig-${Date.now()}.json`);
+    writeFileSync(outside, "外部哨兵, 不得被改写");
+    try {
+      const dir = paths(root).assistant.signals;
+      symlinkSync(outside, join(dir, "evil.json"));
+      const s = createSignal({ radar: "dedup", severity: "risk", title: "t", evidence: ["e"], proposed_action: "a", reversibility: true, id: "evil" });
+      expect(() => saveSignal(root, s)).toThrow(/escapes vault root/);
+      expect(readFileSync(outside, "utf8")).toBe("外部哨兵, 不得被改写");
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
+
+  it.skipIf(!symlinksSupported())("悬空 symlink → loadSignal/saveSignal fail-closed(不跟随创建)", () => {
+    const root = makeRoot();
+    const dir = paths(root).assistant.signals;
+    symlinkSync(join(dir, "no-such.json"), join(dir, "dangling.json"));
+    expect(() => loadSignal(root, "dangling")).toThrow();
+    const s = createSignal({ radar: "dedup", severity: "risk", title: "t", evidence: ["e"], proposed_action: "a", reversibility: true, id: "dangling" });
+    expect(() => saveSignal(root, s)).toThrow();
+  });
+
+  it.skipIf(!symlinksSupported())("普通信号(无 symlink)save/load/act 行为不变", () => {
+    const root = makeRoot();
+    const s = createSignal({ radar: "dedup", severity: "risk", title: "合并 A/B", evidence: ["e"], proposed_action: "merge", reversibility: true, id: "sig-ok" });
+    saveSignal(root, s);
+    expect(loadSignal(root, "sig-ok")?.title).toBe("合并 A/B");
+    expect(act(root, { signalId: "sig-ok", action: "accept" }).signal.status).toBe("accepted");
   });
 });
 

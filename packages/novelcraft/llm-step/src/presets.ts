@@ -18,15 +18,16 @@ export interface ContentPreset {
   top_p?: number;
   max_tokens?: number;
   timeout_ms?: number;
+  workflow_budget?: number;
 }
 
 /** 种子预设(可在预设面板增删改; 模型槽位按用户 DSH 已配置 provider 选择)。 */
 export const DEFAULT_CONTENT_PRESETS: ContentPreset[] = [
   { name: "default", label: "默认(继承助手配置)" },
-  // 温度/ top_p 参考父仓库 CREATIVE_PRESETS(creative 0.9/0.95, precise 0.25/0.8)与 catalog §1。
-  { name: "writing-day", label: "写作日", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.7, top_p: 0.95 },
-  { name: "import-day", label: "导入日", provider: "deepseek", model: "deepseek-v4-flash", temperature: 0.2, top_p: 0.8, timeout_ms: 900_000 },
-  { name: "polish", label: "精修校对", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.25, top_p: 0.8 },
+  // DSH rc.6 GenerateOptions 尚无 top_p transport；种子卡不得默认携带不可执行参数。
+  { name: "writing-day", label: "写作日", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.7 },
+  { name: "import-day", label: "导入日", provider: "deepseek", model: "deepseek-v4-flash", temperature: 0.2, timeout_ms: 900_000 },
+  { name: "polish", label: "精修校对", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.25 },
 ];
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/;
@@ -58,6 +59,9 @@ export function validateContentPreset(v: unknown): string[] {
   if (o.timeout_ms !== undefined && (typeof o.timeout_ms !== "number" || o.timeout_ms < 1_000 || o.timeout_ms > 3_600_000)) {
     issues.push("timeout_ms 必须在 1000–3600000");
   }
+  if (o.workflow_budget !== undefined && (typeof o.workflow_budget !== "number" || !Number.isInteger(o.workflow_budget) || o.workflow_budget < 1 || o.workflow_budget > 1_000_000_000)) {
+    issues.push("workflow_budget 必须是 1–1000000000 的整数");
+  }
   return issues;
 }
 
@@ -80,6 +84,7 @@ export function parseContentPresets(v: unknown): ContentPreset[] {
       ...(p.top_p !== undefined ? { top_p: p.top_p } : {}),
       ...(p.max_tokens !== undefined ? { max_tokens: p.max_tokens } : {}),
       ...(p.timeout_ms !== undefined ? { timeout_ms: p.timeout_ms } : {}),
+      ...(p.workflow_budget !== undefined ? { workflow_budget: p.workflow_budget } : {}),
     });
   }
   return out;

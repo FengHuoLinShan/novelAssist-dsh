@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Frontmatter } from './types.js';
 import { StoreError } from './errors.js';
-import { paths, resolveAsset, resolveWithin } from './paths.js';
+import { paths, resolveAsset } from './paths.js';
 import {
   parseFrontmatter,
   serializeFrontmatter,
@@ -11,8 +11,9 @@ import {
   isPlaceholderWord,
   validateFrontmatterForWrite,
 } from './frontmatter.js';
-import { gitAdd, gitCommit } from './git.js';
-import { readText, writeText } from './fs.js';
+import { readText } from './fs.js';
+import { executeCanonicalWrite, type TxLocalTarget } from './tx-write.js';
+import type { TransactionOptions } from './transaction/execute.js';
 
 export interface MergeOptions {
   /** R37: source 为 canonical 时需二次确认(allow_canonical_merge)。 */
@@ -21,6 +22,8 @@ export interface MergeOptions {
   approved?: boolean;
   workflow?: string;
   provenance?: Record<string, unknown>;
+  /** N32 内部测试 seam: 执行器选项透传(gates/faults/锁; 生产缺省)。 */
+  tx?: TransactionOptions;
 }
 
 export interface MergeRecord {
@@ -53,6 +56,20 @@ export interface SplitResult {
   commit: string;
 }
 
+export interface AttachAliasOptions {
+  workflow?: string;
+  provenance?: Record<string, unknown>;
+  /** N32 内部测试 seam: 执行器选项透传。 */
+  tx?: TransactionOptions;
+}
+
+export interface AttachAliasResult {
+  target: string;
+  alias: string;
+  count: number;
+  commit: string;
+}
+
 function readMergeLog(root: string): MergeRecord[] {
   const p = paths(root).assistant.mergeLog;
   if (!fs.existsSync(p)) return [];
@@ -63,10 +80,16 @@ function readMergeLog(root: string): MergeRecord[] {
     .map((l) => JSON.parse(l) as MergeRecord);
 }
 
-function appendMergeLog(root: string, rec: MergeRecord): void {
+/**
+ * 计算 merge-log 的追加目标(当前字节 + 输出字节; 不直接写盘):
+ * 日志/祖先链是本次 canonical 事务 writeSet 的一部分(N32: 含日志/祖先链)。
+ */
+function mergeLogTarget(root: string, rec: MergeRecord): TxLocalTarget {
   const p = paths(root).assistant.mergeLog;
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.appendFileSync(p, JSON.stringify(rec) + '\n', 'utf8');
+  const current = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+  const rel = relOf(root, p);
+  const output = (current ?? '') + JSON.stringify(rec) + '\n';
+  return { path: rel, current, output };
 }
 
 function relOf(root: string, abs: string): string {
@@ -77,13 +100,14 @@ function relOf(root: string, abs: string): string {
  * 合并两个同型世界对象(R6): source 置 merged(继承别名), 不硬删;
  * 可逆(L4 split); 已采用(source canonical)需二次确认(R37); 目标必须 canonical(R36)。
  * 本层只做确定性执行 + merge-log 追加; 二次确认由上层 approval 负责。
+ * 写面 = canonical 事务(ADR-0021/N32): 目标/source/merge-log 三目标一次 commit。
  */
-export function mergeEntities(
+export async function mergeEntities(
   root: string,
   sourceRef: string,
   targetRef: string,
   opts: MergeOptions = {},
-): MergeResult {
+): Promise<MergeResult> {
   const src = resolveAsset(root, 'object', sourceRef);
   const tgt = resolveAsset(root, 'object', targetRef);
 
@@ -91,8 +115,10 @@ export function mergeEntities(
     throw new StoreError('MERGE_SELF', `不能合并到自身 (R26): ${src.slug}`);
   }
 
-  const { data: srcFm, body: srcBody } = parseFrontmatter(readText(src.abs));
-  const { data: tgtFm, body: tgtBody } = parseFrontmatter(readText(tgt.abs));
+  const srcText = readText(src.abs);
+  const tgtText = readText(tgt.abs);
+  const { data: srcFm, body: srcBody } = parseFrontmatter(srcText);
+  const { data: tgtFm, body: tgtBody } = parseFrontmatter(tgtText);
 
   if (srcFm.kind !== tgtFm.kind) {
     throw new StoreError('MERGE_TYPE_MISMATCH', `融合必须同类型 (R6): ${String(srcFm.kind)} != ${String(tgtFm.kind)}`);
@@ -127,8 +153,6 @@ export function mergeEntities(
   // N23: 两个落盘 frontmatter 先校验后写入(无部分状态, 均按 object schema)
   const checkedTgt = validateFrontmatterForWrite('object', { ...tgtFm, aliases: tgtAliases }, tgt.slug);
   const checkedSrc = validateFrontmatterForWrite('object', { ...srcFm, status: 'merged', merged_into: tgt.slug, merged_at: now }, src.slug);
-  writeText(tgt.abs, serializeFrontmatter(checkedTgt, tgtBody));
-  writeText(src.abs, serializeFrontmatter(checkedSrc, srcBody));
 
   const record: MergeRecord = {
     operation: 'merge',
@@ -142,17 +166,26 @@ export function mergeEntities(
     reversible: true,
     ts: now,
   };
-  appendMergeLog(root, record);
 
-  gitAdd(root, [src.rel, tgt.rel, relOf(root, paths(root).assistant.mergeLog)]);
-  const commit = gitCommit(root, `merge: ${src.slug} -> ${tgt.slug}`);
-  return { source: src.slug, target: tgt.slug, inheritedAliases: inherited, logEntry: record, commit };
+  // R9: 写前落盘目标逐段 symlink 检查(fail-closed; 复用 paths.resolveAsset 已 gate,
+  // 再对最终目标复检防 resolve 与落盘之间被换成 symlink)。
+  const targets: TxLocalTarget[] = [
+    { path: tgt.rel, current: tgtText, output: serializeFrontmatter(checkedTgt, tgtBody) },
+    { path: src.rel, current: srcText, output: serializeFrontmatter(checkedSrc, srcBody) },
+    mergeLogTarget(root, record),
+  ];
+  const res = await executeCanonicalWrite(root, targets, {
+    purpose: `merge: ${src.slug} -> ${tgt.slug}`,
+    ...(opts.tx ? { tx: opts.tx } : {}),
+  });
+  return { source: src.slug, target: tgt.slug, inheritedAliases: inherited, logEntry: record, commit: res.commit };
 }
 
 /**
  * 拆分一次 merge(R6 可逆): 恢复 source 状态、移除继承的别名, 追加 split 记录。
+ * 写面 = canonical 事务(ADR-0021/N32)。
  */
-export function splitMerge(root: string, sourceRef: string): SplitResult {
+export async function splitMerge(root: string, sourceRef: string): Promise<SplitResult> {
   const src = resolveAsset(root, 'object', sourceRef);
   const records = readMergeLog(root);
 
@@ -168,8 +201,10 @@ export function splitMerge(root: string, sourceRef: string): SplitResult {
   }
 
   const tgt = resolveAsset(root, 'object', active.target);
-  const { data: srcFm, body: srcBody } = parseFrontmatter(readText(src.abs));
-  const { data: tgtFm, body: tgtBody } = parseFrontmatter(readText(tgt.abs));
+  const srcText = readText(src.abs);
+  const tgtText = readText(tgt.abs);
+  const { data: srcFm, body: srcBody } = parseFrontmatter(srcText);
+  const { data: tgtFm, body: tgtBody } = parseFrontmatter(tgtText);
 
   const removedKeys = new Set(active.inheritedAliases.map(normalizeAliasKey));
   const tgtAliases = normalizeAliases(tgtFm.aliases).filter((a) => !removedKeys.has(normalizeAliasKey(a)));
@@ -181,8 +216,6 @@ export function splitMerge(root: string, sourceRef: string): SplitResult {
   // N23: 两个落盘 frontmatter 先校验后写入(无部分状态, 均按 object schema)
   const checkedSrc = validateFrontmatterForWrite('object', restored, src.slug);
   const checkedTgt = validateFrontmatterForWrite('object', { ...tgtFm, aliases: tgtAliases }, tgt.slug);
-  writeText(src.abs, serializeFrontmatter(checkedSrc, srcBody));
-  writeText(tgt.abs, serializeFrontmatter(checkedTgt, tgtBody));
 
   const record: MergeRecord = {
     operation: 'split',
@@ -196,47 +229,42 @@ export function splitMerge(root: string, sourceRef: string): SplitResult {
     reversible: false,
     ts: new Date().toISOString(),
   };
-  appendMergeLog(root, record);
 
-  gitAdd(root, [src.rel, tgt.rel, relOf(root, paths(root).assistant.mergeLog)]);
-  const commit = gitCommit(root, `split: ${src.slug} <- ${tgt.slug}`);
+  const targets: TxLocalTarget[] = [
+    { path: src.rel, current: srcText, output: serializeFrontmatter(checkedSrc, srcBody) },
+    { path: tgt.rel, current: tgtText, output: serializeFrontmatter(checkedTgt, tgtBody) },
+    mergeLogTarget(root, record),
+  ];
+  const res = await executeCanonicalWrite(root, targets, {
+    purpose: `split: ${src.slug} <- ${tgt.slug}`,
+  });
   return {
     source: src.slug,
     target: tgt.slug,
     restoredStatus: active.sourcePrevStatus,
     removedAliases: active.inheritedAliases,
     logEntry: record,
-    commit,
+    commit: res.commit,
   };
-}
-
-export interface AttachAliasOptions {
-  workflow?: string;
-  provenance?: Record<string, unknown>;
-}
-
-export interface AttachAliasResult {
-  target: string;
-  alias: string;
-  count: number;
-  commit: string;
 }
 
 /**
  * 别名只附着已有对象(R1): 写目标对象 frontmatter `aliases: []`, 不新建对象文件;
  * 目标必须 canonical(R36); 归一化去重(R24); 占位词拒绝(R25)。
+ * 写面 = canonical 事务(ADR-0021/N32)。
  */
-export function attachAlias(
+export async function attachAlias(
   root: string,
   targetRef: string,
   alias: string,
   opts: AttachAliasOptions = {},
-): AttachAliasResult {
+): Promise<AttachAliasResult> {
   if (isPlaceholderWord(alias)) {
     throw new StoreError('INVALID_ALIAS', `占位词别名被拒绝 (R25): ${alias}`);
   }
   const tgt = resolveAsset(root, 'object', targetRef);
-  const { data: tgtFm, body } = parseFrontmatter(readText(tgt.abs));
+  const text = readText(tgt.abs);
+  const { data: tgtFm, body } = parseFrontmatter(text);
   if (tgtFm.status !== 'canonical') {
     throw new StoreError('INVALID_TARGET', `别名目标必须是 canonical (R36): ${tgt.slug}`);
   }
@@ -248,10 +276,13 @@ export function attachAlias(
   aliases.push(alias);
 
   const checked = validateFrontmatterForWrite('object', { ...tgtFm, aliases }, tgt.slug); // N23 落盘前校验
-  writeText(tgt.abs, serializeFrontmatter(checked, body));
-  gitAdd(root, [tgt.rel]);
-  const commit = gitCommit(root, `attach_alias: ${tgt.slug} += ${alias}`);
-  return { target: tgt.slug, alias, count: aliases.length, commit };
+  const res = await executeCanonicalWrite(root, [
+    { path: tgt.rel, current: text, output: serializeFrontmatter(checked, body) },
+  ], {
+    purpose: `attach_alias: ${tgt.slug} += ${alias}`,
+    ...(opts.tx ? { tx: opts.tx } : {}),
+  });
+  return { target: tgt.slug, alias, count: aliases.length, commit: res.commit };
 }
 
 // §22.6 原语命名(与设计文档保持一致): merge_entities / split_merge / attach_alias。
@@ -260,4 +291,4 @@ export const split_merge = splitMerge;
 export const attach_alias = attachAlias;
 
 // 便于测试与上层读取 merge-log。
-export { readMergeLog, appendMergeLog, relOf };
+export { readMergeLog, relOf };

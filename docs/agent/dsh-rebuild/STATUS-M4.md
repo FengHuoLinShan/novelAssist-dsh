@@ -117,6 +117,12 @@
   标签双击加/拖动/改名/删除 → 保存入队, 坐标恒 0–1) + scripts/m7-map-atlas-demo.mjs(全环可复现)。
 - 全仓测试 **589 全绿**, typecheck 零错误; 每 Phase 独立 commit + 独立 review(发现均修复后提交)。
 
+## 全代码库 Review 架构闭环(2026-08-15)
+
+- [x] 用户确认第八批裁决 N32–N36：Vault 目标路径级 Git 事务、逐批 checkpoint/resume、DSH session/watch 生命周期与 ExecutionProfile、安全默认 capability API、M4 源码分发/Node/BGE optional 策略。
+- [x] ADR-0021–0025 已实现并完成验证，关联 `docs/agent/reviews/full-codebase-review.md` §4。
+- [x] 按依赖顺序完成 ADR-0021 → ADR-0023 ExecutionProfile 基础 seam → ADR-0022 → ADR-0024 → ADR-0023 session/watch 生命周期 → ADR-0025；全仓 `build`、`typecheck`、`npm test`、静态/分发/audit gates 与独立复审均通过。
+
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面

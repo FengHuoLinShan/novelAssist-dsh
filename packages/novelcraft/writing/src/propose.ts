@@ -105,7 +105,10 @@ export async function proposeNextChapter(
 export function latestProposal(root: string): ProposalRecord | undefined {
   const dir = paths(root).assistant.proposals;
   if (!existsSync(dir)) return undefined;
-  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".json"))
+    .map((e) => e.name);
   if (files.length === 0) return undefined;
   files.sort();
   return JSON.parse(readFileSync(`${dir}/${files[files.length - 1]}`, "utf8")) as ProposalRecord;

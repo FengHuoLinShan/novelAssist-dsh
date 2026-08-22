@@ -5,6 +5,25 @@
 import { loadSpec, registerSpec } from "@novelcraft/llm-step";
 import type { LlmStepSpec } from "@novelcraft/llm-step";
 
+/**
+ * 深度导入全链内容步 specRefs(N34 / ADR-0023 §6 + 独立审查 P5/R6, 确定性固定集):
+ * contractVersions 从 spec registry 按此集合构造 —— 同一编排每次解析出的契约版本集
+ * 恒定(不随进程内其他包级 spec 注册状态漂移), 执行画像指纹因此确定可复现。
+ * 覆盖: 1a scene_slicing/anchor_repair/gap_recovery、1b scene_enrichment、
+ * 1c scene_fusion、2a entity_extraction、2b alias_relation、3 structure_analysis
+ * (dedup_judge 为 store 层确定性去重, 不经内容手, 不入集)。
+ */
+export const DEEP_IMPORT_SPEC_REFS: readonly string[] = Object.freeze([
+  "scene_slicing",
+  "scene_anchor_repair",
+  "scene_gap_recovery",
+  "scene_enrichment",
+  "scene_fusion",
+  "alias_relation",
+  "entity_extraction",
+  "structure_analysis",
+]);
+
 const sceneFields = (): LlmStepSpec["outputSchema"]["properties"] => ({
   title: { type: "string" },
   goal: { type: "string" },

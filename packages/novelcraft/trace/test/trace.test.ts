@@ -5,6 +5,8 @@ import {
   MockApproval,
   TraceRecorder,
   assertCheckpointAfterPhase,
+  assertBatchPersistenceOrder,
+  assertApplyStateMachine,
   assertDegradationClauses,
   assertEveryAdoptApproved,
   assertOrdered,
@@ -131,6 +133,35 @@ describe("assertDegradationClauses(§15 降级)", () => {
   it("缺条款 → 抛错", () => {
     const t = recorder();
     expect(() => assertDegradationClauses(t, [DEGRADATION_CLAUSE.dedupFailed])).toThrow(/dedup_failed/);
+  });
+});
+
+describe("N33 batch/resume/apply trace contract", () => {
+  it("batch 必须 plan → artifact → cursor，恰推进一次", () => {
+    const t = recorder();
+    t.record({ type: "batch_planned", workflow_id: "w", batch_id: "b", phase: "2a", ordinal: 0 });
+    t.record({ type: "batch_artifact", workflow_id: "w", batch_id: "b", result_hash: "h", transaction_id: "tx" });
+    t.record({ type: "batch_cursor", workflow_id: "w", batch_id: "b", state: "completed" });
+    expect(() => assertBatchPersistenceOrder(t)).not.toThrow();
+    const bad = recorder();
+    bad.record({ type: "batch_artifact", workflow_id: "w", batch_id: "b", result_hash: "h", transaction_id: "tx" });
+    expect(() => assertBatchPersistenceOrder(bad)).toThrow(/未先提交 plan/);
+  });
+
+  it("apply applied 必须来自 applying 且携 transaction identity", () => {
+    const t = recorder();
+    t.record({ type: "apply_state", workflow_id: "w", apply_id: "a", target: "x", from: "waiting_approval", to: "applying" });
+    t.record({ type: "apply_state", workflow_id: "w", apply_id: "a", target: "x", from: "applying", to: "applied", transaction_id: "tx" });
+    expect(() => assertApplyStateMachine(t)).not.toThrow();
+    const bad = recorder();
+    bad.record({ type: "apply_state", workflow_id: "w", apply_id: "a", target: "x", from: "applying", to: "applied" });
+    expect(() => assertApplyStateMachine(bad)).toThrow(/transaction identity/);
+  });
+
+  it("resume 明确记录 provider_outcome_unknown，不把未知当 completed", () => {
+    const t = recorder();
+    t.record({ type: "resume", workflow_id: "w", outcome: "provider_outcome_unknown", remaining_batches: 1 });
+    expect(t.eventsOf("resume")).toMatchObject([{ outcome: "provider_outcome_unknown", remaining_batches: 1 }]);
   });
 });
 
