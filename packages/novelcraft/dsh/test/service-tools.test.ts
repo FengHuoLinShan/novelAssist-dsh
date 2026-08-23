@@ -137,6 +137,60 @@ describe('NovelCraftService 端到端', () => {
     rmSync(vaultsDir, { recursive: true, force: true });
   });
 
+  it('真实 rc.8 Code Mode bridge: 嵌套 adopt 被拒后 run_code 整体失败且零写', async () => {
+    const h = await makeContext({ approval: { outcome: 'rejected' } });
+    h.ctx.provide('systemPrompt', {
+      tools: () => () => {},
+      section: () => () => {},
+    } as never);
+    let nestedRejected = false;
+    h.ctx.provide('codeRuntime', {
+      language: 'typescript',
+      isolation: 'test',
+      async run(request: {
+        bindings: Array<{ global: string; functions: Record<string, (args: unknown) => Promise<unknown>> }>;
+      }) {
+        const tools = request.bindings.find((binding) => binding.global === 'tools')?.functions;
+        if (!tools) return { logs: [], error: { kind: 'exception', message: 'missing tools binding' } };
+        try {
+          await tools.novelcraft_store_adopt({ root: binding.root, kind: 'object', ref: 'pend_red' });
+          return { logs: [], value: { adopted: true } };
+        } catch (error) {
+          nestedRejected = true;
+          return { logs: [], error: { kind: 'exception', message: error instanceof Error ? error.message : String(error) } };
+        }
+      },
+    } as never);
+    new ToolRuntime(h.ctx, { mode: 'code' });
+    const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-code-tools-'));
+    await h.ctx.plugin(NovelCraftService, {
+      llm: { provider: 'fake', model: 'fake-model' },
+      vaultsDir,
+      watch: { enabled: false, intervalMinutes: 60 },
+    });
+    const binding = h.ctx.novelcraft.vaults.ensureVault('代码模式');
+    await h.ctx.novelcraft.vaults.bindSession('s1', binding);
+    writePendingObject({ root: binding.root });
+    const codeAgent = { id: 'a1', session: { id: 's1', append: () => {} } } as never;
+
+    const result = await h.ctx.tools.execute({
+      callId: 'code-1' as never,
+      name: 'run_code',
+      arguments: { code: 'ignored by fake runtime', description: 'Attempt rejected adopt' },
+      agent: codeAgent,
+      signal: new AbortController().signal,
+    });
+
+    expect(nestedRejected).toBe(true);
+    expect(result).toMatchObject({
+      isError: true,
+      error: { info: { name: 'CodeRunFailedError', code: 'CODE_RUN_FAILED' } },
+    });
+    expect(existsSync(path.join(binding.root, 'world', 'objects', 'pend_red.md'))).toBe(false);
+    expect(existsSync(path.join(binding.root, 'world', 'pending', 'pend_red.md'))).toBe(true);
+    rmSync(vaultsDir, { recursive: true, force: true });
+  });
+
   it('服务装配: 全部适配器暴露在 ctx.novelcraft', async () => {
     const env = await setup();
     expect(env.service.config.llm).toEqual({ provider: 'fake', model: 'fake-model' });

@@ -326,6 +326,7 @@ describe('R31 · 导入文件门禁(白名单/50MB/basename)', () => {
     expect(validateImportFile('a.docx', 100).ok).toBe(false);
     expect(validateImportFile('a.txt', MAX_IMPORT_FILE_SIZE + 1).ok).toBe(false);
     expect(validateImportFile('a.txt', 100).ok).toBe(true);
+    expect(validateImportFile('notes.md', 100).ok).toBe(true);
   });
 
   it('basename-sanitizes a traversal path before extension check', () => {

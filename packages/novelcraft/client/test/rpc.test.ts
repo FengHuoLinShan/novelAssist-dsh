@@ -1,12 +1,12 @@
-// @novelcraft/client 宿主半身 RPC 处理器行为契约。
+// @novelcraft/dsh-client 宿主半身 RPC 处理器行为契约。
 // 断言引设计文档 §9/§17 + wire 契约: watch/state 四态数据、inbox/list 卡片
 // (作者语言)、inbox/act 四动词回 assistant.act(adopt 指引给助手, UI 不写资产);
 // 未绑定 → capability 缺省, 不炸通道。
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
-import { pushSignal } from '@novelcraft/assistant';
+import { listSignals, pushSignal } from '@novelcraft/assistant';
 import { readAtlasTree, writeAtlasNode, writeAtlasPage } from '@novelcraft/world';
 import { initVault } from '@novelcraft/vault';
 import { describe, expect, it } from 'vitest';
@@ -46,7 +46,76 @@ function setup(overrides: {
   return { ctx, root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
+function pngBytes(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+  bytes.write('IHDR', 12);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+}
+
 describe('novelcraft RPC 处理器', () => {
+  it('intake/stage-text: 会话授权 bytes → 收据 + 导入意图, 零章节资产写入', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    const text = Buffer.from('第一章 雨夜\n雨下了一夜。', 'utf8');
+    const result = await h.intakeStage({
+      sessionId: 's1',
+      file_name: '手稿.md',
+      bytes_base64: text.toString('base64'),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toMatchObject({ file_name: '手稿.md', byte_length: text.byteLength });
+      expect(result.value.receipt_id).toMatch(/^[0-9a-f-]{36}$/);
+      const sessionDirs = readdirSync(path.join(env.root, '.git', 'novelcraft-intake'));
+      expect(sessionDirs).toHaveLength(1);
+      const receipt = JSON.parse(readFileSync(path.join(
+        env.root, '.git', 'novelcraft-intake', sessionDirs[0], `${result.value.receipt_id}.json`,
+      ), 'utf8')) as { status: string };
+      expect(receipt.status).toBe('ready');
+      expect(listSignals(env.root).some((signal) => signal.proposed_action.includes(result.value.receipt_id))).toBe(true);
+    }
+    expect(existsSync(path.join(env.root, 'chapters', '001.md'))).toBe(false);
+    expect(existsSync(path.join(env.root, 'imports', 'import-log.jsonl'))).toBe(false);
+    env.cleanup();
+  });
+
+  it('intake/stage-text: 未绑定/非 canonical base64/二进制均拒绝且零收据', async () => {
+    const env = setup();
+    const h = createNovelcraftHandlers(env.ctx);
+    expect((await h.intakeStage({ sessionId: 'unknown', file_name: 'a.txt', bytes_base64: 'YQ==' })).ok).toBe(false);
+    expect((await h.intakeStage({ sessionId: 's1', file_name: 'a.txt', bytes_base64: 'not base64' })).ok).toBe(false);
+    expect((await h.intakeStage({ sessionId: 's1', file_name: 'a.txt', bytes_base64: Buffer.from([0]).toString('base64') })).ok).toBe(false);
+    expect(existsSync(path.join(env.root, '.git', 'novelcraft-intake'))).toBe(false);
+    env.cleanup();
+  });
+
+  it('intake/stage-atlas-image: 选中节点 + 冻结图片 → 锁定目标的收据, 零地图页写入', async () => {
+    const env = setup();
+    writeAtlasNode(env.root, {
+      id: 'n1', parent_ref: null, location_ref: null, semantic_key: 'entity:n1', level: 'world',
+      title: '世界', status: 'provisional', sort_order: 0,
+    });
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.intakeStageImage({
+      sessionId: 's1',
+      file_name: 'map.png',
+      bytes_base64: pngBytes(128, 96).toString('base64'),
+      node_ref: 'n1',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.node_ref).toBe('n1');
+      expect(listSignals(env.root).some((signal) =>
+        signal.proposed_action.includes(result.value.receipt_id) && signal.proposed_action.includes('n1'))).toBe(true);
+    }
+    expect(readAtlasTree(env.root).pendingPages).toHaveLength(0);
+    env.cleanup();
+  });
+
   it('watch/state: 未绑定 → capability 缺省(静默零态)', async () => {
     const env = setup();
     const h = createNovelcraftHandlers(env.ctx);

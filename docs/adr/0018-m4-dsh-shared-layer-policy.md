@@ -55,7 +55,7 @@ pnpm patch), 而非改 connection + runtime; seam 提案见
 
 ### 2. 信号推送: 双层落地
 
-- **本轮(2026-08-14)**: `@novelcraft/client` 落地「事件触发短轮询 + 退避」, 不动共享层:
+- **本轮(2026-08-14)**: `@novelcraft/dsh-client` 落地「事件触发短轮询 + 退避」, 不动共享层:
   - 挂载 / 窗口聚焦 / 可见性恢复 / 动作后 → 立即刷新并把退避重置到短间隔;
   - 快照无变化时退避延长(封顶), 有变化时回到短间隔;
   - 保留一个非零基线轮询, 以捕获雷达后台产出(忙碌→待确认 的状态跃迁)。
@@ -86,13 +86,13 @@ ADR-0017 §3 的「不修改、不发布」由「绝对冻结」改为「默认�
 - 信号推送(通用 `client/push` 通道): 已向上游提交 Discussion #1289
   (https://github.com/deepseek-ai/deepseek-harness/discussions/1289)。窄缝 patch 已落地:
   `scripts/apply-dsh-patches.mjs`(postinstall 幂等, 给 dsh-api-remotes 的 allowlist 加
-  `client/push`)+ `@novelcraft/dsh` emit(`src/push.ts` + tools 三处)+ `@novelcraft/client`
+  `client/push`)+ `@novelcraft/dsh` emit(`src/push.ts` + tools 三处)+ `@novelcraft/dsh-client`
   订阅(`ctx.remote.$on` → DOM 事件 → useWatch 刷新)。去 fork 化: 上游合入等价通道后删补丁。
 
 ## 影响
 
 - 共享层任何改造必须过 §1 四条纪律, 否则不得改动 `@deepseek-ai/*` 相关面。
-- 本轮代码变更: `@novelcraft/client` 的 `useWatch` 轮询策略(§2), 无跨包 seam 变化。
+- 本轮代码变更: `@novelcraft/dsh-client` 的 `useWatch` 轮询策略(§2), 无跨包 seam 变化。
 - 上游 Discussion 落地后回填登记, 并触发对应 patch/fork 的去 fork 化。
 
 ## 待确认事项

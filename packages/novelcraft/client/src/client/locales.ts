@@ -56,6 +56,12 @@ export type NovelcraftKey =
   | 'desk.mode.plan'
   | 'desk.mode.review'
   | 'desk.mode.reference'
+  | 'desk.mode.import'
+  | 'intake.choose'
+  | 'intake.hint'
+  | 'intake.staging'
+  | 'intake.fail'
+  | 'intake.tooLarge'
   | 'desk.chapters'
   | 'desk.objects'
   | 'desk.reviews'
@@ -160,6 +166,12 @@ export const zh: Record<NovelcraftKey, string> = {
   'desk.mode.plan': '计划',
   'desk.mode.review': '评审',
   'desk.mode.reference': '参照',
+  'desk.mode.import': '导入',
+  'intake.choose': '选择 .txt / .md 手稿',
+  'intake.hint': '文件仅作为当前会话的一次性导入输入。授权后回到对话让助手完成切章与入库。',
+  'intake.staging': '正在校验并暂存…',
+  'intake.fail': '文件授权失败, 请检查格式后重试。',
+  'intake.tooLarge': '文件超过 50MB, 请拆分后重试。',
   'desk.chapters': '章节',
   'desk.objects': '世界对象',
   'desk.reviews': '语义审查',
@@ -265,6 +277,12 @@ export const en: Record<NovelcraftKey, string> = {
   'desk.mode.plan': 'Plan',
   'desk.mode.review': 'Review',
   'desk.mode.reference': 'Reference',
+  'desk.mode.import': 'Import',
+  'intake.choose': 'Choose a .txt / .md manuscript',
+  'intake.hint': 'The file is a one-time input for this session. After authorization, return to chat and ask the assistant to import it.',
+  'intake.staging': 'Validating and staging…',
+  'intake.fail': 'File authorization failed. Check the format and try again.',
+  'intake.tooLarge': 'The file exceeds 50MB. Split it and try again.',
   'desk.chapters': 'Chapters',
   'desk.objects': 'World objects',
   'desk.reviews': 'Semantic reviews',

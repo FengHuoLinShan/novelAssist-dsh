@@ -6,7 +6,7 @@
 // 本文件只负责类型声明(声明合并进 cordis Events)+ 便捷 emit; 运行时零依赖。
 import type { Context } from '@deepseek-ai/cordis';
 
-/** 信号变化频道名(@novelcraft/client 据此刷新宠物/收件箱)。 */
+/** 信号变化频道名(@novelcraft/dsh-client 据此刷新宠物/收件箱)。 */
 export const SIGNALS_CHANGED = 'novelcraft/signals-changed';
 
 declare module '@deepseek-ai/cordis' {

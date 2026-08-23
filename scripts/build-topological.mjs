@@ -8,7 +8,9 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 // 之后构建; imports → writing → outline, 故 outline/writing 提前于 imports 构建。
 const order = ['vault', 'trace', 'store', 'llm-step', 'rag', 'rag-bge', 'memory', 'outline', 'writing', 'imports', 'world', 'context', 'assistant', 'dsh', 'client']
 for (const workspace of order) {
-  const result = spawnSync('npm', ['run', 'build', '-w', `@novelcraft/${workspace}`], {
+  // rc.8 reserves a trailing `/client` as the browser subpath marker.
+  const packageName = workspace === 'client' ? '@novelcraft/dsh-client' : `@novelcraft/${workspace}`
+  const result = spawnSync('npm', ['run', 'build', '-w', packageName], {
     cwd: root,
     stdio: 'inherit',
   })

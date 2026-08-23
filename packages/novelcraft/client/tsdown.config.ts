@@ -3,5 +3,5 @@
 import { clientConfig } from './build-tools/tsdown.client.ts'
 
 export default [
-  clientConfig('@novelcraft/client', 'src/client/index.ts'),
+  clientConfig('@novelcraft/dsh-client', 'src/client/index.ts'),
 ]

@@ -7,12 +7,14 @@ import type {
   InboxActPayload,
   InboxActValue,
   InboxListValue,
+  IntakeStageValue,
   PresetsListValue,
   PresetsSelectValue,
   StoryMapValue,
   WatchStateValue,
   WritingDeskValue,
   AtlasAnnotationOpInput,
+  AtlasImageIntakeStageValue,
   AtlasViewValue,
   AtlasAnnotationRequestValue,
 } from '../wire.ts'
@@ -32,6 +34,47 @@ async function call<T>(
   } catch {
     return null
   }
+}
+
+export async function stageTextIntakeFile(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  fileName: string,
+  bytesBase64: string,
+): Promise<IntakeStageValue | null> {
+  return call<IntakeStageValue>(connection, ENDPOINTS.intakeStage, {
+    sessionId,
+    file_name: fileName,
+    bytes_base64: bytesBase64,
+  })
+}
+
+export async function stageAtlasImageIntakeFile(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  fileName: string,
+  bytesBase64: string,
+  nodeRef: string,
+): Promise<AtlasImageIntakeStageValue | null> {
+  return call<AtlasImageIntakeStageValue>(connection, ENDPOINTS.intakeStageImage, {
+    sessionId,
+    file_name: fileName,
+    bytes_base64: bytesBase64,
+    node_ref: nodeRef,
+  })
+}
+
+export function readFileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== 'string' || !result.includes(',')) reject(new Error('read failed'))
+      else resolve(result.slice(result.indexOf(',') + 1))
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 /** 事件触发短轮询下界与退避上界(ADR-0018 §2)。 */
@@ -410,4 +453,3 @@ export function useChapterDossier(
   }, [refresh])
   return { data, refresh }
 }
-

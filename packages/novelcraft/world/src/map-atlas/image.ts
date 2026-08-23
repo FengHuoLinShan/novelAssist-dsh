@@ -4,7 +4,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { paths } from "@novelcraft/vault";
+import { consumeFileIntake, paths, stageFileIntake, type StagedFileIntake } from "@novelcraft/vault";
 import { StoreError } from "@novelcraft/store";
 import { readAtlasTree } from "./read.js";
 import { computeAtlasPageContentHash, writeAtlasCandidates, writeAtlasRun } from "./write.js";
@@ -71,6 +71,55 @@ function probeImage(buf: Buffer): ImageProbe {
   throw new StoreError("VALIDATION_FAILED", "不支持的图片格式(仅 PNG/JPEG, magic bytes 校验)");
 }
 
+function validateImage(bytes: Buffer): ImageProbe {
+  if (bytes.byteLength > ATLAS_IMAGE_MAX_BYTES) {
+    throw new StoreError("VALIDATION_FAILED", `图片超过 50MB 上限(${bytes.byteLength} bytes)`);
+  }
+  const probe = probeImage(bytes);
+  if (
+    probe.width < ATLAS_IMAGE_MIN_DIM || probe.height < ATLAS_IMAGE_MIN_DIM
+    || probe.width > ATLAS_IMAGE_MAX_DIM || probe.height > ATLAS_IMAGE_MAX_DIM
+  ) {
+    throw new StoreError(
+      "VALIDATION_FAILED",
+      `图片尺寸 ${probe.width}x${probe.height} 越界(需 ${ATLAS_IMAGE_MIN_DIM}~${ATLAS_IMAGE_MAX_DIM})`,
+    );
+  }
+  return probe;
+}
+
+export function stageAtlasImageIntake(
+  root: string,
+  sessionId: string,
+  fileName: string,
+  bytes: Uint8Array,
+  nodeRef: string,
+): StagedFileIntake {
+  validateImage(Buffer.from(bytes));
+  const tree = readAtlasTree(root);
+  if (![...tree.nodes, ...tree.pendingNodes].some((node) => node.id === nodeRef)) {
+    throw new StoreError("NOT_FOUND", `目标节点不存在: ${nodeRef}`);
+  }
+  return stageFileIntake(root, sessionId, {
+    kind: "atlas-image",
+    fileName,
+    bytes,
+    metadata: { node_ref: nodeRef },
+  });
+}
+
+export function importStagedAtlasImage(
+  root: string,
+  sessionId: string,
+  receiptId: string,
+): { page: AtlasPage; run?: AtlasRun } {
+  return consumeFileIntake(root, sessionId, receiptId, "atlas-image", ({ bytes, metadata }) => {
+    const nodeRef = metadata.node_ref;
+    if (!nodeRef) throw new StoreError("VALIDATION_FAILED", "图片收据缺少目标节点");
+    return importAtlasImageBytes(root, bytes, { nodeRef });
+  });
+}
+
 export interface ImportAtlasImageOptions {
   /** 上传到 prompt_only 候选页时的目标页 id; 缺省 = 该节点下第一个 prompt_only 候选页。 */
   pageRef?: string;
@@ -98,16 +147,18 @@ export function importAtlasImage(
   if (size > ATLAS_IMAGE_MAX_BYTES) {
     throw new StoreError("VALIDATION_FAILED", `图片超过 50MB 上限(${size} bytes)`);
   }
-  const probe = probeImage(readFileSync(filePath));
-  if (
-    probe.width < ATLAS_IMAGE_MIN_DIM || probe.height < ATLAS_IMAGE_MIN_DIM
-    || probe.width > ATLAS_IMAGE_MAX_DIM || probe.height > ATLAS_IMAGE_MAX_DIM
-  ) {
-    throw new StoreError(
-      "VALIDATION_FAILED",
-      `图片尺寸 ${probe.width}x${probe.height} 越界(需 ${ATLAS_IMAGE_MIN_DIM}~${ATLAS_IMAGE_MAX_DIM})`,
-    );
-  }
+  return importAtlasImageBytes(root, readFileSync(filePath), target, opts);
+}
+
+/** Frozen-byte image importer; the public agent seam reaches this only through a session receipt. */
+export function importAtlasImageBytes(
+  root: string,
+  input: Uint8Array,
+  target: { nodeRef: string },
+  opts?: ImportAtlasImageOptions,
+): { page: AtlasPage; run?: AtlasRun } {
+  const bytes = Buffer.from(input);
+  const probe = validateImage(bytes);
 
   const p = paths(root);
   const tree = readAtlasTree(root);
@@ -144,7 +195,7 @@ export function importAtlasImage(
     };
     const next: AtlasPage = { ...base, content_hash: computeAtlasPageContentHash(base) };
     writeAtlasCandidates(root, [], [next], `atlas: import image -> ${targetPage.id}`, {
-      images: [{ pageSlug: targetPage.id, attempt, bytes: readFileSync(filePath), ext: probe.ext }],
+      images: [{ pageSlug: targetPage.id, attempt, bytes, ext: probe.ext }],
     });
     return { page: next };
   }
@@ -201,7 +252,7 @@ export function importAtlasImage(
   };
   writeAtlasRun(root, run);
   writeAtlasCandidates(root, [], [page], `atlas: import image -> ${pageId}`, {
-    images: [{ pageSlug: pageId, attempt, bytes: readFileSync(filePath), ext: probe.ext }],
+    images: [{ pageSlug: pageId, attempt, bytes, ext: probe.ext }],
   });
   return { page, run };
 }

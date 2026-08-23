@@ -5,14 +5,16 @@
 # storage/llm/approval/jobs/credentials/tools 等 DSH 官方服务由 profile
 # bundle 提供, 不在此重复列出。
 
-plugins:
-  novelcraft:
-    name: "@novelcraft/dsh"
-    config:
-      llm:
-        provider: deepseek          # 内容手默认路由(运行时 DSH 模型切换可覆盖)
-        model: deepseek-chat
-      vaultsDir: ~/Novels           # 每书一个子文件夹(D17)
-      watch:
-        enabled: false              # 雷达低频巡检默认关(D6)
-        intervalMinutes: 60
+- insert:
+    - id: novelcraft
+      name: "@novelcraft/dsh"
+      config:
+        llm:
+          provider: deepseek        # 内容手默认路由(运行时 DSH 模型切换可覆盖)
+          model: deepseek-chat
+        vaultsDir: ~/Novels         # 每书一个子文件夹(D17)
+        watch:
+          enabled: false            # 雷达低频巡检默认关(D6)
+          intervalMinutes: 60
+    - id: novelcraft-client
+      name: "@novelcraft/dsh-client"

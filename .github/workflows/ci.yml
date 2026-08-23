@@ -44,7 +44,9 @@ jobs:
       - name: Build default packages (topological order, excludes BGE adapter)
         run: |
           for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
-            npm run build -w @novelcraft/$p
+            name=@novelcraft/$p
+            test "$p" = client && name=@novelcraft/dsh-client
+            npm run build -w "$name"
           done
       - name: Verify physically omitted BGE adapter cannot load
         run: |
@@ -66,13 +68,17 @@ jobs:
       - name: Test default workspaces (excludes BGE capability tests)
         run: |
           for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
-            npm test -w @novelcraft/$p
+            name=@novelcraft/$p
+            test "$p" = client && name=@novelcraft/dsh-client
+            npm test -w "$name"
           done
           npm test -w @novelcraft/preset
       - name: Typecheck default workspaces (excludes BGE adapter)
         run: |
           for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
-            npm run typecheck -w @novelcraft/$p
+            name=@novelcraft/$p
+            test "$p" = client && name=@novelcraft/dsh-client
+            npm run typecheck -w "$name"
           done
       - name: Self-test audit gate fail-closed semantics
         run: npm run check:audit-gate

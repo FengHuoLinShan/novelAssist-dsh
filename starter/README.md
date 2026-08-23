@@ -11,10 +11,8 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 ## 当前 source-only 挂载
 
 ```sh
-# 1. 在 DSH 开发 profile 挂本仓库 workspace 的 @novelcraft/dsh 与 @novelcraft/client。
-# 2. profile patch 加一行(见 dev-profile/cordis.patch.yml):
-#    plugins:
-#      novelcraft: { name: "@novelcraft/dsh", config: { vaultsDir: ~/Novels } }
+# 1. 在 DSH 开发 profile 挂本仓库 workspace 的 @novelcraft/dsh 与 @novelcraft/dsh-client。
+# 2. 用 rc.8 patch-list 同时插入宿主与 UI 行(见 dev-profile/cordis.patch.yml)。
 # 3. 将 DSH agent preset 的 system root 指向
 #    <repo>/packages/novelcraft/preset/presets；不要只复制单个 preset 子目录。
 # 4. 打开已初始化并绑定到 session 的 NovelCraft Vault。
@@ -24,18 +22,18 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 
 挂载阶段(A)已完成并验证:
 
-- 单元测试: `cd packages/novelcraft/dsh && npm test`(31 条 seam 行为契约,
+- 单元测试: `cd packages/novelcraft/dsh && npm test`(216 条 seam 行为契约,
   真实 cordis/storage/storage-json/storage-domain/llm + 假 approval/jobs/credentials)。
 - 集成 demo: `node scripts/m5-mount-demo.mjs` 纯 node 跑通挂载全链
   (vault 初始化 → 索引 → 收件箱 → llm_step → 审批采用 → 雷达 job → 会话回查)。
 - 进 DSH profile 热开发: 在 profile 的 `cordis.patch.yml` 注入 `@novelcraft/dsh`
-  (见 `dev-profile/` 示例); client UI 待 client 阶段(B)。
+  与 `@novelcraft/dsh-client`(见 `dev-profile/` 示例)。
 
 ## 一句话开始
 
-> 「把这份本机 UTF-8 纯文本停靠进当前书, 做一次深度导入, 然后给我下一章提案。」
+> 在「写作台 → 导入」选好 `.txt/.md` 后说:「导入刚才的手稿, 做一次深度导入, 然后给我下一章提案。」
 
-当前可执行链是: session 已绑定 Vault → `.txt` 停靠 → 六阶段导入 → 收件箱复核 →
+当前可执行链是: session 已绑定 Vault → `.txt/.md` 会话收据停靠 → 六阶段导入 → 收件箱复核 →
 下一章提案/正文候选 → `store_adopt` 审批采用。浏览器附件承运、自然语言新建多书、
 独立语义审查/定向返修和 RP 尚未形成公开端到端入口, 不在这里预先承诺。
 

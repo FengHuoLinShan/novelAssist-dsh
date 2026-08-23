@@ -30,7 +30,7 @@
 
 ## R7 · client 模块 + 发布
 
-- `@novelcraft/client`: DSH web client-module(clientModules seam, `window.__DSH_BOOT__`
+- `@novelcraft/dsh-client`: DSH web client-module(clientModules seam, `window.__DSH_BOOT__`
   注入)——宠物(四态: 静默/微光/忙碌/待确认角标)、收件箱(卡片 + 四动词 + 键盘流 j/k/1-4/u)、
   写作台四模式(§17.4, 半屏布局 D10)、剧情地图(Story Map)。
   **注意**: 需 DSH 源码 checkout 构建 client 插件(dsh-rebuild 最终报告 §2.3 缺口 3 已记录

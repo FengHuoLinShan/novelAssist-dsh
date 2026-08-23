@@ -11,6 +11,7 @@ import path from 'node:path';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { afterEach, describe, expect, it } from 'vitest';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
+import { stageTextIntake } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { makeContext, type HarnessServices } from './helpers.js';
 
@@ -23,7 +24,6 @@ interface TestEnv {
   root: string;
   tools: ToolDefinition[];
   exec: { callId: string; name: string; arguments: unknown; agent: unknown; signal: AbortSignal };
-  workDir: string;
 }
 
 const envs: TestEnv[] = [];
@@ -45,7 +45,6 @@ async function setup(): Promise<TestEnv> {
   const service = h.ctx.novelcraft;
   const binding = service.vaults.ensureVault('RAG测试书');
   await service.vaults.bindSession('s1', binding);
-  const workDir = mkdtempSync(path.join(os.tmpdir(), 'nc-rag-manuscript-'));
   const env: TestEnv = {
     h,
     service,
@@ -53,7 +52,6 @@ async function setup(): Promise<TestEnv> {
     root: binding.root,
     tools,
     exec: { callId: 'c1', name: '', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    workDir,
   };
   envs.push(env);
   return env;
@@ -61,7 +59,6 @@ async function setup(): Promise<TestEnv> {
 afterEach(() => {
   for (const e of envs.splice(0)) {
     rmSync(e.vaultsDir, { recursive: true, force: true });
-    rmSync(e.workDir, { recursive: true, force: true });
   }
 });
 
@@ -72,6 +69,7 @@ const tool = (env: TestEnv, name: string): ToolDefinition => {
 };
 const call = async (env: TestEnv, name: string, args: Record<string, unknown>) =>
   (await tool(env, name).execute(args as never, env.exec as never)) as Record<string, unknown>;
+const stage = (env: TestEnv) => stageTextIntake(env.root, 's1', '手稿.txt', Buffer.from(SAMPLE)).receiptId;
 
 /** 两章共享「雨」: 保证 BM25 召回 >1 条, 触发内容手精排分支。 */
 const SAMPLE = [
@@ -97,9 +95,7 @@ describe('novelcraft_rag_search(M6 Track A3 语义检索)', () => {
 
   it('全链: 文本入库 → 事件钩子自动建索引 → 检索命中正文片段(精排 llm_rerank)', async () => {
     const env = await setup();
-    const file = path.join(env.workDir, '手稿.txt');
-    writeFileSync(file, SAMPLE, 'utf8');
-    const ingest = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: file });
+    const ingest = await call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: stage(env) });
     expect(ingest.ok).toBe(true);
     // 事件钩子(§11): ingest 后 RAG 索引已自动增量同步落盘
     expect(existsSync(path.join(env.root, '.assistant', 'rag-index.json'))).toBe(true);
@@ -148,9 +144,7 @@ describe('novelcraft_rag_search(M6 Track A3 语义检索)', () => {
 
   it('rerank=false: 纯 L0 检索, 不触发任何 LLM 调用(adapter.requests 不变)', async () => {
     const env = await setup();
-    const file = path.join(env.workDir, '手稿.txt');
-    writeFileSync(file, SAMPLE, 'utf8');
-    await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: file });
+    await call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: stage(env) });
     const before = env.h.adapter.requests.length;
     const r = await call(env, 'novelcraft_rag_search', { root: env.root, query: '雨', rerank: false });
     expect(r.ok).toBe(true);

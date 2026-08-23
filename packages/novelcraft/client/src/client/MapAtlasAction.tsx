@@ -7,8 +7,9 @@ import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS, type NovelcraftKey } from './locales.ts'
-import { requestAtlasAnnotations, useAtlasView } from './useWatch.ts'
+import { readFileBase64, requestAtlasAnnotations, stageAtlasImageIntakeFile, useAtlasView } from './useWatch.ts'
 import type { AtlasAnnotationOpInput, AtlasLabelCard, AtlasNodeCard, AtlasPageCard } from '../wire.ts'
+import { MAX_TEXT_INTAKE_BYTES } from '../wire.ts'
 import css from './novelcraft.module.css'
 
 export type MapAtlasActionProps =
@@ -237,6 +238,8 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'run' | 'atlas'>('atlas')
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadMessage, setUploadMessage] = useState('')
   const { data, refresh } = useAtlasView(connection, sessionId)
 
   const adoptedPages = useMemo(() => data?.adopted.pages ?? [], [data])
@@ -246,6 +249,25 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
     selectedNode ? adoptedPages.find((p) => p.node_ref === selectedNode) : adoptedPages[0]
   const selectedPending: AtlasPageCard | undefined =
     selectedNode ? pendingPages.find((p) => p.node_ref === selectedNode) : pendingPages[0]
+
+  const chooseImage = async (file: File | undefined) => {
+    if (!file || !selectedNode) return
+    if (file.size > MAX_TEXT_INTAKE_BYTES) {
+      setUploadMessage('图片超过 50MB, 请压缩后重试。')
+      return
+    }
+    setUploadBusy(true)
+    setUploadMessage('')
+    try {
+      const result = await stageAtlasImageIntakeFile(connection, sessionId, file.name, await readFileBase64(file), selectedNode)
+      setUploadMessage(result?.message ?? '图片授权失败, 请检查格式和尺寸。')
+      if (result) window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
+    } catch {
+      setUploadMessage('图片授权失败, 请检查格式和尺寸。')
+    } finally {
+      setUploadBusy(false)
+    }
+  }
 
   return (
     <>
@@ -258,10 +280,27 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
               <button style={{ fontWeight: tab === 'run' ? 700 : 400 }} onClick={() => { setTab('run'); setSelectedNode(null) }}>本次规划</button>
               <button style={{ fontWeight: tab === 'atlas' ? 700 : 400 }} onClick={() => { setTab('atlas'); setSelectedNode(null) }}>我的地图册</button>
               <button onClick={() => void refresh()}>刷新</button>
+              {selectedNode ? (
+                <label className={css.fileLabel}>
+                  <span>{uploadBusy ? '校验中…' : '为选中节点选图'}</span>
+                  <input
+                    className={css.fileInput}
+                    type="file"
+                    accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                    disabled={uploadBusy}
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0]
+                      event.currentTarget.value = ''
+                      void chooseImage(file)
+                    }}
+                  />
+                </label>
+              ) : null}
               <span style={{ marginLeft: 'auto', fontSize: 12, opacity: 0.7 }}>
                 {data?.queue && data.queue.ops > 0 ? `待应用 ${data.queue.ops} 个标签修改` : ''}
               </span>
             </div>
+            {uploadMessage ? <div className={css.message}>{uploadMessage}</div> : null}
             {!data?.bound ? <div className={css.itemLine}>未绑定 vault(先选书)。</div> : null}
             {data?.bound && tab === 'run' ? (
               <div>

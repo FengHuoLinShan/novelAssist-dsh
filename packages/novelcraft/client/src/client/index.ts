@@ -1,4 +1,4 @@
-// @novelcraft/client · 浏览器半身: 宠物(会话头动作)+ 收件箱面板。
+// @novelcraft/dsh-client · 浏览器半身: 宠物(会话头动作)+ 收件箱面板。
 // 数据 = /novelcraft loopback RPC(宿主读 .assistant/signals + jobs);
 // 四动词回宿主 assistant.act。UI 只呈现作者语言, 不暴露 raw JSON/内部枚举。
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'

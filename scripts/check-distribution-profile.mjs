@@ -140,7 +140,9 @@ for (const entry of packageDirs) {
     continue
   }
   workspaceNames.push(pkg.name)
-  if (pkg.name !== `@novelcraft/${entry.name}`) failures.push(`${entry.name}: unexpected package name ${pkg.name}`)
+  // rc.8 strips a trailing `/client` when resolving browser bundle ids.
+  const expectedName = entry.name === 'client' ? '@novelcraft/dsh-client' : `@novelcraft/${entry.name}`
+  if (pkg.name !== expectedName) failures.push(`${entry.name}: unexpected package name ${pkg.name}`)
   if (pkg.private !== true) failures.push(`${pkg.name}: private must be true`)
   if (pkg.engines?.node !== expectedEngine) failures.push(`${pkg.name}: engines.node must be ${expectedEngine}`)
   if (corePackages.has(entry.name)) {

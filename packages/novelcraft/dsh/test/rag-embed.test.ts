@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { stageTextIntake } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { optionalBgeLoader } from '../src/optional-bge.js';
 import { makeContext, type HarnessServices } from './helpers.js';
@@ -116,10 +117,8 @@ describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
     const env = await setup();
     const load = vi.spyOn(optionalBgeLoader, 'load');
     writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'embedding: bge-local-v1\n', 'utf8');
-    const manuscript = path.join(env.vaultsDir, '手稿.txt');
-    writeFileSync(manuscript, '第一章 雨夜\n雨下了一夜。', 'utf8');
-
-    const result = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: manuscript });
+    const receipt = stageTextIntake(env.root, 's1', '手稿.txt', Buffer.from('第一章 雨夜\n雨下了一夜。')).receiptId;
+    const result = await call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: receipt });
     expect(result.ok).toBe(true);
     await Promise.resolve();
     expect(load).not.toHaveBeenCalled();

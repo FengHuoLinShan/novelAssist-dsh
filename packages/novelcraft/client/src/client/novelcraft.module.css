@@ -200,6 +200,39 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.intakePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.fileLabel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.fileLabel:focus-within {
+  border-color: var(--dsw-alias-accent, var(--dsw-alias-primary));
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 /* 关系边(ADR-0019 跨类关系): 分组小标题 + 行 + type 彩色小徽章(每 type 一类配色)。 */
 .edgeGroupTitle {
   margin: 6px 0 2px;

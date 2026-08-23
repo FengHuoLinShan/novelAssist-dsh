@@ -65,7 +65,7 @@ api-proxy 已 import 该包, 事件增强自动进其编译面, `ctx.on('client/
 
 - host `@novelcraft/dsh`: 信号产出点(radar 落盘、inbox act、深度导入收尾等)
   `ctx.emit('client/push', 'novelcraft/signals-changed', payload)`。
-- client `@novelcraft/client`: `ctx.remote.$on('client/push', (channel, payload) => {
+- client `@novelcraft/dsh-client`: `ctx.remote.$on('client/push', (channel, payload) => {
   if (channel === 'novelcraft/signals-changed') refresh() })`, 替换退避基线轮询的即时性
   (退避轮询保留为雷达后台产出的兜底)。
 

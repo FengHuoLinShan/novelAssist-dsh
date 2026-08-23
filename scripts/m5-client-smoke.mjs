@@ -38,6 +38,9 @@ globalThis.window = { __ModuleLoader__: moduleLoaderStub }
 new Function('require', source)(stubRequire)
 const exports_ = captured.load.factory(stubRequire)
 const { apply, inject, PetAction } = exports_
+if (captured.load.id !== '@novelcraft/dsh-client') {
+  throw new Error(`FAIL: rc.8 client bundle id 使用了保留后缀或意外名称: ${captured.load.id}`)
+}
 
 // ---- 桩客户端 ctx ----
 const calls = { locale: [], slots: [] }

@@ -13,6 +13,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { realpathSync } from 'node:fs';
 import * as assistant from '@novelcraft/assistant';
 import * as store from '@novelcraft/store';
+import * as writing from '@novelcraft/writing';
 import type { AdoptableKind } from '@novelcraft/store';
 import { GateDeniedError, GateRequiredError } from './approval/gate.js';
 import { svc } from './ctx.js';
@@ -68,6 +69,9 @@ function toolError(
   if (err instanceof store.StoreError) {
     return new HarnessError(`store: ${err.message}`, `STORE_${err.code}`, { cause: err });
   }
+  if (err instanceof writing.TextIntakeError) {
+    return new HarnessError(err.message, `INTAKE_${err.code}`, { cause: err });
+  }
   if (err instanceof Error && err.name === 'AbortError') {
     return new HarnessError('工具执行已取消', 'ABORTED', { cause: err });
   }
@@ -98,6 +102,14 @@ export class WorkspaceIsolationError extends Error {
   }
 }
 
+function sessionIdOf(exec: { agent?: unknown }): string {
+  const sessionId = (exec.agent as { session?: { id?: unknown } } | undefined)?.session?.id;
+  if (typeof sessionId !== 'string' || sessionId.length === 0) {
+    throw new WorkspaceIsolationError('无 agent session id, 拒绝访问任意 vault');
+  }
+  return sessionId;
+}
+
 /**
  * 统一工具 root/binding 解析(N34 工作区隔离; 独立审查确认问题修复):
  * - 所有带 root 或会访问 vault 的 agent 工具都必须经本 helper 从
@@ -118,10 +130,7 @@ async function resolveBoundRoot(
   exec: { agent?: unknown },
   requested?: unknown,
 ): Promise<string> {
-  const sessionId = (exec.agent as { session?: { id?: unknown } } | undefined)?.session?.id;
-  if (typeof sessionId !== 'string' || sessionId.length === 0) {
-    throw new WorkspaceIsolationError('无 agent session id, 拒绝访问任意 vault');
-  }
+  const sessionId = sessionIdOf(exec);
   const binding = await service.vaults.resolve(sessionId);
   if (!binding) {
     throw new WorkspaceIsolationError(`session ${sessionId} 未绑定 vault, 拒绝`);
@@ -206,7 +215,7 @@ interface GenerateNextChapterArgs extends RootArgs {
   premise?: string;
 }
 interface IngestFileArgs extends RootArgs {
-  file_path: string;
+  receipt_id: string;
   start_chapter?: number;
   force?: boolean;
 }
@@ -229,11 +238,7 @@ interface MapAtlasViewArgs extends RootArgs {
   run_id?: string;
 }
 interface MapAtlasUploadArgs extends RootArgs {
-  file_path: string;
-  node_ref?: string;
-  title?: string;
-  level?: string;
-  parent_ref?: string;
+  receipt_id: string;
 }
 interface MapAtlasReviewArgs extends RootArgs {
   page_ref?: string;
@@ -756,17 +761,17 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       },
     }),
 
-    // ---- 10. 文本入库(Track 1b: 路径 → 章节切分 → wiki 化存储; D9a 纯文本) ----
+    // ---- 10. 文本入库(页内授权收据 → 章节切分 → wiki 化存储; D9a) ----
     defineTool({
       name: 'novelcraft_ingest_file',
       description:
-        '文本入库: 从绝对路径读手稿(.txt/.md, ≤50MB), 确定性切分章节并写入工作区' +
-        '(imports/ 原文停靠 + chapters/NNN.md + import-log.jsonl)。调用前建议先用 read 工具' +
-        '预览前 100 行确认章节标题结构(第X章/Chapter N/序章)。同号章内容冲突默认跳过' +
+        '文本入库: 消费用户在当前写作台选择文件后获得的会话收据(.txt/.md, ≤50MB),' +
+        '确定性切分章节并写入 imports/ + chapters/ + import-log。不接受主机文件路径。' +
+        '同号章内容冲突默认跳过' +
         '(force 才覆盖); 同文件重复导入自动跳过(幂等)。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        file_path: { type: 'string', required: true, description: '手稿文件绝对路径(.txt/.md)' },
+        receipt_id: { type: 'string', required: true, description: '当前会话写作台生成的文件收据 ID' },
         start_chapter: { type: 'integer', description: '落库起始章节号(缺省接现有最大章之后)' },
         force: { type: 'boolean', description: '同号章内容不同时覆盖(默认跳过并报告冲突)' },
       },
@@ -776,6 +781,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           additionalProperties: false,
           properties: {
           ok: { type: 'boolean', required: true },
+          receipt_id: { type: 'string', required: true },
           total: { type: 'integer', required: true },
           imported: { type: 'integer', required: true },
           skipped: { type: 'integer', required: true },
@@ -789,8 +795,10 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const args = rawArgs as unknown as IngestFileArgs;
         try {
           const root = await resolveBoundRoot(service, exec, args.root);
+          const sessionId = sessionIdOf(exec);
           const report = service.capabilities.propose.ingestTextFile(root, {
-            filePath: args.file_path,
+            receiptId: args.receipt_id,
+            sessionId,
             ...(args.start_chapter !== undefined ? { startChapter: args.start_chapter } : {}),
             ...(args.force ? { force: true } : {}),
           });
@@ -812,6 +820,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             : `已入库 ${report.imported ?? 0} 章(共解析 ${report.total ?? 0} 章${conflictNote}${noHeading})。下一步可跑深度导入(novelcraft_deep_import)。`;
           return {
             ok: true,
+            receipt_id: args.receipt_id,
             total: report.total ?? 0,
             imported: report.imported ?? 0,
             skipped: report.skipped ?? 0,
@@ -1104,20 +1113,16 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       },
     }),
 
-    // ---- 16. 本机图片导入(候选写入不过审批, N29; 附录 A.3/A.4) ----
+    // ---- 16. 会话收据图片导入(候选写入不过审批, N29; 附录 A.3/A.4) ----
     defineTool({
       name: 'novelcraft_map_atlas_upload',
       description:
-        '导入宿主本机图片(仅绝对路径, PNG/JPEG ≤50MB, 16~8192px): 挂到目标节点的 prompt_only 候选页' +
-        '(置 review_ready)或新建 upload 候选页。node_ref 缺省时用 {title, level, parent_ref} 创建 provisional 候选节点。' +
+        '消费用户在当前地图册选择图片后获得的会话收据(PNG/JPEG ≤50MB, 16~8192px):' +
+        '挂到收据锁定节点的 prompt_only 候选页(置 review_ready)或新建 upload 候选页。不接受主机文件路径。' +
         '候选不过审批; 采用走 novelcraft_map_atlas_review(adopt 必经审批)。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        file_path: { type: 'string', required: true, description: '本机图片绝对路径' },
-        node_ref: { type: 'string', description: '目标节点 id(优先)' },
-        title: { type: 'string', description: '新节点标题(node_ref 缺省时必填)' },
-        level: { type: 'string', enum: ['cover', 'world', 'region', 'city', 'district', 'street', 'interior'], description: '新节点层级(cover/world/region/city/district/street/interior)' },
-        parent_ref: { type: 'string', description: '新节点父 id(可选)' },
+        receipt_id: { type: 'string', required: true, description: '当前会话地图册生成的图片收据 ID' },
       },
       output: {
         schema: {
@@ -1138,21 +1143,14 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const args = rawArgs as unknown as MapAtlasUploadArgs;
         try {
           const root = await resolveBoundRoot(service, exec, args.root);
-          let nodeRef = args.node_ref;
-          if (!nodeRef) {
-            // 附录 A.2: 上传到新位置 → 创建 provisional 候选节点(候选面, 不过审批)。
-            if (!args.title || !args.level) {
-              throw new store.StoreError('VALIDATION_FAILED', 'node_ref 缺省时 title 与 level 必填');
-            }
-            nodeRef = await service.capabilities.propose.createAtlasUploadNode(root, {
-              title: args.title, level: args.level, parent_ref: args.parent_ref,
-            });
-          }
-          const r = service.capabilities.propose.importAtlasImage(root, args.file_path, { nodeRef });
+          const r = service.capabilities.propose.importAtlasImage(root, {
+            receiptId: args.receipt_id,
+            sessionId: sessionIdOf(exec),
+          });
           return {
             ok: true,
             page_id: r.page.id,
-            node_ref: nodeRef,
+            node_ref: r.page.node_ref,
             generation_status: r.page.generation_status,
             image: r.page.image?.file ?? '',
             message: `已导入候选图 ${r.page.image?.file ?? ''}(页 ${r.page.id}); 采用请走 novelcraft_map_atlas_review。`,

@@ -3,7 +3,7 @@
 // 并把核心包 facade 命名空间挂在此处(供 client module、skills、子代理组合消费)。
 // 依据: 设计文档 §22.3(插件族, 经 DSH seam 互连)、seam 契约(packages/novelcraft/README.md)。
 import { createHash } from 'node:crypto';
-import { existsSync as existsSyncLocal, readdirSync as readdirSyncLocal, readFileSync, rmSync as rmFileSync, statSync } from 'node:fs';
+import { existsSync as existsSyncLocal, readdirSync as readdirSyncLocal, readFileSync, rmSync as rmFileSync } from 'node:fs';
 import path from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
@@ -360,14 +360,12 @@ export class NovelCraftService extends Service {
     };
   }
 
-  /** 便捷: 本机图片导入候选(候选写入不过 approval, N29; adopt 另行审批)。 */
+  /** 便捷: 消费当前会话已授权的图片收据(候选写入不过 approval, N29)。 */
   importAtlasImage(
     root: string,
-    filePath: string,
-    target: { nodeRef: string },
-    opts?: world.ImportAtlasImageOptions,
+    opts: { receiptId: string; sessionId: string },
   ): { page: world.AtlasPage; run?: world.AtlasRun } {
-    return world.importAtlasImage(root, filePath, target, opts);
+    return world.importStagedAtlasImage(root, opts.sessionId, opts.receiptId);
   }
 
   /**
@@ -592,28 +590,12 @@ export class NovelCraftService extends Service {
     return assistant.scanHealthSignals(root);
   }
 
-  /**
-   * 便捷: 文本入库(Track 1b, D9a 纯文本)。宿主侧读文件(插件进程内 fs,
-   * 不经 agent 沙箱); 超 50MB 提前拒绝(store.MAX_IMPORT_FILE_SIZE, imports.md §41);
-   * 成功后重建派生索引。chapters/*.md 为 draft 停靠(R3 语义), 非 adopt。
-   */
+  /** 便捷: 消费当前会话已授权的文本收据; 成功后重建派生索引。 */
   ingestTextFile(
     root: string,
-    opts: { filePath: string; startChapter?: number; force?: boolean },
+    opts: { receiptId: string; sessionId: string; startChapter?: number; force?: boolean },
   ): writing.ImportReport {
-    const size = statSync(opts.filePath).size; // 不存在则抛 ENOENT(工具层转作者语言)
-    if (size > store.MAX_IMPORT_FILE_SIZE) {
-      return {
-        ok: false,
-        reason: `文件超过 50MB 上限(imports.md §41), 请拆分后导入`,
-        warnings: [],
-      };
-    }
-    const text = readFileSync(opts.filePath, 'utf8');
-    const report = writing.importTextChapters(root, {
-      fileName: opts.filePath,
-      text,
-      source: `file:${path.basename(opts.filePath)}`,
+    const report = writing.importStagedTextIntake(root, opts.sessionId, opts.receiptId, {
       ...(opts.startChapter !== undefined ? { startChapter: opts.startChapter } : {}),
       ...(opts.force ? { force: true } : {}),
     });

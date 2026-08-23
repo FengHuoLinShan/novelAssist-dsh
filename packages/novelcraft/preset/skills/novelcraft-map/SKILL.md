@@ -23,8 +23,9 @@ Story Map 与章节档案当前是 `UI-only` client 读面, 不在 model-facing 
 - 层级规划: `llm_step(spec=map_atlas_plan)`(catalog §4.11), 最多 20 页、层级严格递降、
   interior 需显式授权; **M4 不生图**(N28), `prompt` 仅为外部生图参考文本产物。
 - `prompt_only` 页面仅参考、**不可 adopt**; 地图册页必须 = 本地图片 + 可移动自定义文字标签。
-- 空页占位: 允许 adopted 空节点占位先进入地图册, 作者点进去后再上传图片。
-- 本机路径导入(N29): 「上传」= 解析本机绝对路径 + 校验 + `mode=copy` 复制到
+- 空页占位: 允许 adopted 空节点占位先进入地图册; 作者选中节点后在地图册页内选择图片。
+- 会话收据导入(N29): 页内选定 PNG/JPEG 后冻结 bytes 并锁定 session + 目标节点;
+  `novelcraft_map_atlas_upload` 只消费 receipt, 不接受模型提供的本机路径。成功后复制到
   `world/atlas/images/`(gitignore, 不 push GitHub); 图片字节绝不 `git add`; 候选写入不过
   approval, adopt 必经 ApprovalGate(fail-closed); 换机/克隆缺图 → 读面 `image_missing=true`。
 - 文字标签 = L1 + 快捷编辑桥: UI 直接拖动/改名/增删(本地即时反馈), 保存只写 annotation intent
@@ -37,10 +38,10 @@ Story Map 与章节档案当前是 `UI-only` client 读面, 不在 model-facing 
    返回 run_id/status/planned_page_count/evidence_summary/message。
 2. `novelcraft_map_atlas_view` — 只读: review 或 atlas tree(图片页/空页占位/prompt_only 候选/
    image_missing)。
-3. `novelcraft_map_atlas_upload` — 本机路径导入候选图(候选不过 approval)。
+3. `novelcraft_map_atlas_upload` — 消费地图册页内产生的会话图片收据(候选不过 approval)。
 4. `novelcraft_map_atlas_review` — action=adopt|adopt_placeholder|reject|archive|restore;
    adopt/adopt_placeholder/restore 过 ApprovalGate(fail-closed)。
 5. `novelcraft_map_atlas_annotation` — 应用 UI 队列或精确 ops(标签编辑不过 approval)。
 6. (可选)`novelcraft_map_atlas_update_prompt` — 仅 prompt_only 候选可改 Prompt。
 
-> 上述 6 工具已随 Phase 5 落地(`@novelcraft/dsh` tools.ts, 共 20 工具); adopt 类动作经 ApprovalGate fail-closed。
+> 上述 6 工具已随 Phase 5 落地(`@novelcraft/dsh` tools.ts, 全部 19 个领域工具); adopt 类动作经 ApprovalGate fail-closed。

@@ -1,4 +1,4 @@
-// @novelcraft/client · node 半身宿主插件: 注册 /novelcraft loopback RPC 通道。
+// @novelcraft/dsh-client · node 半身宿主插件: 注册 /novelcraft loopback RPC 通道。
 // 浏览器半身见 src/client/(exports["./client"], dsh.client 声明)。
 // 依据: DSH client-modules 双面包模式(dsh-client-connection + client-modules
 // 扫描 exports["./client"]); 设计文档 §17(宠物/收件箱读信号, 动作回核心函数)。
@@ -18,6 +18,8 @@ export type {
   AtlasAnnotationOpInput,
   AtlasAnnotationRequestPayload,
   AtlasAnnotationRequestValue,
+  AtlasImageIntakeStagePayload,
+  AtlasImageIntakeStageValue,
   AtlasLabelCard,
   AtlasNodeCard,
   AtlasPageCard,
@@ -32,6 +34,8 @@ export type {
   InboxActValue,
   InboxListPayload,
   InboxListValue,
+  IntakeStagePayload,
+  IntakeStageValue,
   ObjectCard,
   PresetsListPayload,
   PresetsListValue,
@@ -72,6 +76,10 @@ export function apply(ctx: Context): void {
         return handlers.storyMap(payload as never);
       case ENDPOINTS.writingDesk:
         return handlers.writingDesk(payload as never);
+      case ENDPOINTS.intakeStage:
+        return handlers.intakeStage(payload as never);
+      case ENDPOINTS.intakeStageImage:
+        return handlers.intakeStageImage(payload as never);
       case ENDPOINTS.chapterDossier:
         return handlers.chapterDossier(payload as never);
       case ENDPOINTS.presetsList:

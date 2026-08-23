@@ -25,7 +25,7 @@ world/pending/*.md          待处理候选(suggestion queue = 此目录)
 structure/{threads,arcs,foreshadowing,reveal}/ + outline.md
 memory/events.jsonl         事件溯源(append-only, 幂等)
 bible/*.md                  世界书(draft/canonical)
-imports/*.md                导入原文停靠(当前公开摄入只验证 .txt)
+imports/*.md                导入原文停靠(会话收据支持 .txt/.md)
 .assistant/                 policy.yml / llm.yml / calibration.md /
                             checkpoint.json / signals/ / reviews/ / merge-log.jsonl
 ```
@@ -68,7 +68,7 @@ imports/*.md                导入原文停靠(当前公开摄入只验证 .txt)
 - `UI-only`: Story Map、章节档案、写作台与 Map Atlas 面板是 client 读面/intent 面,
   不是可由 Skill 假装调用的 agent 工具。
 - `core-only`: 包内导出的 deterministic 函数只供领域服务编排; Skill 不授予直接调用权。
-- `deferred`: 多书创建/删除、附件承运、独立审查返修、长任务控制与 RP 未有公开闭环。
+- `deferred`: 多书创建/删除、粘贴/非文本附件承运、独立审查返修、长任务控制与 RP 未有公开闭环。
 - 正常作者 preset 不暴露 Shell、terminal 或裸文件系统; 只能走上述领域工具与原生 `skill`。
 
 ## 关键文档(回答具体问题前先读)

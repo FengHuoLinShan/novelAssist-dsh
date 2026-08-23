@@ -8,9 +8,10 @@ whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重�
 
 ## 入口与限制
 
-- `available-now`: `novelcraft_ingest_file` 读取当前宿主可见的 UTF-8 `.txt`,
+- `available-now`: 「写作台 → 导入」把用户选定的 UTF-8 `.txt/.md` 冻结为会话收据,
+  `novelcraft_ingest_file` 只消费该收据,
   `novelcraft_deep_import` 对已停靠章节执行六阶段流程, `novelcraft_store_adopt` 采用
-  已生成的结构候选。浏览器附件、粘贴承运与 `.md` 端到端尚未接通。
+  已生成的结构候选。不接受模型提供的本机路径; 粘贴承运尚未接通。
 - `core-only`: `planImport`/`sliceChapterBatch`/`resumeImport` 等阶段函数由 DSH 服务编排,
   不是模型可直接调用的工具。当前没有 list/status/resume/abandon 公共动作。
 - 六阶段由 @novelcraft/imports 的确定性函数执行: planImport(授权快照,
@@ -33,6 +34,8 @@ whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重�
 
 ## 授权与复核纪律(agent 必守)
 
+- 用户说「导入手稿」但尚无收据时, 指引其在「写作台 → 导入」选文件;
+  收据出现后直接执行摄入, 不再要求用户提供路径。
 - 新 run 与恢复范围必须经过 ApprovalGate; 工具没有公开的持久项目级授权。
 - 降级条款(policy.yml): 1b 失败空语义进复核; 2b 失败只降级不丢对象;
   1a 重叠整章 fallback 不部分采用。

@@ -332,7 +332,7 @@ export function provenanceKey(opts: {
 // 导入门禁(R31)
 // ============================================================================
 
-export const ALLOWED_IMPORT_EXTENSIONS = ['.txt', '.epub', '.html', '.htm', '.mobi', '.azw3'] as const;
+export const ALLOWED_IMPORT_EXTENSIONS = ['.txt', '.md', '.epub', '.html', '.htm', '.mobi', '.azw3'] as const;
 export const MAX_IMPORT_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export interface ImportFileGateResult {

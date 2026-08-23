@@ -47,8 +47,8 @@ whenToUse: 操作世界对象、复核待处理建议、生成中心对话/收�
 - 内容步: `llm_step(spec=map_spatial_facts)`(每批 5 地点, 只读规划输入)+
   `llm_step(spec=map_atlas_plan)`(≤20 页, 层级严格递降)。**M4 不生图**(N28), `prompt` 仅为外部
   生图参考文本; `prompt_only` 页面不可 adopt。
-- 空页占位: adopted 节点可无 page(点进去再上传); 本机路径导入(N29): 解析本机绝对路径 +
-  `mode=copy` 复制进本地图片目录, 图片字节绝不 `git add`、不 push GitHub; adopt 必经
+- 空页占位: adopted 节点可无 page; 作者在地图册选中节点后选 PNG/JPEG,
+  页内面板产生锁定 session + 节点的收据, agent 工具只消费 receipt。图片字节绝不 `git add`、不 push GitHub; adopt 必经
   ApprovalGate(fail-closed)。
 - 文字标签 = L1 intent 队列 + `novelcraft_map_atlas_annotation` 工具应用(不过 approval);
   工具只消费队列或精确 ops, 拒绝自然语言坐标, 坐标恒 0–1。

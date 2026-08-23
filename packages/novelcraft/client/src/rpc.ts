@@ -1,4 +1,4 @@
-// @novelcraft/client · node 半身: /novelcraft loopback RPC 通道处理器。
+// @novelcraft/dsh-client · node 半身: /novelcraft loopback RPC 通道处理器。
 // 依据: 设计文档 §9/§17(宠物/收件箱读 .assistant/signals; 动作回调走核心包
 // 确定性函数); §22.3(client seam = client-modules)。
 // 数据路径: 浏览器 → ctx.connection.rpc.call('/novelcraft', endpoint, payload)
@@ -17,10 +17,11 @@ import {
   latestAtlasRun,
   readAtlasRun,
   readAtlasTree,
+  stageAtlasImageIntake,
   type AtlasNodeView,
   type AtlasPageView,
 } from '@novelcraft/world';
-import { latestProposal, type ProposalRecord } from '@novelcraft/writing';
+import { latestProposal, stageTextIntake, type ProposalRecord } from '@novelcraft/writing';
 import type {
   ChapterDossierAsset,
   ChapterDossierPayload,
@@ -30,10 +31,14 @@ import type {
   InboxActValue,
   InboxListPayload,
   InboxListValue,
+  IntakeStagePayload,
+  IntakeStageValue,
   PresetsListPayload,
   PresetsListValue,
   AtlasAnnotationRequestPayload,
   AtlasAnnotationRequestValue,
+  AtlasImageIntakeStagePayload,
+  AtlasImageIntakeStageValue,
   AtlasLabelCard,
   AtlasNodeCard,
   AtlasPageCard,
@@ -50,7 +55,22 @@ import type {
   WritingDeskPayload,
   WritingDeskValue,
 } from './wire.js';
-import { ENDPOINTS } from './wire.js';
+import { ENDPOINTS, MAX_TEXT_INTAKE_BYTES } from './wire.js';
+
+function decodeIntakeBase64(encoded: unknown): Buffer {
+  const maxBase64Length = Math.ceil(MAX_TEXT_INTAKE_BYTES / 3) * 4;
+  if (
+    typeof encoded !== 'string' || encoded.length === 0 || encoded.length > maxBase64Length ||
+    encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+  ) {
+    throw new Error('文件内容编码非法或超过 50MB');
+  }
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.byteLength > MAX_TEXT_INTAKE_BYTES || bytes.toString('base64') !== encoded) {
+    throw new Error('文件内容编码非法或超过 50MB');
+  }
+  return bytes;
+}
 
 /** 预设条目的结构形状(宿主 presets.list 返回 / llm-step ContentPreset 的投影)。 */
 export type PresetLike = {
@@ -258,6 +278,75 @@ export function createNovelcraftHandlers(ctx: Context) {
   const novelcraft = ctx.get('novelcraft') as NovelcraftHostService | undefined;
 
   return {
+    /** Browser-selected bytes only: issue a session-bound receipt; do not write book assets. */
+    async intakeStage(payload: IntakeStagePayload): Promise<RpcResult<IntakeStageValue>> {
+      if (typeof payload.sessionId !== 'string' || payload.sessionId.length === 0) {
+        return rpcFail('缺少当前会话, 拒绝接收文件');
+      }
+      const binding = await novelcraft?.vaults.resolve(payload.sessionId);
+      if (!binding) return rpcFail('当前会话未绑定 vault');
+      if (typeof payload.file_name !== 'string') {
+        return rpcFail('文件载荷格式错误');
+      }
+      try {
+        const bytes = decodeIntakeBase64(payload.bytes_base64);
+        const staged = stageTextIntake(binding.root, payload.sessionId, payload.file_name, bytes);
+        pushSignal(binding.root, {
+          radar: 'ingest',
+          severity: 'hint',
+          title: `手稿「${staged.fileName}」已授权, 等待导入`,
+          evidence: [`receipt:${staged.receiptId}`, `sha256:${staged.sha256}`],
+          proposed_action: `调用 novelcraft_ingest_file(root, receipt_id=${staged.receiptId}) 导入该手稿`,
+          reversibility: true,
+        });
+        return rpcOk({
+          receipt_id: staged.receiptId,
+          file_name: staged.fileName,
+          byte_length: staged.byteLength,
+          sha256: staged.sha256,
+          message: `已授权「${staged.fileName}」。返回对话说“导入刚才的手稿”即可。`,
+        });
+      } catch (error) {
+        return rpcFail(error instanceof Error ? error.message : String(error));
+      }
+    },
+
+    async intakeStageImage(payload: AtlasImageIntakeStagePayload): Promise<RpcResult<AtlasImageIntakeStageValue>> {
+      if (typeof payload.sessionId !== 'string' || payload.sessionId.length === 0) return rpcFail('缺少当前会话, 拒绝接收图片');
+      const binding = await novelcraft?.vaults.resolve(payload.sessionId);
+      if (!binding) return rpcFail('当前会话未绑定 vault');
+      const nodeRefError = wireRefError(payload.node_ref, 'node_ref');
+      if (nodeRefError) return rpcFail(nodeRefError);
+      if (typeof payload.file_name !== 'string') return rpcFail('图片载荷格式错误');
+      try {
+        const staged = stageAtlasImageIntake(
+          binding.root,
+          payload.sessionId,
+          payload.file_name,
+          decodeIntakeBase64(payload.bytes_base64),
+          payload.node_ref,
+        );
+        pushSignal(binding.root, {
+          radar: 'suggest',
+          severity: 'hint',
+          title: `地图图片「${staged.fileName}」已授权, 等待导入`,
+          evidence: [`receipt:${staged.receiptId}`, `node:${payload.node_ref}`, `sha256:${staged.sha256}`],
+          proposed_action: `调用 novelcraft_map_atlas_upload(root, receipt_id=${staged.receiptId}) 导入到节点 ${payload.node_ref}`,
+          reversibility: true,
+        });
+        return rpcOk({
+          receipt_id: staged.receiptId,
+          file_name: staged.fileName,
+          byte_length: staged.byteLength,
+          sha256: staged.sha256,
+          node_ref: payload.node_ref,
+          message: `已授权「${staged.fileName}」。返回对话说“导入刚才的地图图片”即可。`,
+        });
+      } catch (error) {
+        return rpcFail(error instanceof Error ? error.message : String(error));
+      }
+    },
+
     async watchState(payload: WatchStatePayload): Promise<RpcResult<WatchStateValue>> {
       const binding = await resolveRoot(novelcraft, payload);
       if (!binding) {

@@ -32,7 +32,7 @@
   host/remote-event 帧 → client runtime 扇出到 ctx.remote.$on); 缺口是 allowlist 封闭(11 条)。
 - 落点(ADR-0018): 真 mux 推送已落地——scripts/apply-dsh-patches.mjs 给
   @deepseek-ai/dsh-api-remotes 的 allowlist 加通用 client/push + @novelcraft/dsh emit +
-  @novelcraft/client ctx.remote.$on 订阅(seam 提案见
+  @novelcraft/dsh-client ctx.remote.$on 订阅(seam 提案见
   docs/agent/dsh-rebuild/信号推送-远程事件seam提案.md); 上游 Discussion #1289 回应后去
   fork 化; 本包内「事件触发短轮询 + 退避」作兜底保留。
 
@@ -66,7 +66,7 @@ cd /Users/tywww/Desktop/项目/novelAssist-dsh
 npm install
 npm test            # 266 测试全绿
 npm run typecheck   # 零错误
-npm run build:client -w @novelcraft/client   # 浏览器 bundle(tsdown)
+npm run build:client -w @novelcraft/dsh-client   # 浏览器 bundle(tsdown)
 ```
 
 ## 剩余

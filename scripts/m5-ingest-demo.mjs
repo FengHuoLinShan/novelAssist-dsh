@@ -2,7 +2,7 @@
 //   手稿 txt → ingestTextFile(章节切分/wiki 化存储)→ 索引重建 → 雷达巡检
 //   (摄入对账自动结算 + 剧情一句话摘要)→ 收件箱视图。
 // 运行: node scripts/m5-ingest-demo.mjs
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
@@ -13,6 +13,7 @@ import { LlmRuntime, LlmAdapter } from "@deepseek-ai/dsh-llm";
 import { ApprovalService } from "@deepseek-ai/dsh-user-approval";
 import { JobRegistry } from "@deepseek-ai/dsh-jobs";
 import { NovelCraftService } from "../packages/novelcraft/dsh/dist/index.js";
+import { stageTextIntake } from "../packages/novelcraft/writing/dist/index.js";
 
 class DemoAdapter extends LlmAdapter {
   async resolveModel(provider, model) { return { provider, id: model, name: model }; }
@@ -53,24 +54,25 @@ const nc = ctx.novelcraft;
 
 console.log("① vault 初始化(D17)");
 const binding = nc.vaults.ensureVault("演示之书");
+await nc.vaults.bindSession("demo-session", binding);
 console.log(`   root=${binding.root}`);
 
 console.log("② 文本入库(D9a): 手稿 txt → 章节切分 → wiki 化存储");
-const manuscript = join(dataDir, "手稿.txt");
-writeFileSync(manuscript, [
+const manuscript = [
   "序章", "一切从这里开始。", "",
   "第一章 雨夜", "雨下了一夜。林晚推开窗。", "",
   "第二章 对峙", "苏婉站在桥上。", "",
   "第三章 黎明", "天亮了。",
-].join("\n"), "utf8");
-const report = nc.ingestTextFile(binding.root, { filePath: manuscript });
+].join("\n");
+const receipt = stageTextIntake(binding.root, "demo-session", "手稿.txt", Buffer.from(manuscript)).receiptId;
+const report = nc.ingestTextFile(binding.root, { receiptId: receipt, sessionId: "demo-session" });
 console.log(`   解析 ${report.total} 章, 入库 ${report.imported} 章(warnings: ${report.warnings.join(",") || "无"})`);
 const idx = nc.refreshIndex(binding.root);
 console.log(`   索引: 章节 ${idx.chapters.length} / Scene ${idx.scenes.length} / 对象 ${idx.objects.length}`);
 
 console.log("③ 幂等: 同文件二次入库");
-const dup = nc.ingestTextFile(binding.root, { filePath: manuscript });
-console.log(`   warnings: ${dup.warnings.join(",")}(应为 duplicate_import)`);
+const dup = nc.ingestTextFile(binding.root, { receiptId: receipt, sessionId: "demo-session" });
+console.log(`   重放报告: 解析 ${dup.total} 章, 入库 ${dup.imported} 章(资产零重写)`);
 
 console.log("④ 雷达巡检(§7/§11): 五面对账 + 剧情一句话");
 const sweep = nc.radarSweep(binding.root);

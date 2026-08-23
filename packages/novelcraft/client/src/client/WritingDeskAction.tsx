@@ -1,4 +1,4 @@
-// 写作台(WritingDeskAction): 会话头动作, 打开写作台 Modal(四模式: 守望/计划/评审/参照)。
+// 写作台(WritingDeskAction): 会话头动作, 打开写作台 Modal。
 // 数据源 = /novelcraft writing/desk(宿主读 assistant 信号 + store.storyMap/rebuildIndex
 // + .assistant/reviews)。纯读, 无动作; 四模式切换为本地 tab。
 import { useState } from 'react'
@@ -6,7 +6,8 @@ import { Modal, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS, type NovelcraftKey } from './locales.ts'
-import { useWritingDesk } from './useWatch.ts'
+import { MAX_TEXT_INTAKE_BYTES } from '../wire.ts'
+import { readFileBase64, stageTextIntakeFile, useWritingDesk } from './useWatch.ts'
 import { ChapterDossier } from './ChapterDossier.tsx'
 import css from './novelcraft.module.css'
 
@@ -14,7 +15,7 @@ export type WritingDeskActionProps =
   PropsRuntime<'conversation.session.header.actions'> &
   PropsLocale<typeof NS> & { connection: RpcCaller | undefined }
 
-type Mode = 'watch' | 'plan' | 'review' | 'reference'
+type Mode = 'watch' | 'plan' | 'review' | 'reference' | 'import'
 
 const SEVERITY_DOT: Record<string, StateDotState> = {
   conflict: 'error', risk: 'warning', note: 'ongoing', hint: 'done',
@@ -36,6 +37,8 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
   const { t, connection, sessionId } = props
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('watch')
+  const [intakeBusy, setIntakeBusy] = useState(false)
+  const [intakeMessage, setIntakeMessage] = useState('')
   /** 钻取中章节(章节档案 §17.5.1); null = tab 视图。 */
   const [dossierChapter, setDossierChapter] = useState<number | null>(null)
   const { data } = useWritingDesk(connection, sessionId)
@@ -52,6 +55,25 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
   const tab = (m: Mode, key: NovelcraftKey): JSX.Element => (
     <ModeTab label={t(key)} active={mode === m} onClick={() => setMode(m)} />
   )
+
+  const chooseFile = async (file: File | undefined): Promise<void> => {
+    if (!file) return
+    if (file.size > MAX_TEXT_INTAKE_BYTES) {
+      setIntakeMessage(t('intake.tooLarge'))
+      return
+    }
+    setIntakeBusy(true)
+    setIntakeMessage('')
+    try {
+      const value = await stageTextIntakeFile(connection, sessionId, file.name, await readFileBase64(file))
+      setIntakeMessage(value?.message ?? t('intake.fail'))
+      if (value) window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
+    } catch {
+      setIntakeMessage(t('intake.fail'))
+    } finally {
+      setIntakeBusy(false)
+    }
+  }
 
   return (
     <>
@@ -88,6 +110,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
               {tab('plan', 'desk.mode.plan')}
               {tab('review', 'desk.mode.review')}
               {tab('reference', 'desk.mode.reference')}
+              {tab('import', 'desk.mode.import')}
             </div>
 
             {mode === 'watch' ? (
@@ -160,7 +183,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
                   </article>
                 ))
               )
-            ) : (
+            ) : mode === 'reference' ? (
               objects.length === 0 ? (
                 <div className={css.empty}>{t('desk.empty')}</div>
               ) : (
@@ -173,6 +196,25 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
                   </article>
                 ))
               )
+            ) : (
+              <div className={css.intakePanel}>
+                <p className={css.proposed}>{t('intake.hint')}</p>
+                <label className={css.fileLabel}>
+                  <span>{intakeBusy ? t('intake.staging') : t('intake.choose')}</span>
+                  <input
+                    className={css.fileInput}
+                    type="file"
+                    accept=".txt,.md,text/plain,text/markdown"
+                    disabled={intakeBusy}
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0]
+                      event.currentTarget.value = ''
+                      void chooseFile(file)
+                    }}
+                  />
+                </label>
+                {intakeMessage ? <div className={css.message}>{intakeMessage}</div> : null}
+              </div>
             )}
           </div>
         )}

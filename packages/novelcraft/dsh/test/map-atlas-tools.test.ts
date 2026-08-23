@@ -1,5 +1,5 @@
 // @novelcraft/dsh · map-atlas 工具面端到端(Phase 5; 计划 §4 Phase 5 测试清单)。
-// FakeApproval 验证 allowed-once/rejected/unavailable; 上传路径导入不误 git add 图片; annotation 校验失败零残留。
+// FakeApproval 验证 allowed-once/rejected/unavailable; 会话收据图片导入不误 git add; annotation 校验失败零残留。
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -14,6 +14,7 @@ import {
   writeAtlasNode,
   writeAtlasPage,
   readAtlasTree,
+  stageAtlasImageIntake,
 } from '@novelcraft/world';
 import type { AtlasNode, AtlasPage } from '@novelcraft/world';
 import { NovelCraftService } from '../src/index.js';
@@ -183,9 +184,8 @@ describe('map-atlas 工具面(Phase 5)', () => {
     const env = await setup();
     writeAtlasNode(env.root, node('n1'));
     writeAtlasPage(env.root, page('pg1'));
-    const src = path.join(env.vaultsDir, 'src.png');
-    writeFileSync(src, pngBytes(128, 96));
-    const r = await call(env, 'novelcraft_map_atlas_upload', { root: env.root, file_path: src, node_ref: 'n1' });
+    const receipt = stageAtlasImageIntake(env.root, 's1', 'src.png', pngBytes(128, 96), 'n1').receiptId;
+    const r = await call(env, 'novelcraft_map_atlas_upload', { root: env.root, receipt_id: receipt });
     expect(r.ok).toBe(true);
     expect(r.page_id).toBe('pg1');
     expect(r.generation_status).toBe('review_ready');
@@ -195,14 +195,24 @@ describe('map-atlas 工具面(Phase 5)', () => {
     env.cleanup();
   });
 
-  it('upload: 无 node_ref 时创建 provisional 节点(附录 A.2)', async () => {
+  it('upload: 收据锁定既有 provisional 节点, 无 prompt 页时新建候选页', async () => {
     const env = await setup();
-    const src = path.join(env.vaultsDir, 'src.png');
-    writeFileSync(src, pngBytes(64, 64));
-    const r = await call(env, 'novelcraft_map_atlas_upload', { root: env.root, file_path: src, title: '雾岭', level: 'region' });
+    writeAtlasNode(env.root, node('n2', { title: '雾岭', level: 'region' }));
+    const receipt = stageAtlasImageIntake(env.root, 's1', 'src.png', pngBytes(64, 64), 'n2').receiptId;
+    const r = await call(env, 'novelcraft_map_atlas_upload', { root: env.root, receipt_id: receipt });
     expect(r.ok).toBe(true);
     const tree = readAtlasTree(env.root);
     expect(tree.pendingNodes.some((n) => n.title === '雾岭' && n.status === 'provisional')).toBe(true);
+    expect(tree.pendingPages.some((page) => page.node_ref === 'n2' && page.generation_status === 'review_ready')).toBe(true);
+    env.cleanup();
+  });
+
+  it('upload: 主机路径不再是工具能力面', async () => {
+    const env = await setup();
+    await expect(call(env, 'novelcraft_map_atlas_upload', {
+      root: env.root,
+      receipt_id: '/tmp/map.png',
+    })).rejects.toMatchObject({ code: 'INTAKE_INVALID' });
     env.cleanup();
   });
 

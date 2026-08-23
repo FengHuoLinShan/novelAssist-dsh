@@ -7,6 +7,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listSignals } from '@novelcraft/assistant';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
+import { stageTextIntake } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { makeContext, type HarnessServices } from './helpers.js';
 
@@ -19,7 +20,6 @@ interface TestEnv {
   root: string;
   tools: ToolDefinition[];
   exec: { callId: string; name: string; arguments: unknown; agent: unknown; signal: AbortSignal };
-  workDir: string;
 }
 
 const envs: TestEnv[] = [];
@@ -41,7 +41,6 @@ async function setup(): Promise<TestEnv> {
   const service = h.ctx.novelcraft;
   const binding = service.vaults.ensureVault('测试书');
   await service.vaults.bindSession('s1', binding);
-  const workDir = mkdtempSync(path.join(os.tmpdir(), 'nc-manuscript-'));
   const env: TestEnv = {
     h,
     service,
@@ -49,7 +48,6 @@ async function setup(): Promise<TestEnv> {
     root: binding.root,
     tools,
     exec: { callId: 'c1', name: '', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    workDir,
   };
   envs.push(env);
   return env;
@@ -57,7 +55,6 @@ async function setup(): Promise<TestEnv> {
 afterEach(() => {
   for (const e of envs.splice(0)) {
     rmSync(e.vaultsDir, { recursive: true, force: true });
-    rmSync(e.workDir, { recursive: true, force: true });
   }
 });
 
@@ -68,6 +65,8 @@ const tool = (env: TestEnv, name: string): ToolDefinition => {
 };
 const call = async (env: TestEnv, name: string, args: Record<string, unknown>) =>
   (await tool(env, name).execute(args as never, env.exec as never)) as Record<string, unknown>;
+const stage = (env: TestEnv, fileName: string, text: string) =>
+  stageTextIntake(env.root, 's1', fileName, Buffer.from(text, 'utf8')).receiptId;
 
 const SAMPLE = [
   '序章',
@@ -86,9 +85,8 @@ const SAMPLE = [
 describe('novelcraft_ingest_file(Track 1b 文本入库, D9a)', () => {
   it('样例 txt → 4 章落库 + 原文停靠 + import-log + 索引重建 + 摄入雷达钩子落信号', async () => {
     const env = await setup();
-    const file = path.join(env.workDir, '手稿.txt');
-    writeFileSync(file, SAMPLE, 'utf8');
-    const r = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: file });
+    const receipt = stage(env, '手稿.txt', SAMPLE);
+    const r = await call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: receipt });
     expect(r.ok).toBe(true);
     expect(r.total).toBe(4); // 序章 + 三章
     expect(r.imported).toBe(4);
@@ -109,31 +107,27 @@ describe('novelcraft_ingest_file(Track 1b 文本入库, D9a)', () => {
     expect(String(r.message)).toContain('深度导入');
   });
 
-  it('幂等: 同文件二次导入 → duplicate_import, 不写任何文件', async () => {
+  it('幂等: 同收据二次调用重放首次报告, 不写任何文件', async () => {
     const env = await setup();
-    const file = path.join(env.workDir, '手稿.txt');
-    writeFileSync(file, SAMPLE, 'utf8');
-    await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: file });
+    const receipt = stage(env, '手稿.txt', SAMPLE);
+    await call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: receipt });
     const before = readFileSync(path.join(env.root, 'imports', 'import-log.jsonl'), 'utf8');
-    const r = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: file });
+    const r = await call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: receipt });
     expect(r.ok).toBe(true);
-    expect(String(r.message)).toContain('幂等');
+    expect(r).toMatchObject({ total: 4, imported: 4 });
     const after = readFileSync(path.join(env.root, 'imports', 'import-log.jsonl'), 'utf8');
     expect(after).toBe(before); // import-log 未新增(§41 幂等键)
   });
 
-  it('.docx 拒绝(作者语言) + 缺失文件拒绝', async () => {
+  it('主机路径不再是能力面; 非法/缺失收据 fail-closed', async () => {
     const env = await setup();
-    const docx = path.join(env.workDir, '书稿.docx');
-    writeFileSync(docx, 'fake', 'utf8');
-    await expect(call(env, 'novelcraft_ingest_file', { root: env.root, file_path: docx })).rejects.toMatchObject({
-      code: 'INGEST_FAILED',
-      message: expect.stringContaining('.docx'),
+    await expect(call(env, 'novelcraft_ingest_file', { root: env.root, receipt_id: '/tmp/书稿.txt' })).rejects.toMatchObject({
+      code: 'INTAKE_INVALID',
     });
     await expect(call(env, 'novelcraft_ingest_file', {
       root: env.root,
-      file_path: path.join(env.workDir, '不存在.txt'),
-    })).rejects.toMatchObject({ code: 'INGEST_FAILED' });
+      receipt_id: '00000000-0000-4000-8000-000000000000',
+    })).rejects.toMatchObject({ code: 'INTAKE_NOT_FOUND' });
   });
 });
 

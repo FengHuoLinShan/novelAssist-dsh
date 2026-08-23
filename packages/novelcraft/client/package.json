@@ -1,5 +1,5 @@
 {
-  "name": "@novelcraft/client",
+  "name": "@novelcraft/dsh-client",
   "version": "0.0.1",
   "private": true,
   "engines": { "node": "^22.19.0 || >=24.0.0" },

@@ -1,4 +1,4 @@
-// @novelcraft/client · 通道 wire 契约(纯类型 + 常量, 宿主/浏览器共享;
+// @novelcraft/dsh-client · 通道 wire 契约(纯类型 + 常量, 宿主/浏览器共享;
 // 无任何运行时依赖, 可被 client bundle 安全引用)。
 export const RPC_CHANNEL = '/novelcraft';
 
@@ -9,12 +9,39 @@ export const ENDPOINTS = {
   inboxAct: 'inbox/act',
   storyMap: 'story/map',
   writingDesk: 'writing/desk',
+  intakeStage: 'intake/stage-text',
+  intakeStageImage: 'intake/stage-atlas-image',
   chapterDossier: 'chapter/dossier',
   presetsList: 'presets/list',
   presetsSelect: 'presets/select',
   atlasView: 'atlas/view',
   atlasAnnotationRequest: 'atlas/annotation-request',
 } as const;
+
+/** Browser intake limit; the writing core rechecks the decoded byte length. */
+export const MAX_TEXT_INTAKE_BYTES = 50 * 1024 * 1024;
+
+export interface IntakeStagePayload {
+  sessionId?: string;
+  file_name: string;
+  bytes_base64: string;
+}
+
+export interface IntakeStageValue {
+  receipt_id: string;
+  file_name: string;
+  byte_length: number;
+  sha256: string;
+  message: string;
+}
+
+export interface AtlasImageIntakeStagePayload extends IntakeStagePayload {
+  node_ref: string;
+}
+
+export interface AtlasImageIntakeStageValue extends IntakeStageValue {
+  node_ref: string;
+}
 
 export interface WatchStatePayload {
   sessionId?: string;
