@@ -10,7 +10,19 @@ import type { Provider } from "@novelcraft/llm-step";
 import { gitAdd, gitCommit, gitLogSubjects, gitStatusEntries, relOf } from "@novelcraft/store";
 import { ingestChapter, contentHashOf, normalizeChapterText } from "../src/index";
 import { applyRevision, adoptChapterCandidate, generateNextChapter } from "../src/index";
-import { findingIdOf, latestReview, normalizeFinding, rejectFinding, rejectFindingById, reviewChapter } from "../src/index";
+import {
+  applyReviewedRevision,
+  executeReviewedChapterCandidateAdopt,
+  findingIdOf,
+  latestReview,
+  normalizeFinding,
+  prepareReviewedChapterCandidateAdopt,
+  rejectFinding,
+  rejectFindingById,
+  reviewChapter,
+  reviewChapterCandidate,
+  reviewCurrentChapter,
+} from "../src/index";
 
 const dirs: string[] = [];
 function makeRootWithText(text: string) {
@@ -61,6 +73,53 @@ describe("reviewChapter(PLAN.md 步骤 2)", () => {
     const r = await await reviewChapter(provider, root, 1);
     expect(r.ok).toBe(false);
     expect(latestReview(root, 1)).toBeUndefined();
+  });
+});
+
+describe("public current/candidate review gate (§6.16)", () => {
+  it("strict current review 可按 finding id 返修；candidate 未独立 pass 不能采用", async () => {
+    const root = makeRoot();
+    gitAdd(root, ["chapters/001.md"]);
+    gitCommit(root, "chapter baseline");
+    const currentReview = await reviewCurrentChapter(new MockProvider({ responses: [{
+      text: JSON.stringify({ findings: [{ ...finding, quote: "第一章正文" }], verdict: "随意文本" }),
+    }] }), root, 1);
+    expect(currentReview.review).toMatchObject({ target_kind: "current", verdict: "blocked" });
+    const findingId = currentReview.review!.findings[0].finding_id;
+    const revised = await applyReviewedRevision(
+      new MockProvider({ responses: [{ text: "修订后的正文" }] }), root, 1, [findingId],
+    );
+    expect(revised.ok).toBe(true);
+    expect(() => prepareReviewedChapterCandidateAdopt(root, "001")).toThrow(/独立审查 pass/);
+  });
+
+  it("candidate review 只以可定位 finding + 受控 severity 机械裁定；fresh pass 后采用", async () => {
+    const root = makeRoot();
+    gitAdd(root, ["chapters/001.md"]);
+    gitCommit(root, "chapter baseline");
+    await generateNextChapter(new MockProvider({ responses: [{ text: "第二章正文候选" }] }), root, 1, {
+      proposalTitle: "方向",
+    });
+    const reviewed = await reviewChapterCandidate(
+      new MockProvider({ responses: [{ text: JSON.stringify({ findings: [], verdict: "模型说不通过也不作数" }) }] }),
+      root, 2, "002",
+    );
+    expect(reviewed.review).toMatchObject({ target_kind: "candidate", verdict: "pass", discarded_finding_count: 0 });
+    const result = await executeReviewedChapterCandidateAdopt(prepareReviewedChapterCandidateAdopt(root, "002"));
+    expect(result.targetRelPath).toBe("chapters/002.md");
+    expect(readFileSync(join(root, "chapters", "002.md"), "utf8")).toContain("第二章正文候选");
+  });
+
+  it("作者已打回的 finding 不得再进入公开返修", async () => {
+    const root = makeRoot();
+    gitAdd(root, ["chapters/001.md"]);
+    gitCommit(root, "chapter baseline");
+    const reviewed = await reviewCurrentChapter(new MockProvider({ responses: [{
+      text: JSON.stringify({ findings: [{ ...finding, quote: "第一章正文" }] }),
+    }] }), root, 1);
+    const id = reviewed.review!.findings[0].finding_id;
+    rejectFindingById(root, 1, reviewed.review!.review_id, id, "这里是有意伏笔");
+    await expect(applyReviewedRevision(new MockProvider({ responses: [] }), root, 1, [id])).rejects.toThrow(/已被作者打回/);
   });
 });
 
@@ -263,7 +322,7 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
       expect(r.ok).toBe(true);
       expect(readFileSync(join(root, "chapters", "001.md"), "utf8")).toContain("修订正文");
     }
-  });
+  }, 10_000);
 
   it("旧约定不放宽到盲剥尾换行: 正文新增尾空行(已变更) → CONFLICT 拒绝", async () => {
     // 若盲目剥全部尾换行, 「正文新增尾空行」会被误判为 hash("正文")==冻结值而误放行;

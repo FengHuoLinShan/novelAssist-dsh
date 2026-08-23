@@ -7,7 +7,8 @@ import path from 'node:path';
 import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
 import { pushSignal } from '@novelcraft/assistant';
-import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
+import { gitAdd, gitCommit, readCurrentChapter, serializeFrontmatter } from '@novelcraft/store';
+import { ingestChapter, stageChapterEditIntake } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { registerNovelcraftTools } from '../src/tools.js';
 import { makeContext, type HarnessServices } from './helpers.js';
@@ -197,6 +198,8 @@ describe('NovelCraftService 端到端', () => {
     expect(Object.keys(env.service.capabilities).sort()).toEqual(['adoptGuarded', 'propose', 'read']);
     expect('facades' in env.service).toBe(false);
     expect(env.tools.map((t) => t.name).sort()).toEqual([
+      'novelcraft_chapter_review',
+      'novelcraft_chapter_version',
       'novelcraft_deep_import',
       'novelcraft_generate_next_chapter',
       'novelcraft_health_scan',
@@ -244,6 +247,85 @@ describe('NovelCraftService 端到端', () => {
     const findings = (result.result as { findings: unknown[] }).findings;
     expect(findings).toHaveLength(1);
     expect(result.usage.outputTokens).toBe(30);
+    env.cleanup();
+  });
+
+  it('chapter_version: 页内收据保存与 Git 旧版恢复均经审批并产生新版本', async () => {
+    const env = await setup();
+    ingestChapter(env.root, { chapterIndex: 1, text: '初稿', source: 'test', title: '第一章' });
+    gitAdd(env.root, ['chapters/001.md']);
+    const first = gitCommit(env.root, 'chapter v1');
+    const current = readCurrentChapter(env.root, 1);
+    const receipt = stageChapterEditIntake(env.root, 's1', {
+      chapterIndex: 1,
+      text: '修改稿',
+      expectedContentHash: current.contentHash,
+      title: current.title,
+    });
+    const versionTool = tool(env, 'novelcraft_chapter_version');
+    const saved = await versionTool.execute({
+      root: env.root,
+      action: 'save',
+      chapter: 1,
+      receipt_id: receipt.receiptId,
+    }, { ...env.exec, name: 'novelcraft_chapter_version' });
+    expect(saved).toMatchObject({ ok: true, action: 'save', chapter: 1 });
+    expect(readCurrentChapter(env.root, 1).body).toBe('修改稿\n');
+
+    const restored = await versionTool.execute({
+      root: env.root,
+      action: 'restore',
+      chapter: 1,
+      commit: first,
+      expected_content_hash: readCurrentChapter(env.root, 1).contentHash,
+    }, { ...env.exec, name: 'novelcraft_chapter_version' });
+    expect(restored).toMatchObject({ ok: true, action: 'restore', chapter: 1 });
+    expect(readCurrentChapter(env.root, 1).body).toBe('初稿\n');
+    env.cleanup();
+  });
+
+  it('chapter_review: current 审查/打回/返修 → candidate 独立 pass → 审批采用', async () => {
+    const env = await setup();
+    ingestChapter(env.root, { chapterIndex: 1, text: '初稿正文', source: 'test', title: '第一章' });
+    gitAdd(env.root, ['chapters/001.md']);
+    gitCommit(env.root, 'chapter baseline');
+    const reviewTool = tool(env, 'novelcraft_chapter_review');
+    env.h.adapter.enqueue({ deltas: [JSON.stringify({ findings: [
+      { category: 'continuity', severity: 'high', quote: '初稿正文', suggestion: '这里是有意伏笔', },
+      { category: 'pacing', severity: 'high', quote: '初稿正文', suggestion: '加强现场动作', },
+    ] })] });
+    const reviewed = await reviewTool.execute(
+      { root: env.root, action: 'review', target: 'current', chapter: 1 },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    ) as { review_id: string; verdict: string; findings: Array<{ finding_id: string }> };
+    expect(reviewed.verdict).toBe('blocked');
+    const rejectedFindingId = reviewed.findings[0].finding_id;
+    const reviseFindingId = reviewed.findings[1].finding_id;
+    await reviewTool.execute(
+      {
+        root: env.root, action: 'reject_finding', target: 'current', chapter: 1,
+        review_id: reviewed.review_id, finding_id: rejectedFindingId, reason: '这里是有意伏笔',
+      },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    );
+    env.h.adapter.enqueue({ deltas: ['返修后的正文'] });
+    const revised = await reviewTool.execute(
+      { root: env.root, action: 'revise', target: 'current', chapter: 1, finding_ids: [reviseFindingId] },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    ) as { file: string };
+    expect(revised.file).toContain('chapters/pending/001.md');
+    env.h.adapter.enqueue({ deltas: [JSON.stringify({ findings: [] })] });
+    const candidateReview = await reviewTool.execute(
+      { root: env.root, action: 'review', target: 'candidate', chapter: 1, ref: '001' },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    ) as { verdict: string };
+    expect(candidateReview.verdict).toBe('pass');
+    const adopted = await reviewTool.execute(
+      { root: env.root, action: 'adopt', target: 'candidate', chapter: 1, ref: '001' },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    ) as { commit: string };
+    expect(adopted.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(readCurrentChapter(env.root, 1).body).toBe('返修后的正文\n');
     env.cleanup();
   });
 

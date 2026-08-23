@@ -807,6 +807,53 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
     env.cleanup();
   });
 
+  it('ENDPOINTS.chapterWorkspace/stageEdit: Git 版本读面 + 会话收据, loopback 零章节写入', async () => {
+    const env = setupDispatchApp();
+    const { ingestChapter } = await import('@novelcraft/writing');
+    const { gitAdd, gitCommit, readCurrentChapter } = await import('@novelcraft/store');
+    const { execFileSync } = await import('node:child_process');
+    ingestChapter(env.root, { chapterIndex: 1, text: '初稿', source: 'test', title: '第一章' });
+    gitAdd(env.root, ['chapters/001.md']);
+    const first = gitCommit(env.root, 'chapter v1');
+    ingestChapter(env.root, { chapterIndex: 1, text: '第二稿', source: 'test', title: '第一章' });
+    gitAdd(env.root, ['chapters/001.md']);
+    gitCommit(env.root, 'chapter v2');
+
+    const unknown = await env.dispatch(ENDPOINTS.chapterWorkspace, { sessionId: 'unknown', chapterIndex: 1 });
+    expect(unknown.ok && (unknown.value as { bound: unknown }).bound).toBeNull();
+    const view = await env.dispatch(ENDPOINTS.chapterWorkspace, {
+      sessionId: 's1', chapterIndex: 1, diffFromCommit: first,
+    });
+    expect(view.ok).toBe(true);
+    const value = view.value as {
+      chapter: { body: string; content_hash: string };
+      history: Array<{ commit: string }>;
+      diff: { patch: string };
+    };
+    expect(value.chapter.body).toBe('第二稿\n');
+    expect(value.history).toHaveLength(2);
+    expect(value.diff.patch).toContain('-初稿');
+    expect(value.diff.patch).toContain('+第二稿');
+
+    const chapterBefore = readFileSync(path.join(env.root, 'chapters', '001.md'), 'utf8');
+    const commitCountBefore = execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: env.root, encoding: 'utf8' }).trim();
+    const staged = await env.dispatch(ENDPOINTS.chapterStageEdit, {
+      sessionId: 's1', chapterIndex: 1, expected_content_hash: value.chapter.content_hash,
+      title: '第一章', text: '第三稿（尚未审批）',
+    });
+    expect(staged.ok).toBe(true);
+    const stagedValue = staged.value as { receipt_id: string };
+    expect(stagedValue.receipt_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(readFileSync(path.join(env.root, 'chapters', '001.md'), 'utf8')).toBe(chapterBefore);
+    expect(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: env.root, encoding: 'utf8' }).trim()).toBe(commitCountBefore);
+    expect(listSignals(env.root).some((signal) => signal.proposed_action.includes(stagedValue.receipt_id))).toBe(true);
+    expect((await env.dispatch(ENDPOINTS.chapterStageEdit, {
+      sessionId: 'unknown', chapterIndex: 1, expected_content_hash: value.chapter.content_hash, text: 'x',
+    })).ok).toBe(false);
+    expect(readCurrentChapter(env.root, 1).body).toBe('第二稿\n');
+    env.cleanup();
+  });
+
   it('ENDPOINTS.atlasAnnotationRequest 经通道分发: 合法 op 落队列 + 信号, 不写 page 资产', async () => {
     const env = setupDispatchApp();
     writeAtlasPage(env.root, {

@@ -32,6 +32,23 @@ function runRaw(repoDir: string, args: string[]): string {
   return execFile(repoDir, args);
 }
 
+const READ_ONLY_COMMANDS = new Set(['rev-parse', 'show', 'log', 'diff']);
+
+/** Store 内部历史读面；拒绝写子命令，保留 Git CLI 的单一封层。 */
+export function gitRead(
+  repoDir: string,
+  args: string[],
+  opts?: { allowFailure?: boolean; raw?: boolean },
+): string {
+  if (!READ_ONLY_COMMANDS.has(args[0] ?? '') || args.some((arg) => arg === '--output' || arg.startsWith('--output='))) {
+    throw new StoreError('VALIDATION_FAILED', `gitRead 拒绝非只读参数: ${args.join(' ')}`);
+  }
+  const output = execFile(repoDir, ['--no-optional-locks', '--no-replace-objects', ...args], {
+    allowFailure: opts?.allowFailure,
+  });
+  return opts?.raw ? output : output.trim();
+}
+
 export function gitInit(repoDir: string): void {
   fs.mkdirSync(repoDir, { recursive: true });
   run(repoDir, ['init', '--initial-branch=main']);

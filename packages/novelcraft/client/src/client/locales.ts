@@ -110,6 +110,42 @@ export type NovelcraftKey =
   | 'preset.select.fail'
   | 'preset.source.seed'
   | 'preset.source.stored'
+  | 'chapter.view'
+  | 'chapter.select'
+  | 'chapter.unbound'
+  | 'chapter.empty'
+  | 'chapter.refresh'
+  | 'chapter.title'
+  | 'chapter.body'
+  | 'chapter.status'
+  | 'chapter.edit'
+  | 'chapter.save'
+  | 'chapter.saving'
+  | 'chapter.cancel'
+  | 'chapter.saveFailed'
+  | 'chapter.chatDraftBusy'
+  | 'chapter.history'
+  | 'chapter.current'
+  | 'chapter.bytes'
+  | 'chapter.invalidHash'
+  | 'chapter.diff'
+  | 'chapter.noDiff'
+  | 'chapter.truncated'
+  | 'chapter.restore'
+  | 'chapter.restoreRequested'
+  | 'chapter.review'
+  | 'chapter.reviewCurrent'
+  | 'chapter.reviewCandidate'
+  | 'chapter.reviewRequested'
+  | 'chapter.noReview'
+  | 'chapter.fresh'
+  | 'chapter.stale'
+  | 'chapter.selectFinding'
+  | 'chapter.reviseSelected'
+  | 'chapter.reviseRequested'
+  | 'chapter.candidate'
+  | 'chapter.adoptCandidate'
+  | 'chapter.adoptRequested'
 
 export const zh: Record<NovelcraftKey, string> = {
   'pet.silent': '静默',
@@ -220,6 +256,42 @@ export const zh: Record<NovelcraftKey, string> = {
   'preset.select.fail': '应用失败, 请稍后再试',
   'preset.source.seed': '内置',
   'preset.source.stored': '自定义',
+  'chapter.view': '章节正文',
+  'chapter.select': '选择章节',
+  'chapter.unbound': '当前会话尚未绑定小说工作区。',
+  'chapter.empty': '没有可编辑的当前章节。',
+  'chapter.refresh': '刷新',
+  'chapter.title': '章节标题',
+  'chapter.body': '章节正文',
+  'chapter.status': '状态',
+  'chapter.edit': '编辑',
+  'chapter.save': '审批保存',
+  'chapter.saving': '暂存中…',
+  'chapter.cancel': '结束编辑',
+  'chapter.saveFailed': '暂存失败, 请刷新后重试。',
+  'chapter.chatDraftBusy': '对话里已有未发送草稿；请先发送或清空，避免覆盖。',
+  'chapter.history': '版本历史',
+  'chapter.current': '当前',
+  'chapter.bytes': '字节',
+  'chapter.invalidHash': '旧版本使用历史哈希口径；恢复时会自动修正。',
+  'chapter.diff': '对比',
+  'chapter.noDiff': '正文没有差异。',
+  'chapter.truncated': '差异过长，当前视图已截断。',
+  'chapter.restore': '审批恢复',
+  'chapter.restoreRequested': '恢复请求已交给助手，确认审批后会生成一个新版本。',
+  'chapter.review': '审查与返修',
+  'chapter.reviewCurrent': '审查当前章',
+  'chapter.reviewCandidate': '独立审查候选',
+  'chapter.reviewRequested': '审查请求已交给助手。完成后刷新本页查看 finding。',
+  'chapter.noReview': '尚无审查。',
+  'chapter.fresh': '当前有效',
+  'chapter.stale': '已过期',
+  'chapter.selectFinding': '请先选择要处理的 finding。',
+  'chapter.reviseSelected': '按所选问题返修',
+  'chapter.reviseRequested': '定向返修已交给助手；结果会成为待独立审查候选。',
+  'chapter.candidate': '待处理候选',
+  'chapter.adoptCandidate': '审批采用',
+  'chapter.adoptRequested': '采用请求已交给助手，仍需通过审批与新鲜度复核。',
 }
 
 export const en: Record<NovelcraftKey, string> = {
@@ -331,4 +403,40 @@ export const en: Record<NovelcraftKey, string> = {
   'preset.select.fail': 'Apply failed, please try again later',
   'preset.source.seed': 'Built-in',
   'preset.source.stored': 'Custom',
+  'chapter.view': 'Chapter Text',
+  'chapter.select': 'Select chapter',
+  'chapter.unbound': 'This session is not bound to a novel vault.',
+  'chapter.empty': 'No editable current chapter.',
+  'chapter.refresh': 'Refresh',
+  'chapter.title': 'Chapter title',
+  'chapter.body': 'Chapter body',
+  'chapter.status': 'Status',
+  'chapter.edit': 'Edit',
+  'chapter.save': 'Save with approval',
+  'chapter.saving': 'Staging…',
+  'chapter.cancel': 'Finish editing',
+  'chapter.saveFailed': 'Staging failed. Refresh and try again.',
+  'chapter.chatDraftBusy': 'Chat already has an unsent draft. Send or clear it first to avoid overwriting it.',
+  'chapter.history': 'Version history',
+  'chapter.current': 'Current',
+  'chapter.bytes': 'bytes',
+  'chapter.invalidHash': 'This legacy version used an older hash convention; restore will fix it.',
+  'chapter.diff': 'Diff',
+  'chapter.noDiff': 'No body changes.',
+  'chapter.truncated': 'The diff is too long and was truncated in this view.',
+  'chapter.restore': 'Restore with approval',
+  'chapter.restoreRequested': 'The restore request was sent to the assistant; approval creates a new version.',
+  'chapter.review': 'Review and revise',
+  'chapter.reviewCurrent': 'Review current',
+  'chapter.reviewCandidate': 'Review candidate',
+  'chapter.reviewRequested': 'The review request was sent to the assistant. Refresh this view when it finishes.',
+  'chapter.noReview': 'No review yet.',
+  'chapter.fresh': 'Fresh',
+  'chapter.stale': 'Stale',
+  'chapter.selectFinding': 'Select at least one finding first.',
+  'chapter.reviseSelected': 'Revise selected findings',
+  'chapter.reviseRequested': 'Targeted revision was sent to the assistant; the result must be reviewed independently.',
+  'chapter.candidate': 'Pending candidate',
+  'chapter.adoptCandidate': 'Adopt with approval',
+  'chapter.adoptRequested': 'The adoption request was sent to the assistant and still requires approval and freshness checks.',
 }

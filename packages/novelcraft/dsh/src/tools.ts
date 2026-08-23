@@ -48,6 +48,16 @@ const render = (_args: unknown, value: unknown): ContentBlock[] => [
   { type: 'text', text: JSON.stringify(value) },
 ];
 
+function reviewFindingCards(findings: readonly writing.ReviewFinding[]): Array<Record<string, string>> {
+  return findings.map((finding) => ({
+    finding_id: finding.finding_id,
+    category: finding.category,
+    severity: finding.severity,
+    quote: finding.quote,
+    suggestion: finding.suggestion,
+  }));
+}
+
 /** DSH seam 唯一错误映射: 失败必须进入宿主 HarnessError/isError 通道。 */
 function toolError(
   err: unknown,
@@ -218,6 +228,25 @@ interface IngestFileArgs extends RootArgs {
   receipt_id: string;
   start_chapter?: number;
   force?: boolean;
+}
+interface ChapterVersionArgs extends RootArgs {
+  action: string;
+  chapter: number;
+  receipt_id?: string;
+  commit?: string;
+  compare_commit?: string;
+  expected_content_hash?: string;
+}
+interface ChapterReviewArgs extends RootArgs {
+  action: string;
+  target: string;
+  chapter: number;
+  ref?: string;
+  review_id?: string;
+  finding_id?: string;
+  finding_ids?: string[];
+  reason?: string;
+  expected_content_hash?: string;
 }
 interface RadarSweepArgs extends RootArgs {
   radar?: string;
@@ -832,6 +861,280 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             code: 'INGEST_FAILED',
             message: err instanceof Error ? err.message : '导入失败',
           });
+        }
+      },
+    }),
+
+    // ---- 章级审查闭环(§6.16): current review/revise → candidate review → guarded adopt ----
+    defineTool({
+      name: 'novelcraft_chapter_review',
+      description:
+        '单章审查闭环。review 可审 current 或 candidate；revise 只接受 fresh current review 的 finding_ids 并产新候选；' +
+        'reject_finding 记录作者理由；adopt 只采用 fresh 独立审查 pass 且基线未漂移的候选，并必经审批。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        action: { type: 'string', required: true, enum: ['inspect', 'review', 'revise', 'reject_finding', 'adopt'] },
+        target: { type: 'string', required: true, enum: ['current', 'candidate'] },
+        chapter: { type: 'integer', required: true, description: '章节序号(1 起)' },
+        ref: { type: 'string', description: 'candidate 的精确 ref(缺省 NNN)' },
+        review_id: { type: 'string', description: 'reject_finding 的 current review id' },
+        finding_id: { type: 'string', description: 'reject_finding 的 finding id' },
+        finding_ids: { type: 'array', items: { type: 'string' }, description: 'revise 选中的 finding ids' },
+        reason: { type: 'string', description: 'reject_finding 必填作者理由' },
+        expected_content_hash: { type: 'string', description: 'adopt 的候选 CAS hash' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            action: { type: 'string', required: true },
+            target: { type: 'string', required: true },
+            chapter: { type: 'integer', required: true },
+            ref: { type: 'string', required: true },
+            review_id: { type: 'string', required: true },
+            verdict: { type: 'string', required: true },
+            content_hash: { type: 'string', required: true },
+            findings: { type: 'array', required: true },
+            file: { type: 'string', required: true },
+            commit: { type: 'string', required: true },
+            message: { type: 'string', required: true },
+          },
+        },
+        render,
+      },
+      timeoutMs: 1_800_000,
+      async execute(rawArgs, exec) {
+        const args = rawArgs as unknown as ChapterReviewArgs;
+        const target = args.target === 'candidate' ? 'candidate' : args.target === 'current' ? 'current' : null;
+        if (!target) throw new HarnessError('target 非法', 'INVALID_ARGUMENT');
+        const ref = args.ref ?? String(args.chapter).padStart(3, '0');
+        const blank = {
+          ok: true,
+          action: args.action,
+          target,
+          chapter: args.chapter,
+          ref,
+          review_id: '',
+          verdict: '',
+          content_hash: '',
+          findings: [] as Array<Record<string, string>>,
+          file: '',
+          commit: '',
+        };
+        try {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          if (args.action === 'inspect') {
+            const review = service.capabilities.read.chapterReview(root, args.chapter, target, ref);
+            return review
+              ? {
+                  ...blank,
+                  review_id: review.review_id,
+                  verdict: review.verdict ?? '',
+                  content_hash: review.target_content_hash ?? review.content_hash,
+                  findings: reviewFindingCards(review.findings),
+                  message: `第 ${args.chapter} 章 ${target} 最新审查: ${review.verdict ?? '未裁定'}。`,
+                }
+              : { ...blank, message: `第 ${args.chapter} 章 ${target} 尚无审查。` };
+          }
+          if (args.action === 'review') {
+            const result = await service.capabilities.propose.reviewChapter(
+              root,
+              args.chapter,
+              target,
+              target === 'candidate' ? ref : undefined,
+              exec.signal,
+            );
+            if (!result.ok || !result.review) throw llmError(result.error?.kind, result.error?.message ?? '审查失败');
+            return {
+              ...blank,
+              review_id: result.review.review_id,
+              verdict: result.review.verdict ?? '',
+              content_hash: result.review.target_content_hash ?? result.review.content_hash,
+              findings: reviewFindingCards(result.review.findings),
+              message: `第 ${args.chapter} 章 ${target} 审查完成: ${result.review.verdict ?? '未裁定'}，${result.review.findings.length} 条 finding。`,
+            };
+          }
+          if (args.action === 'revise') {
+            if (target !== 'current' || !Array.isArray(args.finding_ids) || args.finding_ids.length === 0) {
+              throw new HarnessError('revise 只接受 current + 非空 finding_ids', 'INVALID_ARGUMENT');
+            }
+            const result = await service.capabilities.propose.reviseChapter(root, args.chapter, args.finding_ids, exec.signal);
+            if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '返修失败');
+            fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
+            return { ...blank, file: result.file ?? '', message: `第 ${args.chapter} 章返修候选已生成；采用前必须独立审查 candidate。` };
+          }
+          if (args.action === 'reject_finding') {
+            if (target !== 'current' || !args.review_id || !args.finding_id || !args.reason) {
+              throw new HarnessError('reject_finding 缺少 current/review_id/finding_id/reason', 'INVALID_ARGUMENT');
+            }
+            service.capabilities.propose.rejectChapterFinding(
+              root, args.chapter, args.review_id, args.finding_id, args.reason,
+            );
+            return { ...blank, review_id: args.review_id, message: `已打回 finding ${args.finding_id} 并记录理由。` };
+          }
+          if (args.action === 'adopt') {
+            if (target !== 'candidate') throw new HarnessError('adopt 只接受 candidate', 'INVALID_ARGUMENT');
+            const result = await service.capabilities.adoptGuarded.storeAdopt(
+              exec.agent as Agent | undefined,
+              root,
+              'chapter_candidate',
+              ref,
+              args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {},
+              `采用第 ${args.chapter} 章候选 ${ref}`,
+            );
+            fireRadarHooks(ctx, root, [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]);
+            fireRagHook(ctx, root);
+            return {
+              ...blank,
+              commit: result.commit,
+              message: `第 ${args.chapter} 章候选已采用(commit ${result.commit.slice(0, 12)})。`,
+            };
+          }
+          throw new HarnessError('action 非法', 'INVALID_ARGUMENT');
+        } catch (err) {
+          throw toolError(err);
+        }
+      },
+    }),
+
+    // ---- 正文版本工作流(§6.15): 读/history/diff + 收据保存/恢复审批 ----
+    defineTool({
+      name: 'novelcraft_chapter_version',
+      description:
+        '单章正文版本工作流。inspect/history/diff 为只读；save 消费章节页内编辑收据；' +
+        'restore 把所选 Git 旧版本恢复为一个新提交。save/restore 必经用户审批且使用正文 hash/HEAD CAS。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        action: { type: 'string', required: true, enum: ['inspect', 'history', 'diff', 'save', 'restore'] },
+        chapter: { type: 'integer', required: true, description: '章节序号(1 起)' },
+        receipt_id: { type: 'string', description: 'save: 写作页内编辑生成的会话收据 ID' },
+        commit: { type: 'string', description: 'diff/restore: 所选历史 commit' },
+        compare_commit: { type: 'string', description: 'diff: 对比目标 commit(缺省当前 HEAD)' },
+        expected_content_hash: { type: 'string', description: 'restore: 当前正文 CAS hash' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            action: { type: 'string', required: true },
+            chapter: { type: 'integer', required: true },
+            content_hash: { type: 'string', required: true },
+            commit: { type: 'string', required: true },
+            body: { type: 'string', required: true },
+            history: { type: 'array', required: true },
+            diff: { type: 'string', required: true },
+            truncated: { type: 'boolean', required: true },
+            message: { type: 'string', required: true },
+          },
+        },
+        render,
+      },
+      async execute(rawArgs, exec) {
+        const args = rawArgs as unknown as ChapterVersionArgs;
+        const blank = {
+          ok: true,
+          action: args.action,
+          chapter: args.chapter,
+          content_hash: '',
+          commit: '',
+          body: '',
+          history: [] as Array<Record<string, string | number | boolean>>,
+          diff: '',
+          truncated: false,
+        };
+        try {
+          const root = await resolveBoundRoot(service, exec, args.root);
+          if (args.action === 'inspect') {
+            const current = service.capabilities.read.chapterCurrent(root, args.chapter);
+            return {
+              ...blank,
+              content_hash: current.contentHash,
+              commit: current.head,
+              body: current.body,
+              message: `第 ${args.chapter} 章当前正文已读取(${current.status})。`,
+            };
+          }
+          if (args.action === 'history') {
+            const history = service.capabilities.read.chapterHistory(root, args.chapter).map((entry) => ({
+              commit: entry.commit,
+              authored_at: entry.authoredAt,
+              subject: entry.subject,
+              status: entry.status,
+              title: entry.title ?? '',
+              content_hash: entry.contentHash,
+              declared_hash_valid: entry.declaredHashValid,
+              byte_length: entry.byteLength,
+            }));
+            return {
+              ...blank,
+              history,
+              message: `第 ${args.chapter} 章共有 ${history.length} 条可见 Git 版本。`,
+            };
+          }
+          if (args.action === 'diff') {
+            if (!args.commit) throw new HarnessError('diff 缺少 commit', 'INVALID_ARGUMENT');
+            const diff = service.capabilities.read.chapterDiff(root, args.chapter, args.commit, args.compare_commit);
+            return {
+              ...blank,
+              content_hash: diff.to.contentHash,
+              commit: diff.to.commit,
+              diff: diff.patch,
+              truncated: diff.truncated,
+              message: `已生成第 ${args.chapter} 章版本差异${diff.truncated ? '(展示已限长)' : ''}。`,
+            };
+          }
+          if (args.action === 'save') {
+            if (!args.receipt_id) throw new HarnessError('save 缺少 receipt_id', 'INVALID_ARGUMENT');
+            const result = await service.capabilities.adoptGuarded.saveChapter(
+              exec.agent as Agent | undefined,
+              root,
+              sessionIdOf(exec),
+              args.receipt_id,
+            );
+            if (!result.skipped) {
+              fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
+              fireRagHook(ctx, root);
+            }
+            return {
+              ...blank,
+              content_hash: result.contentHash,
+              commit: result.commit,
+              message: result.skipped
+                ? `第 ${args.chapter} 章内容未变化, 未创建版本。`
+                : `第 ${args.chapter} 章已保存为新版本(commit ${result.commit.slice(0, 12)})。`,
+            };
+          }
+          if (args.action === 'restore') {
+            if (!args.commit || !args.expected_content_hash) {
+              throw new HarnessError('restore 缺少 commit 或 expected_content_hash', 'INVALID_ARGUMENT');
+            }
+            const result = await service.capabilities.adoptGuarded.restoreChapter(
+              exec.agent as Agent | undefined,
+              root,
+              args.chapter,
+              args.commit,
+              args.expected_content_hash,
+            );
+            if (!result.skipped) {
+              fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
+              fireRagHook(ctx, root);
+            }
+            return {
+              ...blank,
+              content_hash: result.contentHash,
+              commit: result.commit,
+              message: result.skipped
+                ? `第 ${args.chapter} 章已与所选版本一致, 未创建版本。`
+                : `第 ${args.chapter} 章已恢复为新版本(commit ${result.commit.slice(0, 12)})。`,
+            };
+          }
+          throw new HarnessError('action 非法', 'INVALID_ARGUMENT');
+        } catch (err) {
+          throw toolError(err);
         }
       },
     }),

@@ -11,7 +11,14 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
 import { act, inboxView, plotSummaryLine, pushSignal, scanHealthSignals, type Signal } from '@novelcraft/assistant';
 import { DEFAULT_CONTENT_PRESETS, resolvePolicy, selectPresetInLlmYml } from '@novelcraft/llm-step';
-import { chapterDossier, rebuildIndex, storyMap } from '@novelcraft/store';
+import {
+  chapterDossier,
+  diffChapterVersions,
+  listChapterHistory,
+  readCurrentChapter,
+  rebuildIndex,
+  storyMap,
+} from '@novelcraft/store';
 import { paths as vaultPaths, guardPath, assertSafePathSegment, assertNoSymlinkOnPath } from '@novelcraft/vault';
 import {
   latestAtlasRun,
@@ -21,11 +28,24 @@ import {
   type AtlasNodeView,
   type AtlasPageView,
 } from '@novelcraft/world';
-import { latestProposal, stageTextIntake, type ProposalRecord } from '@novelcraft/writing';
+import {
+  latestProposal,
+  latestCandidateReview,
+  latestReview,
+  readChapterCandidate,
+  stageChapterEditIntake,
+  stageTextIntake,
+  type ProposalRecord,
+} from '@novelcraft/writing';
 import type {
   ChapterDossierAsset,
   ChapterDossierPayload,
   ChapterDossierValue,
+  ChapterEditStagePayload,
+  ChapterEditStageValue,
+  ChapterWorkspacePayload,
+  ChapterWorkspaceValue,
+  ChapterReviewCard,
   ContentPresetCard,
   InboxActPayload,
   InboxActValue,
@@ -179,6 +199,24 @@ function readReviewCards(root: string): ReviewCard[] {
     }
   }
   return out.sort((a, b) => a.chapter_index - b.chapter_index || a.reviewed_at.localeCompare(b.reviewed_at));
+}
+
+function chapterReviewCard(review: import('@novelcraft/writing').ReviewRecord, fresh: boolean): ChapterReviewCard {
+  return {
+    review_id: review.review_id,
+    verdict: review.verdict ?? '',
+    reviewed_at: review.reviewed_at,
+    fresh,
+    findings: review.findings.map((finding, index) => ({
+      finding_id: finding.finding_id,
+      category: finding.category,
+      severity: finding.severity,
+      quote: finding.quote,
+      suggestion: finding.suggestion,
+      rejected: review.rejected_findings?.[finding.finding_id] !== undefined ||
+        review.rejected_findings?.[String(index)] !== undefined,
+    })),
+  };
 }
 
 /** 未绑定缺省档案(全空, 不炸通道)。 */
@@ -559,6 +597,129 @@ export function createNovelcraftHandlers(ctx: Context) {
         });
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
+    /** Sustained editor read model: exact session binding + strict current chapter selector. */
+    async chapterWorkspace(payload: ChapterWorkspacePayload): Promise<RpcResult<ChapterWorkspaceValue>> {
+      if (typeof payload.sessionId !== 'string' || payload.sessionId.length === 0) {
+        return rpcOk({ bound: null, chapters: [], chapter: null, history: [], review: null, candidate: null, diff: null });
+      }
+      const binding = await novelcraft?.vaults.resolve(payload.sessionId);
+      if (!binding) return rpcOk({ bound: null, chapters: [], chapter: null, history: [], review: null, candidate: null, diff: null });
+      try {
+        const index = Number.isInteger(payload.chapterIndex) && payload.chapterIndex >= 1
+          ? payload.chapterIndex
+          : 0;
+        const chapters = rebuildIndex(binding.root).chapters
+          .filter((chapter) => ['draft', 'published', 'canonical'].includes(chapter.status))
+          .map((chapter) => ({ index: chapter.index, ...(chapter.title !== undefined ? { title: chapter.title } : {}) }));
+        if (index === 0) {
+          return rpcOk({ bound: { book: binding.book, root: binding.root }, chapters, chapter: null, history: [], review: null, candidate: null, diff: null });
+        }
+        const chapter = readCurrentChapter(binding.root, index);
+        const history = listChapterHistory(binding.root, index).map((entry) => ({
+          commit: entry.commit,
+          authored_at: entry.authoredAt,
+          subject: entry.subject,
+          status: entry.status,
+          ...(entry.title !== undefined ? { title: entry.title } : {}),
+          content_hash: entry.contentHash,
+          declared_hash_valid: entry.declaredHashValid,
+          byte_length: entry.byteLength,
+        }));
+        const diff = payload.diffFromCommit
+          ? diffChapterVersions(binding.root, index, payload.diffFromCommit, chapter.head)
+          : null;
+        const currentReview = latestReview(binding.root, index);
+        const review = currentReview
+          ? chapterReviewCard(
+              currentReview,
+              currentReview.target_kind === 'current' && currentReview.target_content_hash === chapter.contentHash,
+            )
+          : null;
+        let candidate: ChapterWorkspaceValue['candidate'] = null;
+        try {
+          const ref = String(index).padStart(3, '0');
+          const snapshot = readChapterCandidate(binding.root, index, ref);
+          const candidateReview = latestCandidateReview(binding.root, index, ref);
+          candidate = {
+            ref: snapshot.ref,
+            source: snapshot.source,
+            body: snapshot.body,
+            content_hash: snapshot.contentHash,
+            review: candidateReview
+              ? chapterReviewCard(
+                  candidateReview,
+                  candidateReview.verdict === 'pass' &&
+                    candidateReview.target_content_hash === snapshot.contentHash &&
+                    candidateReview.target_file_hash === snapshot.fileHash,
+                )
+              : null,
+          };
+        } catch {
+          // No exact current candidate for this chapter; history stays in Git/files.
+        }
+        return rpcOk({
+          bound: { book: binding.book, root: binding.root },
+          chapters,
+          chapter: {
+            index: chapter.chapterIndex,
+            ...(chapter.title !== undefined ? { title: chapter.title } : {}),
+            status: chapter.status,
+            body: chapter.body,
+            content_hash: chapter.contentHash,
+            head: chapter.head,
+          },
+          history,
+          review,
+          candidate,
+          diff: diff
+            ? {
+                from_commit: diff.from.commit,
+                to_commit: diff.to.commit,
+                patch: diff.patch,
+                truncated: diff.truncated,
+              }
+            : null,
+        });
+      } catch (error) {
+        return rpcFail(error instanceof Error ? error.message : String(error));
+      }
+    },
+
+    /** Loopback stages immutable bytes only; the assistant tool owns approval + canonical write. */
+    async chapterStageEdit(payload: ChapterEditStagePayload): Promise<RpcResult<ChapterEditStageValue>> {
+      if (typeof payload.sessionId !== 'string' || payload.sessionId.length === 0) {
+        return rpcFail('缺少当前会话, 拒绝保存章节');
+      }
+      const binding = await novelcraft?.vaults.resolve(payload.sessionId);
+      if (!binding) return rpcFail('当前会话未绑定 vault');
+      try {
+        const staged = stageChapterEditIntake(binding.root, payload.sessionId, {
+          chapterIndex: payload.chapterIndex,
+          text: payload.text,
+          expectedContentHash: payload.expected_content_hash,
+          ...(payload.title !== undefined ? { title: payload.title } : {}),
+        });
+        pushSignal(binding.root, {
+          radar: 'writing',
+          severity: 'hint',
+          title: `第 ${payload.chapterIndex} 章编辑已暂存, 等待审批保存`,
+          evidence: [`receipt:${staged.receiptId}`, `base:${payload.expected_content_hash}`, `sha256:${staged.sha256}`],
+          proposed_action: `调用 novelcraft_chapter_version(action=save, receipt_id=${staged.receiptId}) 保存第 ${payload.chapterIndex} 章`,
+          reversibility: true,
+          target: { chapter_index: payload.chapterIndex },
+        });
+        return rpcOk({
+          receipt_id: staged.receiptId,
+          chapter_index: payload.chapterIndex,
+          byte_length: staged.byteLength,
+          sha256: staged.sha256,
+          message: `第 ${payload.chapterIndex} 章编辑已暂存, 正在交给助手审批保存。`,
+        });
+      } catch (error) {
+        return rpcFail(error instanceof Error ? error.message : String(error));
       }
     },
 

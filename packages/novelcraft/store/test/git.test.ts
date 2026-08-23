@@ -15,6 +15,7 @@ import {
   gitMove,
   gitRevert,
   gitLogSubjects,
+  gitRead,
 } from '../src/index';
 import { tmpVault } from './helpers';
 
@@ -45,6 +46,8 @@ describe('git 薄封装(真实临时 git 仓库)', () => {
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
     expect(gitHead(r)).toBe(sha);
     expect(gitLogSubjects(r)).toContain('first');
+    expect(gitRead(r, ['show', '-s', '--format=%s', sha])).toBe('first');
+    expect(() => gitRead(r, ['commit', '--allow-empty', '-m', 'forbidden'])).toThrow(/拒绝非只读参数/);
   });
 
   it('hasUncommittedChanges reflects working-tree state (R17 前置)', () => {

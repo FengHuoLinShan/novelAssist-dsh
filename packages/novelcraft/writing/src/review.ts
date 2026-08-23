@@ -7,7 +7,16 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
-import { gitAdd, gitCommit, relOf } from "@novelcraft/store";
+import {
+  contentHash,
+  gitAdd,
+  gitCommit,
+  parseFrontmatter,
+  readCurrentChapter,
+  relOf,
+  resolveAsset,
+  StoreError,
+} from "@novelcraft/store";
 import { runStep, registerSpec } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import type { StepResult } from "@novelcraft/llm-step";
@@ -32,7 +41,25 @@ export interface ReviewRecord {
   review_id: string;
   findings: ReviewFinding[];
   verdict?: string;
-  rejected_findings?: Record<string, { at: string }>;
+  target_kind?: "current" | "candidate";
+  target_ref?: string;
+  target_content_hash?: string;
+  target_file_hash?: string;
+  raw_verdict?: string;
+  discarded_finding_count?: number;
+  unlocated_finding_ids?: string[];
+  rejected_findings?: Record<string, { at: string; reason?: string }>;
+}
+
+export interface CandidateReviewRecord extends ReviewRecord {
+  target_kind: "candidate";
+  target_ref: string;
+  target_content_hash: string;
+  target_file_hash: string;
+  verdict: "pass" | "blocked";
+  raw_verdict?: string;
+  discarded_finding_count: number;
+  unlocated_finding_ids: string[];
 }
 
 export interface ReviewResult {
@@ -148,6 +175,157 @@ export async function reviewChapter(
   return { ok: true, review: record };
 }
 
+/** Public current review freezes a strict, clean chapter and rejects late results after drift. */
+export async function reviewCurrentChapter(
+  provider: Provider,
+  root: string,
+  chapterIndex: number,
+  now: Date = new Date(),
+): Promise<ReviewResult> {
+  const frozen = readCurrentChapter(root, chapterIndex);
+  const result = await runStep(provider, { specRef: "semantic_review", input: frozen.body });
+  if (!result.ok) return { ok: false, error: result.error };
+  const current = readCurrentChapter(root, chapterIndex);
+  if (current.head !== frozen.head || current.contentHash !== frozen.contentHash) {
+    throw new StoreError("CONFLICT", `第 ${chapterIndex} 章在审查期间发生变化, 审查结果未落盘`);
+  }
+  const parsed = result.result as { findings?: unknown[]; verdict?: string };
+  const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  const findings = rawFindings
+    .map((finding) => normalizeFinding(chapterIndex, (finding ?? {}) as Record<string, unknown>))
+    .filter((finding): finding is ReviewFinding => finding !== null);
+  const unlocated = findings
+    .filter((finding) => finding.quote.trim() === "" || !frozen.body.includes(finding.quote))
+    .map((finding) => finding.finding_id);
+  const discarded = rawFindings.length - findings.length;
+  const reviewId = `r${now.getTime()}`;
+  const record: ReviewRecord = {
+    chapter_index: chapterIndex,
+    chapter_file: frozen.file,
+    content_hash: frozen.contentHash,
+    reviewed_at: now.toISOString(),
+    review_id: reviewId,
+    findings,
+    target_kind: "current",
+    target_ref: String(chapterIndex).padStart(3, "0"),
+    target_content_hash: frozen.contentHash,
+    target_file_hash: contentHash(readFileSync(paths(root).chapters.chapterFile(chapterIndex), "utf8")),
+    verdict: discarded === 0 && unlocated.length === 0 && !findings.some((f) => f.severity !== "minor")
+      ? "pass"
+      : "blocked",
+    ...(typeof parsed.verdict === "string" ? { raw_verdict: parsed.verdict } : {}),
+    discarded_finding_count: discarded,
+    unlocated_finding_ids: unlocated,
+  };
+  const file = paths(root).assistant.reviewFile(`semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`);
+  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  gitAdd(root, [relOf(root, file)]);
+  gitCommit(root, `review chapter ${chapterIndex}: ${reviewId}`);
+  return { ok: true, review: record };
+}
+
+export interface ChapterCandidateSnapshot {
+  ref: string;
+  file: string;
+  body: string;
+  contentHash: string;
+  fileHash: string;
+  source: string;
+  baseContentHash?: string;
+}
+
+export function readChapterCandidate(root: string, chapterIndex: number, ref: string): ChapterCandidateSnapshot {
+  const asset = resolveAsset(root, "chapter_candidate", ref);
+  const raw = readFileSync(asset.abs, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const fm = parsed.data as Record<string, unknown>;
+  if (fm.status !== "candidate" || Number(fm.chapter_index) !== chapterIndex) {
+    throw new StoreError("BAD_CANDIDATE", `候选 ${ref} 不是第 ${chapterIndex} 章的 current candidate`);
+  }
+  const actual = contentHash(parsed.body);
+  if (fm.content_hash !== actual) {
+    throw new StoreError("BAD_CANDIDATE", `候选 ${ref} content_hash 与实际正文不一致`);
+  }
+  return {
+    ref: asset.slug,
+    file: asset.rel,
+    body: parsed.body,
+    contentHash: actual,
+    fileHash: contentHash(raw),
+    source: typeof fm.source === "string" ? fm.source : "",
+    ...(typeof fm.base_content_hash === "string" ? { baseContentHash: fm.base_content_hash } : {}),
+  };
+}
+
+/** Independent candidate review: body/hash/file bytes are rechecked after the LLM returns. */
+export async function reviewChapterCandidate(
+  provider: Provider,
+  root: string,
+  chapterIndex: number,
+  ref: string,
+  now: Date = new Date(),
+): Promise<ReviewResult> {
+  const frozen = readChapterCandidate(root, chapterIndex, ref);
+  const result = await runStep(provider, { specRef: "semantic_review", input: frozen.body });
+  if (!result.ok) return { ok: false, error: result.error };
+  const current = readChapterCandidate(root, chapterIndex, ref);
+  if (current.fileHash !== frozen.fileHash) {
+    throw new StoreError("CONFLICT", `候选 ${ref} 在审查期间发生变化, 审查结果未落盘`);
+  }
+  const parsed = result.result as { findings?: unknown[]; verdict?: string };
+  const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  const findings = rawFindings
+    .map((finding) => normalizeFinding(chapterIndex, (finding ?? {}) as Record<string, unknown>))
+    .filter((finding): finding is ReviewFinding => finding !== null);
+  const unlocated = findings
+    .filter((finding) => finding.quote.trim() === "" || !frozen.body.includes(finding.quote))
+    .map((finding) => finding.finding_id);
+  const discarded = rawFindings.length - findings.length;
+  const reviewId = `r${now.getTime()}`;
+  const record: CandidateReviewRecord = {
+    chapter_index: chapterIndex,
+    chapter_file: frozen.file,
+    content_hash: frozen.contentHash,
+    reviewed_at: now.toISOString(),
+    review_id: reviewId,
+    findings,
+    target_kind: "candidate",
+    target_ref: frozen.ref,
+    target_content_hash: frozen.contentHash,
+    target_file_hash: frozen.fileHash,
+    verdict: discarded === 0 && unlocated.length === 0 && !findings.some((f) => f.severity !== "minor")
+      ? "pass"
+      : "blocked",
+    ...(typeof parsed.verdict === "string" ? { raw_verdict: parsed.verdict } : {}),
+    discarded_finding_count: discarded,
+    unlocated_finding_ids: unlocated,
+  };
+  const file = paths(root).assistant.reviewFile(
+    `candidate-review-${String(chapterIndex).padStart(3, "0")}-${frozen.ref}-${reviewId}`,
+  );
+  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  gitAdd(root, [relOf(root, file)]);
+  gitCommit(root, `review chapter candidate ${chapterIndex}:${frozen.ref}`);
+  return { ok: true, review: record };
+}
+
+export function latestCandidateReview(
+  root: string,
+  chapterIndex: number,
+  ref: string,
+): CandidateReviewRecord | undefined {
+  const asset = resolveAsset(root, "chapter_candidate", ref);
+  const dir = paths(root).assistant.reviews;
+  if (!existsSync(dir)) return undefined;
+  const prefix = `candidate-review-${String(chapterIndex).padStart(3, "0")}-${asset.slug}-`;
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort();
+  if (files.length === 0) return undefined;
+  return JSON.parse(readFileSync(`${dir}/${files[files.length - 1]}`, "utf8")) as CandidateReviewRecord;
+}
+
 /** 读某章最新审查记录(按文件名时间序取最后)。 */
 export function latestReview(root: string, chapterIndex: number): ReviewRecord | undefined {
   const dir = paths(root).assistant.reviews;
@@ -187,7 +365,13 @@ export function rejectFinding(root: string, chapterIndex: number, reviewId: stri
  * N30 · writing.md:283: 按 finding_id 打回 finding(幂等标记; rejected_findings 键 = finding_id)。
  * 与 rejectFinding(旧, 序号定位)同语义; 加法保留两者, 未知 id fail-closed 拒绝。
  */
-export function rejectFindingById(root: string, chapterIndex: number, reviewId: string, findingId: string): void {
+export function rejectFindingById(
+  root: string,
+  chapterIndex: number,
+  reviewId: string,
+  findingId: string,
+  reason?: string,
+): void {
   const dir = paths(root).assistant.reviews;
   const prefix = `semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`;
   // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
@@ -201,7 +385,10 @@ export function rejectFindingById(root: string, chapterIndex: number, reviewId: 
     throw new Error(`finding_id 不存在: ${findingId}`);
   }
   record.rejected_findings = record.rejected_findings ?? {};
-  record.rejected_findings[findingId] = { at: new Date().toISOString() };
+  record.rejected_findings[findingId] = {
+    at: new Date().toISOString(),
+    ...(reason !== undefined ? { reason } : {}),
+  };
   writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
   gitAdd(root, [relOf(root, file)]);
   gitCommit(root, `reject finding ${reviewId}:${findingId}`);

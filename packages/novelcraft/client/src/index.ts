@@ -28,6 +28,13 @@ export type {
   ChapterDossierAsset,
   ChapterDossierPayload,
   ChapterDossierValue,
+  ChapterEditStagePayload,
+  ChapterEditStageValue,
+  ChapterHistoryCard,
+  ChapterReviewCard,
+  ChapterReviewFindingCard,
+  ChapterWorkspacePayload,
+  ChapterWorkspaceValue,
   ContentPresetCard,
   DossierSceneCard,
   InboxActPayload,
@@ -63,8 +70,9 @@ export function apply(ctx: Context): void {
     // 最小 profile/无 client-connection: 宿主半身静默(浏览器半身读 capability 缺省)。
     return;
   }
-  const handlers = createNovelcraftHandlers(ctx);
   const handler: ConnectionRpcHandler = async (endpoint, payload, _signal): Promise<RpcResult<unknown>> => {
+    // Optional host services may mount after this client row; resolve them at request time.
+    const handlers = createNovelcraftHandlers(ctx);
     switch (endpoint) {
       case ENDPOINTS.watchState:
         return handlers.watchState(payload as never);
@@ -82,6 +90,10 @@ export function apply(ctx: Context): void {
         return handlers.intakeStageImage(payload as never);
       case ENDPOINTS.chapterDossier:
         return handlers.chapterDossier(payload as never);
+      case ENDPOINTS.chapterWorkspace:
+        return handlers.chapterWorkspace(payload as never);
+      case ENDPOINTS.chapterStageEdit:
+        return handlers.chapterStageEdit(payload as never);
       case ENDPOINTS.presetsList:
         return handlers.presetsList(payload as never);
       case ENDPOINTS.presetsSelect:

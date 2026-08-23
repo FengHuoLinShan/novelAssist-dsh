@@ -10,6 +10,10 @@ export interface NovelCraftReadCapabilities {
   viewMapAtlas: Bound<'viewMapAtlas'>;
   inbox: Bound<'inbox'>;
   ragSearch: Bound<'ragSearch'>;
+  chapterCurrent: Bound<'chapterCurrent'>;
+  chapterHistory: Bound<'chapterHistory'>;
+  chapterDiff: Bound<'chapterDiff'>;
+  chapterReview: Bound<'chapterReview'>;
 }
 
 export interface NovelCraftAuthorEditCapabilities {
@@ -26,6 +30,9 @@ export interface NovelCraftProposeCapabilities {
   proposeNextChapter: Bound<'proposeNextChapter'>;
   generateNextChapter: Bound<'generateNextChapter'>;
   ingestTextFile: Bound<'ingestTextFile'>;
+  reviewChapter: Bound<'reviewChapter'>;
+  reviseChapter: Bound<'reviseChapter'>;
+  rejectChapterFinding: Bound<'rejectChapterFinding'>;
   scanHealth: Bound<'scanHealth'>;
   radarSweep: Bound<'radarSweep'>;
   refreshIndex: Bound<'refreshIndex'>;
@@ -40,6 +47,8 @@ export interface NovelCraftAdoptGuardedCapabilities {
   worldUpdate: Bound<'worldUpdateGuarded'>;
   reviewMapAtlas: Bound<'reviewMapAtlasGuarded'>;
   deepImport: Bound<'deepImport'>;
+  saveChapter: Bound<'saveChapterGuarded'>;
+  restoreChapter: Bound<'restoreChapterGuarded'>;
 }
 
 export interface NovelCraftCapabilities {
@@ -62,6 +71,10 @@ export function createNovelCraftCapabilities(service: NovelCraftService): NovelC
       viewMapAtlas: bind(service, 'viewMapAtlas'),
       inbox: bind(service, 'inbox'),
       ragSearch: bind(service, 'ragSearch'),
+      chapterCurrent: bind(service, 'chapterCurrent'),
+      chapterHistory: bind(service, 'chapterHistory'),
+      chapterDiff: bind(service, 'chapterDiff'),
+      chapterReview: bind(service, 'chapterReview'),
     }),
     propose: Object.freeze({
       runStep: bind(service, 'runStep'),
@@ -72,6 +85,9 @@ export function createNovelCraftCapabilities(service: NovelCraftService): NovelC
       proposeNextChapter: bind(service, 'proposeNextChapter'),
       generateNextChapter: bind(service, 'generateNextChapter'),
       ingestTextFile: bind(service, 'ingestTextFile'),
+      reviewChapter: bind(service, 'reviewChapter'),
+      reviseChapter: bind(service, 'reviseChapter'),
+      rejectChapterFinding: bind(service, 'rejectChapterFinding'),
       scanHealth: bind(service, 'scanHealth'),
       radarSweep: bind(service, 'radarSweep'),
       refreshIndex: bind(service, 'refreshIndex'),
@@ -85,6 +101,8 @@ export function createNovelCraftCapabilities(service: NovelCraftService): NovelC
       worldUpdate: bind(service, 'worldUpdateGuarded'),
       reviewMapAtlas: bind(service, 'reviewMapAtlasGuarded'),
       deepImport: bind(service, 'deepImport'),
+      saveChapter: bind(service, 'saveChapterGuarded'),
+      restoreChapter: bind(service, 'restoreChapterGuarded'),
     }),
   };
   return Object.freeze(capabilities);

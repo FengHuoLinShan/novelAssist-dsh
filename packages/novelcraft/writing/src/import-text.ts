@@ -7,7 +7,7 @@ import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { paths, readAsset, slugify, writeAsset } from "@novelcraft/vault";
 import { validateImportFile } from "@novelcraft/store";
-import { contentHashOf, ingestChapter, normalizeChapterText } from "./ingest.js";
+import { chapterBodyText, contentHashOf, ingestChapter, normalizeChapterText } from "./ingest.js";
 import { appendImportLog, readImportLog } from "./import-log.js";
 
 // ============================================================================
@@ -193,7 +193,7 @@ export function importTextChapters(root: string, opts: ImportTextOptions): Impor
   for (const ch of split.chapters) {
     const chapterIndex = startChapter + ch.index - 1;
     const target = p.chapters.chapterFile(chapterIndex);
-    const contentHash = contentHashOf(ch.text);
+    const contentHash = contentHashOf(chapterBodyText(ch.text));
 
     // 冲突判定: 目标已存在且内容 hash 不同(含无法读到 hash 的手写文件)→ !force 时跳过。
     const existingRaw = existsSync(target) ? readAsset(root, target) : null;

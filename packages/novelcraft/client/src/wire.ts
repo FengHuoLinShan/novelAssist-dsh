@@ -12,6 +12,8 @@ export const ENDPOINTS = {
   intakeStage: 'intake/stage-text',
   intakeStageImage: 'intake/stage-atlas-image',
   chapterDossier: 'chapter/dossier',
+  chapterWorkspace: 'chapter/workspace',
+  chapterStageEdit: 'chapter/stage-edit',
   presetsList: 'presets/list',
   presetsSelect: 'presets/select',
   atlasView: 'atlas/view',
@@ -244,6 +246,84 @@ export interface ChapterDossierValue {
   signals: SignalCard[];
   /** next_chapter==N 的最新一条续写提案(无则 null)。 */
   proposal: ProposalCard | null;
+}
+
+export interface ChapterWorkspacePayload {
+  sessionId?: string;
+  chapterIndex: number;
+  diffFromCommit?: string;
+}
+
+export interface ChapterHistoryCard {
+  commit: string;
+  authored_at: string;
+  subject: string;
+  status: string;
+  title?: string;
+  content_hash: string;
+  declared_hash_valid: boolean;
+  byte_length: number;
+}
+
+export interface ChapterReviewFindingCard {
+  finding_id: string;
+  category: string;
+  severity: string;
+  quote: string;
+  suggestion: string;
+  rejected: boolean;
+}
+
+export interface ChapterReviewCard {
+  review_id: string;
+  verdict: string;
+  reviewed_at: string;
+  fresh: boolean;
+  findings: ChapterReviewFindingCard[];
+}
+
+export interface ChapterWorkspaceValue {
+  bound: { book: string; root: string } | null;
+  chapters: Array<{ index: number; title?: string }>;
+  chapter: {
+    index: number;
+    title?: string;
+    status: string;
+    body: string;
+    content_hash: string;
+    head: string;
+  } | null;
+  history: ChapterHistoryCard[];
+  review: ChapterReviewCard | null;
+  candidate: {
+    ref: string;
+    source: string;
+    body: string;
+    content_hash: string;
+    review: ChapterReviewCard | null;
+  } | null;
+  diff: {
+    from_commit: string;
+    to_commit: string;
+    patch: string;
+    truncated: boolean;
+  } | null;
+}
+
+export interface ChapterEditStagePayload {
+  sessionId?: string;
+  chapterIndex: number;
+  expected_content_hash: string;
+  title?: string;
+  text: string;
+}
+
+export interface ChapterEditStageValue {
+  receipt_id: string;
+  chapter_index: number;
+  byte_length: number;
+  sha256: string;
+  message: string;
 }
 
 export interface PresetsListPayload {

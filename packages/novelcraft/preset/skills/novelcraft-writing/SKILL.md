@@ -8,10 +8,12 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
 
 ## 文本流(编辑外置, D8)
 
-- 正文可外置编辑; 在当前会话的「写作台 → 导入」选择 UTF-8 `.txt/.md`,
+- 单章持续编辑、版本对比和候选审查使用当前会话的「章节正文」标签页；整稿外置同步仍在
+  「写作台 → 导入」选择 UTF-8 `.txt/.md`,
   由页内面板生成会话绑定收据。工具不读取模型提供的主机路径。
-- 摄入幂等与冲突保护已存在, 但完整多文件 transaction/Git commit point 仍待收口,
-  不能宣称每次同步已经形成一个可恢复版本。
+- 标签页保存只暂存 session-bound receipt；随后必须调用
+  `novelcraft_chapter_version(action=save, receipt_id=...)` 并通过 approval。成功后恰好一个
+  Git 版本；history/diff/restore 也走同一工具，restore 生成新 commit，不改写 Git 历史。
 
 ## 文本入库协议(Track 1, D9a)
 
@@ -30,18 +32,23 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
 ## 当前可执行面
 
 - `available-now`: `novelcraft_ingest_file`, `novelcraft_propose_next_chapter`,
-  `novelcraft_generate_next_chapter`, `novelcraft_store_adopt(kind=chapter_candidate)`；
-  `novelcraft_llm_step(spec=semantic_review)` 只返回 raw review preview。
-- `core-only`: `reviewChapter`/`applyRevision`/`rejectFinding` 与正文 update/version/restore
-  尚未组成 public tool/client 竖切, 不应由 Skill 假装已落 `.assistant/reviews` 或修订候选。
+  `novelcraft_generate_next_chapter`, `novelcraft_chapter_version`,
+  `novelcraft_chapter_review`。
+- 审查闭环必须按顺序执行：`review target=current` → 选择稳定 `finding_id` → `revise` 产
+  candidate → `review target=candidate` → 只有 fresh 机械 `pass` 才 `adopt`。candidate adopt
+  即使从通用 `novelcraft_store_adopt` 进入，也会复用同一 writing 领域门并通过 approval。
+- `reject_finding` 必须带作者理由；模型自由文本 verdict 不直接充当采用许可。未知 severity、
+  找不到原文 quote、正文/候选漂移、缺独立审查或 approval 非 allowed-once 均 fail-closed。
 
 ## 写作台(§17.4, 半屏 D10)
 
 - 写作前·计划台: 下一步提案 2–3 条; 写作中·参照台: 本 Scene 人物/设定/必发生项简报;
 - 写作后·评审台: 审查/冲突/修订卡; 守望: 六雷达 + 收件箱 + 宠物。
 - 导入: 仅承载浏览器选文件与会话收据; 章节切分、冲突裁决和后续深导入继续在对话中完成。
+- 「章节正文」是唯一持续工作区：正文/标题编辑、Git history/diff/restore、current finding
+  选择、candidate 正文与独立审查/采用都在此标签；实际模型调用和采用继续回到当前对话执行。
 
 ## 纪律
 
-- 候选正文只读(仅 adopt/reject); 修订回 Word = 可复制修订块(v1);
+- 候选正文只读；当前没有候选 discard/reject 终点或 Word 同步回执，不要声称已实现；
 - 采用必过 approval; 非法 finding 引用拒绝。

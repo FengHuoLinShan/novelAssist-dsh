@@ -42,6 +42,12 @@ export function contentHashOf(normalizedText: string): string {
   return createHash("sha256").update(normalizedText, "utf8").digest("hex");
 }
 
+/** 落盘正文的精确字节口径: 归一文本且文件末尾恰有换行。 */
+export function chapterBodyText(text: string): string {
+  const normalized = normalizeChapterText(text);
+  return normalized.endsWith("\n") ? normalized : normalized + "\n";
+}
+
 /** 生成章节 frontmatter(字段表: specs/assets/writing.md「章节正文」)。
  *  status 固定 draft(旧 working 面; published/canonical 走 store 状态机)。 */
 export function chapterFrontmatter(input: {
@@ -71,8 +77,8 @@ export function ingestChapter(root: string, opts: IngestOptions): IngestResult {
     throw new Error("chapterIndex 必须是 ≥1 的整数");
   }
   const p = paths(root);
-  const normalized = normalizeChapterText(opts.text);
-  const contentHash = contentHashOf(normalized);
+  const storedBody = chapterBodyText(opts.text);
+  const contentHash = contentHashOf(storedBody);
   const file = p.chapters.chapterFile(opts.chapterIndex);
 
   if (existsSync(file)) {
@@ -89,8 +95,7 @@ export function ingestChapter(root: string, opts: IngestOptions): IngestResult {
     source: opts.source,
     title: opts.title,
   });
-  writeAsset(root, p.chapters.chapterFile(opts.chapterIndex), body + normalized + "\n");
+  writeAsset(root, p.chapters.chapterFile(opts.chapterIndex), body + storedBody);
   return { file, skipped: false, contentHash };
 }
-
 

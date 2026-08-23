@@ -273,12 +273,115 @@ export class NovelCraftService extends Service {
     opts: store.AdoptOptions = {},
     note?: string,
   ): Promise<store.AdoptResult> {
-    const prepared = store.prepareAdopt(root, kind, ref, opts);
+    const prepared = kind === 'chapter_candidate'
+      ? writing.prepareReviewedChapterCandidateAdopt(root, ref, opts)
+      : store.prepareAdopt(root, kind, ref, opts);
     return this.approval.guard(agent, {
       action: `采用${kind}`,
       summary: note ?? `vault ${root} 中的 ${ref}`,
       items: [ref],
-    }, async () => store.executePreparedAdopt(prepared));
+    }, async () => kind === 'chapter_candidate'
+      ? writing.executeReviewedChapterCandidateAdopt(prepared)
+      : store.executePreparedAdopt(prepared));
+  }
+
+  /** 正文当前事实与 Git 版本读面(§6.15): 零写、按章隔离。 */
+  chapterCurrent(root: string, chapterIndex: number): store.CurrentChapter {
+    return store.readCurrentChapter(root, chapterIndex);
+  }
+
+  chapterHistory(root: string, chapterIndex: number, limit = 20): store.ChapterHistoryEntry[] {
+    return store.listChapterHistory(root, chapterIndex, limit);
+  }
+
+  chapterDiff(root: string, chapterIndex: number, fromCommit: string, toCommit?: string): store.ChapterDiff {
+    return store.diffChapterVersions(root, chapterIndex, fromCommit, toCommit);
+  }
+
+  chapterReview(root: string, chapterIndex: number, target: 'current' | 'candidate', ref?: string): writing.ReviewRecord | undefined {
+    return target === 'candidate'
+      ? writing.latestCandidateReview(root, chapterIndex, ref ?? String(chapterIndex).padStart(3, '0'))
+      : writing.latestReview(root, chapterIndex);
+  }
+
+  async reviewChapter(
+    root: string,
+    chapterIndex: number,
+    target: 'current' | 'candidate',
+    ref: string | undefined,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
+  ): Promise<writing.ReviewResult> {
+    const resolved = profile !== undefined
+      ? requireTrustedExecutionProfile(profile, root)
+      : await this.resolveProfile(root);
+    const provider = await this.contentProviderFor(root, signal, resolved);
+    return target === 'candidate'
+      ? writing.reviewChapterCandidate(provider, root, chapterIndex, ref ?? String(chapterIndex).padStart(3, '0'))
+      : writing.reviewCurrentChapter(provider, root, chapterIndex);
+  }
+
+  async reviseChapter(
+    root: string,
+    chapterIndex: number,
+    findingIds: string[],
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
+  ): Promise<writing.ReviseResult> {
+    const resolved = profile !== undefined
+      ? requireTrustedExecutionProfile(profile, root)
+      : await this.resolveProfile(root);
+    return writing.applyReviewedRevision(
+      await this.contentProviderFor(root, signal, resolved),
+      root,
+      chapterIndex,
+      findingIds,
+    );
+  }
+
+  rejectChapterFinding(root: string, chapterIndex: number, reviewId: string, findingId: string, reason: string): void {
+    if (reason.trim() === '') throw new store.StoreError('VALIDATION_FAILED', '打回 finding 必须说明理由');
+    const current = store.readCurrentChapter(root, chapterIndex);
+    const review = writing.latestReview(root, chapterIndex);
+    if (
+      review?.review_id !== reviewId || review.target_kind !== 'current' ||
+      review.target_content_hash !== current.contentHash
+    ) {
+      throw new store.StoreError('CONFLICT', `审查 ${reviewId} 已过期或不是第 ${chapterIndex} 章 current review`);
+    }
+    writing.rejectFindingById(root, chapterIndex, reviewId, findingId, reason);
+  }
+
+  /** 页内编辑收据 → 审批 → 冻结 writeSet；loopback RPC 从不写正文。 */
+  saveChapterGuarded(
+    agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
+    root: string,
+    sessionId: string,
+    receiptId: string,
+  ): Promise<writing.ChapterWriteResult> {
+    return writing.consumeStagedChapterEdit(root, sessionId, receiptId, (prepared) =>
+      this.approval.guard(agent, {
+        action: '保存章节正文',
+        summary: prepared.summary,
+        items: [`chapter:${prepared.chapterIndex}`],
+      }, () => writing.executePreparedChapterWrite(prepared)));
+  }
+
+  /** 旧 blob 恢复为新章节版本；审批前冻结当前 hash/HEAD/writeSet。 */
+  restoreChapterGuarded(
+    agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
+    root: string,
+    chapterIndex: number,
+    commit: string,
+    expectedContentHash: string,
+  ): Promise<writing.ChapterWriteResult> {
+    const prepared = writing.prepareChapterRestore(root, chapterIndex, commit, expectedContentHash);
+    if (prepared.write === undefined) return writing.executePreparedChapterWrite(prepared);
+    return this.approval.guard(agent, {
+      action: '恢复章节版本',
+      summary: prepared.summary,
+      items: [`chapter:${chapterIndex}`, `commit:${commit}`],
+    }, () => writing.executePreparedChapterWrite(prepared));
   }
 
   /** 便捷: 审批门控的 world 对象创建(采用类写入必过 approval, N31 + 铁律3 fail-closed)。 */

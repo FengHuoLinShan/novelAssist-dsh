@@ -10,6 +10,7 @@ import { gitAdd, gitCommit, relOf, StoreError } from "@novelcraft/store";
 import { chapterBody } from "./review.js";
 import { compileProposalContext } from "./propose.js";
 import { contentHashOf } from "./ingest.js";
+import { chapterBodyText } from "./ingest.js";
 
 export interface GenerateNextChapterOptions {
   /** 选定提案标题(作者语言方向) */
@@ -53,11 +54,12 @@ export async function generateNextChapter(
   const draft = (r.result as { text: string }).text;
   // N23: chapter_candidate schema 必填 status/content_hash/source;
   // content_hash = 候选正文自身哈希(N13); source 标记生成来源。
+  const body = chapterBodyText(draft);
   const fm = [
     "---",
     `chapter_index: ${next}`,
     "status: candidate",
-    `content_hash: ${contentHashOf(draft)}`,
+    `content_hash: ${contentHashOf(body)}`,
     `base_chapter: ${chapterIndex}`,
     `base_content_hash: ${contentHash}`,
     `proposal_title: ${JSON.stringify(opts.proposalTitle)}`,
@@ -70,7 +72,7 @@ export async function generateNextChapter(
   // 这里抛 EEXIST → 转 CONFLICT fail-closed: 不覆盖旧字节、不 gitAdd/commit。
   // (内容完整单次写, 无 check/write 窗口; 写前 existsSync 只做 fail-fast 省 LLM 调用。)
   try {
-    writeFileSync(candidateFile, fm + draft + "\n", { flag: "wx" });
+    writeFileSync(candidateFile, fm + body, { flag: "wx" });
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
       throw new StoreError(

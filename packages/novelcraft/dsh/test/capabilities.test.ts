@@ -8,10 +8,13 @@ import { STORE_FACADE } from '../src/service.js';
 function fakeService(): NovelCraftService {
   const service: Record<string, unknown> = { marker: 'bound' };
   const methods = [
-    'viewMapAtlas', 'inbox', 'ragSearch', 'runStep', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
-    'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'ingestTextFile', 'scanHealth',
+    'viewMapAtlas', 'inbox', 'ragSearch', 'chapterCurrent', 'chapterHistory', 'chapterDiff', 'chapterReview',
+    'runStep', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
+    'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'ingestTextFile',
+    'reviewChapter', 'reviseChapter', 'rejectChapterFinding', 'scanHealth',
     'radarSweep', 'refreshIndex', 'ragSync', 'ragEmbed', 'applyAtlasAnnotationQueue', 'adoptGuarded',
     'worldCreateGuarded', 'worldUpdateGuarded', 'reviewMapAtlasGuarded', 'deepImport',
+    'saveChapterGuarded', 'restoreChapterGuarded',
   ];
   for (const name of methods) service[name] = vi.fn(function (this: Record<string, unknown>) { return this.marker; });
   // Existing raw direct annotation and raw facade members intentionally exist on service but must not be routed.
@@ -69,7 +72,7 @@ describe('createNovelCraftCapabilities', () => {
     const capabilities = createNovelCraftCapabilities(fakeService());
     expect(Object.keys(capabilities.propose.authorEdit)).toEqual(['annotations']);
     expect(Object.keys(capabilities.adoptGuarded).sort()).toEqual([
-      'deepImport', 'reviewMapAtlas', 'storeAdopt', 'worldCreate', 'worldUpdate',
+      'deepImport', 'restoreChapter', 'reviewMapAtlas', 'saveChapter', 'storeAdopt', 'worldCreate', 'worldUpdate',
     ]);
   });
 });

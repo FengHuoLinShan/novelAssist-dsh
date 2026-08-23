@@ -37,7 +37,7 @@ globalThis.window = { __ModuleLoader__: moduleLoaderStub }
 // banner 执行即调用 window.__ModuleLoader__.load; 再显式执行工厂得到 exports。
 new Function('require', source)(stubRequire)
 const exports_ = captured.load.factory(stubRequire)
-const { apply, inject, PetAction } = exports_
+const { apply, inject, PetAction, ChapterWorkspaceView } = exports_
 if (captured.load.id !== '@novelcraft/dsh-client') {
   throw new Error(`FAIL: rc.8 client bundle id 使用了保留后缀或意外名称: ${captured.load.id}`)
 }
@@ -46,7 +46,10 @@ if (captured.load.id !== '@novelcraft/dsh-client') {
 const calls = { locale: [], slots: [] }
 const ctx = {
   effect: (fn) => { fn() },
-  locale: { register: (ns, dicts) => calls.locale.push({ ns, dicts }) },
+  locale: {
+    register: (ns, dicts) => calls.locale.push({ ns, dicts }),
+    bind: () => (key) => key,
+  },
   slots: {
     register: (options, Component) => ({ ...options, Component }),
     inject: (slotName, registerCb) => calls.slots.push({ slotName, register: registerCb() }),
@@ -64,6 +67,10 @@ const slot = calls.slots.find((s) => s.slotName === 'conversation.session.header
 if (!slot || slot.register.id !== 'novelcraft-pet') {
   throw new Error(`FAIL: 会话头插槽注入缺失或 id 错误: ${JSON.stringify(calls.slots)}`)
 }
+const chapterSlot = calls.slots.find((s) => s.slotName === 'conversation.view')
+if (!chapterSlot || chapterSlot.register.id !== 'novelcraft-chapters' || chapterSlot.register.order !== 20) {
+  throw new Error(`FAIL: rc.8 conversation.view 章节标签缺失或注册错误: ${JSON.stringify(calls.slots)}`)
+}
 
 // ---- 断言 2: PetAction 真实渲染(静默态, 无 session) ----
 const html = renderToStaticMarkup(
@@ -77,8 +84,22 @@ if (!html.includes('NovelCraft 守望') || !html.includes('静默')) {
   throw new Error(`FAIL: 宠物按钮渲染缺 aria/title 或静默态: ${html.slice(0, 300)}`)
 }
 
+const chapterHtml = renderToStaticMarkup(
+  createElement(ChapterWorkspaceView, {
+    sessionId: 's1',
+    t: (key) => ({ 'chapter.view': '章节正文', 'chapter.unbound': '未绑定', 'chapter.select': '选择章节', 'chapter.empty': '无章节', 'chapter.refresh': '刷新' }[key] ?? key),
+    connection: undefined,
+    useInput: (select) => select({ draft: '' }),
+    inputActions: { setDraft: () => {}, submit: () => {} },
+  }),
+)
+if (!chapterHtml.includes('章节正文') || !chapterHtml.includes('未绑定')) {
+  throw new Error(`FAIL: 章节 conversation.view 渲染失败: ${chapterHtml.slice(0, 300)}`)
+}
+
 console.log('M5 client 模块冒烟 ✓')
 console.log(`  module id = ${captured.load.id}`)
 console.log(`  inject = [${inject.join(', ')}]`)
 console.log(`  slots = [${calls.slots.map((s) => s.slotName).join(', ')}]`)
 console.log(`  pet render = ${html.slice(0, 220)}...`)
+console.log(`  chapter view = ${chapterHtml.slice(0, 220)}...`)

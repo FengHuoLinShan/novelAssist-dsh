@@ -16,7 +16,7 @@ import { assertNoSymlinkOnPath, assertSafePathSegment, guardPath } from './index
 const RECEIPT_SCHEMA = 'novelcraft.file-intake.v1';
 const RECEIPT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const FILE_INTAKE_MAX_BYTES = 50 * 1024 * 1024;
-export type FileIntakeKind = 'text' | 'atlas-image';
+export type FileIntakeKind = 'text' | 'atlas-image' | 'chapter-edit';
 type ReceiptStatus = 'ready' | 'done' | 'failed';
 
 interface FileIntakeReceipt {
@@ -124,7 +124,7 @@ function parseReceipt(raw: string): FileIntakeReceipt {
   const r = value as Partial<FileIntakeReceipt>;
   if (
     r.schema !== RECEIPT_SCHEMA || typeof r.id !== 'string' || !RECEIPT_ID_RE.test(r.id) ||
-    (r.kind !== 'text' && r.kind !== 'atlas-image') ||
+    (r.kind !== 'text' && r.kind !== 'atlas-image' && r.kind !== 'chapter-edit') ||
     typeof r.session_key !== 'string' || !/^[0-9a-f]{32}$/.test(r.session_key) ||
     typeof r.file_name !== 'string' || typeof r.byte_length !== 'number' ||
     !Number.isSafeInteger(r.byte_length) || r.byte_length < 1 || r.byte_length > FILE_INTAKE_MAX_BYTES ||
@@ -245,6 +245,83 @@ export function consumeFileIntake<T>(
         status: 'failed',
         completed_at: new Date().toISOString(),
         error: error instanceof Error ? error.message : '导入失败',
+      });
+      rmSync(files.bytes, { force: true });
+    } catch {
+      // Preserve the original failure; the receipt remains fail-closed.
+    }
+    throw error;
+  } finally {
+    rmSync(files.lock, { force: true });
+  }
+}
+
+/**
+ * Async consumer variant for approval-gated writes. The receipt lock and frozen
+ * bytes stay held across approval; rejection/failure terminalizes the receipt.
+ */
+export async function consumeFileIntakeAsync<T>(
+  root: string,
+  sessionId: string,
+  receiptId: string,
+  kind: FileIntakeKind,
+  consume: (input: ConsumedFileIntake) => Promise<T>,
+): Promise<T> {
+  const key = sessionKey(sessionId);
+  const files = receiptFiles(root, key, receiptId);
+  let receipt: FileIntakeReceipt;
+  try {
+    receipt = parseReceipt(readFileSync(files.receipt, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new FileIntakeError('文件收据不存在或不属于当前会话', 'NOT_FOUND');
+    }
+    throw error;
+  }
+  if (receipt.id !== receiptId || receipt.session_key !== key) {
+    throw new FileIntakeError('文件收据不属于当前会话', 'SESSION_MISMATCH');
+  }
+  if (receipt.kind !== kind) throw new FileIntakeError('文件收据类型不匹配', 'INVALID');
+  if (receipt.status === 'done' && receipt.result !== undefined) return receipt.result as T;
+  if (receipt.status === 'failed') {
+    throw new FileIntakeError(receipt.error ?? '此前操作已失败, 请重新提交', 'FAILED');
+  }
+
+  let fd: number;
+  try {
+    fd = openSync(files.lock, 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new FileIntakeError('文件正在处理, 请稍后重试', 'BUSY');
+    }
+    throw error;
+  }
+  closeSync(fd);
+
+  try {
+    const bytes = readFileSync(files.bytes);
+    if (bytes.byteLength !== receipt.byte_length || sha256(bytes) !== receipt.sha256) {
+      throw new FileIntakeError('暂存文件与收据不一致, 已拒绝处理', 'TAMPERED');
+    }
+    const rawResult = await consume({ receiptId, fileName: receipt.file_name, bytes, metadata: receipt.metadata });
+    const serialized = JSON.stringify(rawResult);
+    if (serialized === undefined) throw new FileIntakeError('处理结果不可记录', 'FAILED');
+    const result = JSON.parse(serialized) as T;
+    writeReceipt(root, files.receipt, {
+      ...receipt,
+      status: 'done',
+      completed_at: new Date().toISOString(),
+      result,
+    });
+    rmSync(files.bytes, { force: true });
+    return result;
+  } catch (error) {
+    try {
+      writeReceipt(root, files.receipt, {
+        ...receipt,
+        status: 'failed',
+        completed_at: new Date().toISOString(),
+        error: error instanceof Error ? error.message : '处理失败',
       });
       rmSync(files.bytes, { force: true });
     } catch {

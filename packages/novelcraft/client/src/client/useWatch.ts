@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RpcCaller } from './index.ts'
 import type {
   ChapterDossierValue,
+  ChapterEditStageValue,
+  ChapterWorkspaceValue,
   InboxActPayload,
   InboxActValue,
   InboxListValue,
@@ -61,6 +63,33 @@ export async function stageAtlasImageIntakeFile(
     file_name: fileName,
     bytes_base64: bytesBase64,
     node_ref: nodeRef,
+  })
+}
+
+export async function loadChapterWorkspace(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  chapterIndex: number,
+  diffFromCommit?: string,
+): Promise<ChapterWorkspaceValue | null> {
+  return call<ChapterWorkspaceValue>(connection, ENDPOINTS.chapterWorkspace, {
+    sessionId,
+    chapterIndex,
+    ...(diffFromCommit ? { diffFromCommit } : {}),
+  })
+}
+
+export async function stageChapterEdit(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  input: { chapterIndex: number; expectedContentHash: string; title?: string; text: string },
+): Promise<ChapterEditStageValue | null> {
+  return call<ChapterEditStageValue>(connection, ENDPOINTS.chapterStageEdit, {
+    sessionId,
+    chapterIndex: input.chapterIndex,
+    expected_content_hash: input.expectedContentHash,
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    text: input.text,
   })
 }
 

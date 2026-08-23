@@ -9,10 +9,25 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
-import { adopt, gitAdd, gitCommit, parseFrontmatter, relOf, StoreError } from "@novelcraft/store";
-import { chapterBody, latestReview, registerWritingSpecsOnce } from "./review.js";
+import {
+  adopt,
+  contentHash,
+  executePreparedAdopt,
+  gitAdd,
+  gitCommit,
+  parseFrontmatter,
+  prepareAdopt,
+  readCurrentChapter,
+  relOf,
+  resolveAsset,
+  StoreError,
+  type AdoptOptions,
+  type AdoptResult,
+  type PreparedAdopt,
+} from "@novelcraft/store";
+import { chapterBody, latestCandidateReview, latestReview, registerWritingSpecsOnce } from "./review.js";
 import type { ReviewFinding } from "./review.js";
-import { contentHashOf } from "./ingest.js";
+import { chapterBodyText, contentHashOf } from "./ingest.js";
 
 export interface ReviseResult {
   ok: boolean;
@@ -91,11 +106,12 @@ export async function applyRevision(
   // P1: base_content_hash 冻结 = contentHashOf(正文) 而非章节存储字段 —— ingest 存的
   // content_hash 是归一文本哈希(正文文件多一个结尾换行), adoptChapterCandidate 的 P1
   // 采用前重算用的就是 contentHashOf(正文), 冻结值与之同约定(见 assertRevisionBaseline)。
+  const revisedBody = chapterBodyText(revised);
   const fm = [
     "---",
     `chapter_index: ${chapterIndex}`,
     "status: candidate",
-    `content_hash: ${contentHashOf(revised)}`,
+    `content_hash: ${contentHashOf(revisedBody)}`,
     `base_chapter: ${chapterIndex}`,
     `base_content_hash: ${contentHashOf(body)}`,
     // N30: finding_ids = 解析后的 finding_id 串(id 路径)或原序号(index 路径, 兼容)。
@@ -109,7 +125,7 @@ export async function applyRevision(
   // 这里抛 EEXIST → 转 CONFLICT fail-closed: 不覆盖旧字节、不 gitAdd/commit。
   // (内容完整单次写, 无 check/write 窗口; 写前 existsSync 只做 fail-fast 省 LLM 调用。)
   try {
-    writeFileSync(candidateFile, fm + revised + "\n", { flag: "wx" });
+    writeFileSync(candidateFile, fm + revisedBody, { flag: "wx" });
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
       throw new StoreError(
@@ -126,6 +142,32 @@ export async function applyRevision(
   gitAdd(root, [relOf(root, candidateFile)]);
   gitCommit(root, `revision candidate ch${chapterIndex}`);
   return { ok: true, file: candidateFile };
+}
+
+/** Public revision only accepts a fresh strict-current review produced by reviewCurrentChapter. */
+export async function applyReviewedRevision(
+  provider: Provider,
+  root: string,
+  chapterIndex: number,
+  findingIds: string[],
+): Promise<ReviseResult> {
+  const current = readCurrentChapter(root, chapterIndex);
+  const review = latestReview(root, chapterIndex);
+  if (
+    review?.target_kind !== "current" || review.target_content_hash !== current.contentHash ||
+    review.discarded_finding_count !== 0 || (review.unlocated_finding_ids?.length ?? 0) !== 0
+  ) {
+    throw new StoreError("VALIDATION_FAILED", `第 ${chapterIndex} 章缺少 fresh 可定位的 current review`);
+  }
+  if (new Set(findingIds).size !== findingIds.length) {
+    throw new StoreError("VALIDATION_FAILED", "finding_ids 不得重复");
+  }
+  for (const id of findingIds) {
+    if (review.rejected_findings?.[id] !== undefined) {
+      throw new StoreError("VALIDATION_FAILED", `finding ${id} 已被作者打回, 不得返修`);
+    }
+  }
+  return applyRevision(provider, root, chapterIndex, [], findingIds);
 }
 
 /**
@@ -185,6 +227,45 @@ function assertRevisionBaseline(root: string, fm: Record<string, unknown>, ref: 
  */
 function oldConventionBodyHash(body: string): string {
   return contentHashOf(body.replace(/\n$/, ""));
+}
+
+/** Public adoption must freeze both the reviewed candidate bytes and its current/base facts. */
+export function prepareReviewedChapterCandidateAdopt(
+  root: string,
+  ref: string,
+  opts: AdoptOptions = {},
+): PreparedAdopt {
+  const asset = resolveAsset(root, "chapter_candidate", ref);
+  const raw = readFileSync(asset.abs, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const fm = parsed.data as Record<string, unknown>;
+  if (fm.status !== "candidate") {
+    throw new StoreError("ILLEGAL_TRANSITION", `章节候选 ${ref} 当前状态不是 candidate`);
+  }
+  const chapterIndex = Number(fm.chapter_index);
+  if (!Number.isInteger(chapterIndex) || chapterIndex < 1) {
+    throw new StoreError("BAD_CANDIDATE", `章节候选 ${ref} 缺少合法 chapter_index`);
+  }
+  const actualHash = contentHash(parsed.body);
+  if (fm.content_hash !== actualHash) {
+    throw new StoreError("BAD_CANDIDATE", `章节候选 ${ref} content_hash 与实际正文不一致`);
+  }
+  if (opts.expectedContentHash !== undefined && opts.expectedContentHash !== actualHash) {
+    throw new StoreError("CONFLICT", `章节候选 ${ref} content_hash CAS 失败`);
+  }
+  assertRevisionBaseline(root, fm, asset.slug);
+  const review = latestCandidateReview(root, chapterIndex, asset.slug);
+  if (
+    review === undefined || review.verdict !== "pass" ||
+    review.target_content_hash !== actualHash || review.target_file_hash !== contentHash(raw)
+  ) {
+    throw new StoreError("VALIDATION_FAILED", `章节候选 ${ref} 缺少 fresh 独立审查 pass`);
+  }
+  return prepareAdopt(root, "chapter_candidate", asset.slug, { ...opts, expectedContentHash: actualHash });
+}
+
+export function executeReviewedChapterCandidateAdopt(prepared: PreparedAdopt): Promise<AdoptResult> {
+  return executePreparedAdopt(prepared);
 }
 
 /** 采用序号最小的候选(copy-on-adopt → draft + git commit, 脏工作区拒绝由 store 保证)。 */

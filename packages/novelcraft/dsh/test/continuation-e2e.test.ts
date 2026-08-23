@@ -73,6 +73,16 @@ const tool = (env: TestEnv, name: string): ToolDefinition => {
   return t;
 };
 
+async function reviewCandidate(env: TestEnv): Promise<void> {
+  env.h.adapter.enqueue({ deltas: [JSON.stringify({ findings: [], verdict: '模型原文不参与机械 pass' })] });
+  const review = tool(env, 'novelcraft_chapter_review');
+  const result = await review.execute(
+    { root: env.root, action: 'review', target: 'candidate', chapter: 2, ref: '002' },
+    { ...env.exec, name: 'novelcraft_chapter_review' },
+  ) as { verdict: string };
+  expect(result.verdict).toBe('pass');
+}
+
 /** fixture: 停靠第 1 章 + 提交(为后续 generate/adopt 提供上一章, 并保证 R17 干净工作区)。 */
 function seedChapterOne(env: TestEnv): void {
   ingestChapter(env.root, { chapterIndex: 1, text: '第一章正文结尾', source: 'paste' });
@@ -150,13 +160,20 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
       { root: env.root, chapter: 1, proposal_title: '雨夜对峙' },
       { ...env.exec, name: 'novelcraft_generate_next_chapter' },
     );
-    const t = tool(env, 'novelcraft_store_adopt');
-    const out = (await t.execute(
-      { root: env.root, kind: 'chapter_candidate', ref: '002', note: '采用第二章候选' },
+    const generic = tool(env, 'novelcraft_store_adopt');
+    await expect(generic.execute(
+      { root: env.root, kind: 'chapter_candidate', ref: '002' },
       { ...env.exec, name: 'novelcraft_store_adopt' },
-    )) as { ok: boolean; commit: string; target_rel_path: string; message: string };
+    )).rejects.toMatchObject({ code: 'STORE_VALIDATION_FAILED' });
+    expect(env.h.approval.requests).toHaveLength(0); // 领域门先于 approval, 无审查不弹假确认。
+    await reviewCandidate(env);
+    const t = tool(env, 'novelcraft_chapter_review');
+    const out = (await t.execute(
+      { root: env.root, action: 'adopt', target: 'candidate', chapter: 2, ref: '002' },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    )) as { ok: boolean; commit: string; message: string };
     expect(out.ok).toBe(true);
-    expect(out.target_rel_path).toBe('chapters/002.md');
+    expect(out.commit).toMatch(/^[0-9a-f]{40}$/);
     expect(existsSync(path.join(env.root, 'chapters', '002.md'))).toBe(true);
     // copy-on-adopt(R34): canonical 正文为 draft。
     expect(readFileSync(path.join(env.root, 'chapters', '002.md'), 'utf8')).toContain('status: draft');
@@ -178,10 +195,11 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
         { root: env.root, chapter: 1, proposal_title: '雨夜对峙' },
         { ...env.exec, name: 'novelcraft_generate_next_chapter' },
       );
-      const t = tool(env, 'novelcraft_store_adopt');
+      await reviewCandidate(env);
+      const t = tool(env, 'novelcraft_chapter_review');
       await expect(t.execute(
-        { root: env.root, kind: 'chapter_candidate', ref: '002', note: '采用第二章候选' },
-        { ...env.exec, name: 'novelcraft_store_adopt' },
+        { root: env.root, action: 'adopt', target: 'candidate', chapter: 2, ref: '002' },
+        { ...env.exec, name: 'novelcraft_chapter_review' },
       )).rejects.toMatchObject({ code: `APPROVAL_${outcome.toUpperCase()}` });
       // fail-closed: 正文未写, 候选仍保留为 candidate。
       expect(existsSync(path.join(env.root, 'chapters', '002.md'))).toBe(false);

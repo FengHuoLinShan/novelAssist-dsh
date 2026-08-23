@@ -26,11 +26,11 @@ plugins:
 | `ctx.jobs` | `RadarScheduler` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval` |
 | `ctx.credentials` | (消费面) | 内容手 Key 由 DSH credentials/LLM 适配器层解析; `.assistant/llm.yml` 只存模型名与参数(N5), 本包不落 Key |
 | 会话↔vault | `SessionVaultBinder` | D17 一书一会话一 vault 根; 内存 + domain 双面绑定; §14 子代理 prompt 注入(书名/路径/纪律条款) |
-| `ctx.tools` | `registerNovelcraftTools` | 19 个领域工具；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功值使用 required + closed schema；scope/approval/store/LLM/未知失败映射 rc.8 `HarnessError`，由宿主产出 `isError:true`。 |
-| client-modules | (host 侧注册面) | client UI 本体留 R7/client 阶段(B); 本包不产出 client bundle |
+| `ctx.tools` | `registerNovelcraftTools` | 21 个领域工具（含单章 Git 版本与审查闭环）；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功值使用 required + closed schema；scope/approval/store/LLM/未知失败映射 rc.8 `HarnessError`，由宿主产出 `isError:true`。 |
+| client-modules | `@novelcraft/dsh-client`（独立 UI 插件） | 本包只提供宿主服务；章节工作区、收件箱和会话页内状态由独立 client 插件通过 loopback RPC 读取，不从浏览器写正史。 |
 
-服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + `facades`(13 核心包
-命名空间, 供组合代码消费)+ 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
+服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + 受误用保护的
+`read/propose/adoptGuarded` capability + 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
 `deepImport`(runDeepImport 挂载: DshProvider + ApprovalGate + ImportTraceSink)。
 
 ## 工程约定

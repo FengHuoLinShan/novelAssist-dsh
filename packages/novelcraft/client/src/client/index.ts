@@ -18,6 +18,8 @@ import { ModelPresetsAction } from './ModelPresetsAction.tsx'
 import { MapAtlasAction } from './MapAtlasAction.tsx'
 import type { MapAtlasActionProps } from './MapAtlasAction.tsx'
 import type { ModelPresetsActionProps } from './ModelPresetsAction.tsx'
+import { ChapterWorkspaceView } from './ChapterWorkspaceView.tsx'
+import type { ChapterWorkspaceViewProps } from './ChapterWorkspaceView.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -27,7 +29,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps, MapAtlasActionProps }
+export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps, MapAtlasActionProps, ChapterWorkspaceViewProps }
 export { NS }
 export { PetAction } from './PetAction.tsx'
 export { StoryMapAction } from './StoryMapAction.tsx'
@@ -35,6 +37,7 @@ export { WritingDeskAction } from './WritingDeskAction.tsx'
 export { ChapterDossier } from './ChapterDossier.tsx'
 export { ModelPresetsAction } from './ModelPresetsAction.tsx'
 export { MapAtlasAction } from './MapAtlasAction.tsx'
+export { ChapterWorkspaceView } from './ChapterWorkspaceView.tsx'
 
 /** 浏览器侧连接投影(结构面; 与 dsh-client-connection/client 的 ConnectionHandle 对齐)。 */
 export interface RpcCaller {
@@ -53,6 +56,7 @@ export const inject = ['slots', 'locale', 'connection']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'novelcraft: dictionaries')
   const connection = ctx.get('connection') as RpcCaller | undefined
+  const t = ctx.locale.bind(NS)
   const actionSlot = () => ({ connection })
   ctx.slots.inject(
     'conversation.session.header.actions',
@@ -64,6 +68,17 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: (): { connection: RpcCaller | undefined } => actionSlot(),
     }, PetAction),
+  )
+  ctx.slots.inject(
+    'conversation.view',
+    () => ctx.slots.register({
+      name: 'conversation.view',
+      id: 'novelcraft-chapters',
+      order: 20,
+      locale: NS,
+      label: () => t('chapter.view'),
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
+    }, ChapterWorkspaceView),
   )
   ctx.slots.inject(
     'conversation.session.header.actions',
