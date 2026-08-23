@@ -68,6 +68,7 @@ jobs:
           for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do
             npm test -w @novelcraft/$p
           done
+          npm test -w @novelcraft/preset
       - name: Typecheck default workspaces (excludes BGE adapter)
         run: |
           for p in vault trace store llm-step rag memory outline writing imports world context assistant dsh client; do

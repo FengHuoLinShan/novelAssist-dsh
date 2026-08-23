@@ -83,14 +83,14 @@ const SAMPLE = [
 ].join('\n');
 
 describe('novelcraft_rag_search(M6 Track A3 语义检索)', () => {
-  it('注册: 共 20 个工具且 novelcraft_rag_search 存在(输出 schema 开放)', async () => {
+  it('注册: 共 19 个工具且 novelcraft_rag_search 使用 closed success schema', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(20); // 14 → 20: M7 map-atlas Phase 5 新增 6 工具
+    expect(env.tools.length).toBe(19); // 删除 model-facing signal_push；信号只由确定性 producer 产生
     const t = tool(env, 'novelcraft_rag_search');
     expect(t.name).toBe('novelcraft_rag_search');
     const schema = t.output?.schema as { type: string; additionalProperties?: boolean };
     expect(schema.type).toBe('object');
-    expect(schema.additionalProperties).toBe(true); // dsh-tools 输出根必须开放
+    expect(schema.additionalProperties).toBe(false);
     // dsh-tools 把参数根的 required:true 注解编译为顶层 required 数组(JSON Schema 投影)
     expect(t.parameters).toMatchObject({ type: 'object', required: ['root', 'query'] });
   });

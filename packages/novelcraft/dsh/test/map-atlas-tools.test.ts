@@ -220,9 +220,9 @@ describe('map-atlas 工具面(Phase 5)', () => {
     env = await setup('rejected');
     writeAtlasNode(env.root, node('n1'));
     writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
-    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
-    expect(r.ok).toBe(false);
-    expect(String(r.message)).toMatch(/未获批准|fail-closed|rejected|审批/);
+    await expect(call(env, 'novelcraft_map_atlas_review', {
+      root: env.root, page_ref: 'pg1', action: 'adopt',
+    })).rejects.toMatchObject({ code: 'APPROVAL_REJECTED' });
     expect(readAtlasTree(env.root).pendingPages.length).toBe(1); // 未动
     env.cleanup();
 
@@ -230,8 +230,9 @@ describe('map-atlas 工具面(Phase 5)', () => {
     env = await setup('unavailable');
     writeAtlasNode(env.root, node('n1'));
     writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
-    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
-    expect(r.ok).toBe(false);
+    await expect(call(env, 'novelcraft_map_atlas_review', {
+      root: env.root, page_ref: 'pg1', action: 'adopt',
+    })).rejects.toMatchObject({ code: 'APPROVAL_UNAVAILABLE' });
     expect(readAtlasTree(env.root).pendingPages.length).toBe(1);
     env.cleanup();
   });
@@ -242,12 +243,12 @@ describe('map-atlas 工具面(Phase 5)', () => {
     writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
     writeAtlasPage(env.root, page('pg-p'));
     // prompt_only 不可驳回
-    let r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg-p', action: 'reject' });
-    expect(r.ok).toBe(false);
-    expect(String(r.message)).toMatch(/prompt_only/);
+    await expect(call(env, 'novelcraft_map_atlas_review', {
+      root: env.root, page_ref: 'pg-p', action: 'reject',
+    })).rejects.toMatchObject({ code: 'STORE_VALIDATION_FAILED', message: expect.stringContaining('prompt_only') });
     // adopt → archive → restore
     await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
-    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
+    let r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
     expect(r.ok).toBe(true);
     expect(readAtlasTree(env.root).pages[0]?.review_status).toBe('deprecated');
     r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'restore' });
@@ -277,9 +278,9 @@ describe('map-atlas 工具面(Phase 5)', () => {
     writeAtlasNode(env.root, node('n1'));
     writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
     await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
-    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
-    expect(r.ok).toBe(false);
-    expect(String(r.message)).toMatch(/审批未通过|fail-closed/);
+    await expect(call(env, 'novelcraft_map_atlas_review', {
+      root: env.root, page_ref: 'pg1', action: 'archive',
+    })).rejects.toMatchObject({ code: 'APPROVAL_REJECTED' });
     expect(readAtlasTree(env.root).pages[0]?.review_status).toBe('adopted'); // 未动
     expect(readAtlasTree(env.root).pages[0]?.deprecated_at).toBeNull();
     env.cleanup();
@@ -289,8 +290,9 @@ describe('map-atlas 工具面(Phase 5)', () => {
     writeAtlasNode(env.root, node('n1'));
     writeAtlasPage(env.root, readyPage(env.root, 'pg1'));
     await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'adopt' });
-    r = await call(env, 'novelcraft_map_atlas_review', { root: env.root, page_ref: 'pg1', action: 'archive' });
-    expect(r.ok).toBe(false);
+    await expect(call(env, 'novelcraft_map_atlas_review', {
+      root: env.root, page_ref: 'pg1', action: 'archive',
+    })).rejects.toMatchObject({ code: 'APPROVAL_UNAVAILABLE' });
     expect(readAtlasTree(env.root).pages[0]?.review_status).toBe('adopted');
     env.cleanup();
   });
@@ -328,7 +330,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
     const r = await call(env, 'novelcraft_map_atlas_annotation', { root: env.root });
     expect(r.queue_files).toBe(4);
     expect(r.applied).toBe(1);
-    expect(r.ok).toBe(false); // 3 个坏文件失败
+    expect(r).toMatchObject({ ok: true, status: 'partial' }); // 好文件已完成, 3 个坏文件保留待修
     expect(existsSync(path.join(queueDir, 'q-good.json'))).toBe(false); // 成功即清
     expect(existsSync(path.join(queueDir, 'q-nohash.json'))).toBe(true); // 失败保留待修
     expect(existsSync(path.join(queueDir, 'q-unknownop.json'))).toBe(true);
@@ -356,7 +358,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
       ],
     }), 'utf8');
     let r = await call(env, 'novelcraft_map_atlas_annotation', { root: env.root });
-    expect(r.ok).toBe(false);
+    expect(r).toMatchObject({ ok: true, status: 'partial' });
     expect(r.applied).toBe(0);
     expect(readAtlasTree(env.root).pendingPages[0]?.annotations.length).toBe(0); // 零残留
     expect(existsSync(path.join(queueDir, 'atomic.json'))).toBe(true); // 失败保留
@@ -385,7 +387,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
       ops: [{ op: 'add', label: '过期', position_x: 0, position_y: 0 }],
     }), 'utf8');
     r = await call(env, 'novelcraft_map_atlas_annotation', { root: env.root });
-    expect(r.ok).toBe(false);
+    expect(r).toMatchObject({ ok: true, status: 'partial' });
     expect(r.applied).toBe(0);
     expect(readAtlasTree(env.root).pendingPages[0]?.annotations.length).toBe(2);
     expect(existsSync(path.join(queueDir, 'stale.json'))).toBe(true);
@@ -468,8 +470,9 @@ describe('map-atlas 工具面(Phase 5)', () => {
     expect(r.ok).toBe(true);
     expect(readAtlasTree(env.root).pendingPages.find((p) => p.id === 'pg1')?.prompt).toBe('新参考文本');
     // review_ready 页拒
-    r = await call(env, 'novelcraft_map_atlas_update_prompt', { root: env.root, page_ref: 'pg2', prompt: 'x' });
-    expect(r.ok).toBe(false);
+    await expect(call(env, 'novelcraft_map_atlas_update_prompt', {
+      root: env.root, page_ref: 'pg2', prompt: 'x',
+    })).rejects.toMatchObject({ code: 'STORE_VALIDATION_FAILED' });
     env.cleanup();
   });
 });

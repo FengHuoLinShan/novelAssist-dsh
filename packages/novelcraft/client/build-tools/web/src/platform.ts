@@ -3,7 +3,7 @@
  * aliases consume this list so their module identities cannot drift.
  * Vendored verbatim from the DSH source tree (packages/client/web/src/platform.ts,
  * reference checkout head 47f9438) — build tooling only, runtime table comes
- * from the booted DSH web shell (D21 locks rc.6).
+ * from the booted DSH web shell (D21 locks rc.8).
  */
 
 /** The module specifiers the shell shares into the frozen module table. */

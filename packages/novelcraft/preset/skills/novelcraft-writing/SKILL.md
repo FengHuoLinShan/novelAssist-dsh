@@ -1,6 +1,6 @@
 ---
 name: novelcraft-writing
-description: NovelCraft 写作(M4 停靠舱 + 修订中心): 文本停靠、语义审查、定向返修、候选采用、写作台四模式。写作类任务先读本 skill。
+description: "NovelCraft 写作(M4 停靠舱 + 修订中心): 文本停靠、语义审查、定向返修、候选采用、写作台四模式。写作类任务先读本 skill。"
 whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作台怎么用时。
 ---
 
@@ -8,31 +8,31 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
 
 ## 文本流(编辑外置, D8)
 
-- 正文在 Word; 项目只做停靠与版本: 拖文件/粘贴 → 纯文本归一 → chapters/{NNN}.md
-  (ingestChapter, 幂等: 同 hash 跳过)。
-- 每次同步 = 一个新版本(git commit); content_hash 变化 → 相关信号自动过期(§8)。
+- 正文可在 Word 外置编辑; 当前公开摄入只接宿主可见的 UTF-8 `.txt` 路径并归一到
+  chapters/{NNN}.md。浏览器附件/粘贴承运尚未接通。
+- 摄入幂等与冲突保护已存在, 但完整多文件 transaction/Git commit point 仍待收口,
+  不能宣称每次同步已经形成一个可恢复版本。
 
 ## 文本入库协议(Track 1, D9a)
 
-- 作者给手稿文件(拖入会话产生路径/直接发路径) → **先用 read 工具预览前 ~100 行**
-  确认章节标题结构(第X章/Chapter N/序章), 再调
+- 作者提供宿主明确可见的 `.txt` 路径后调
   `novelcraft_ingest_file {root, file_path, start_chapter?, force?}`。
 - 入库是确定性的: imports/<slug>.md 原文停靠 + chapters/NNN.md(默认接现有最大章之后;
   同号章内容冲突默认跳过, 作者确认后 force 覆盖)+ imports/import-log.jsonl
   (同文件重复导入自动跳过)。
-- 粘贴流: 作者粘贴正文 → 用 write 工具落 imports/ 下临时 .md → 同走 novelcraft_ingest_file。
-- v1 只收 .txt/.md(其他格式请作者另存为纯文本); 乱码(非 UTF-8)会被拒绝并提示转码;
+- 当前工具不提供 read/write/Shell, 也没有粘贴临时文件旁路。
+- v1 public E2E 只验证 `.txt`(其他格式请作者另存为纯文本); 乱码(非 UTF-8)会被拒绝并提示转码;
   >50MB 请拆分。
 - 入库后用作者语言报告(章数/跳过/冲突), 并建议下一步跑深度导入(novelcraft_deep_import);
   摄入雷达会自动把「章待增量导入」对账进收件箱。
 
-## 闭环(全部确定性函数, @novelcraft/writing)
+## 当前可执行面
 
-1. reviewChapter: 语义审查 → findings 落 .assistant/reviews/(N4), 失败不写。
-2. applyRevision: 选定 findings → targeted_revision(内容手)→
-   chapters/pending/{NNN}.md 候选(候选写入即 commit)。
-3. adoptChapterCandidate: copy-on-adopt 覆盖同章(git 保留旧版)+ 脏工作区拒绝。
-4. rejectFinding: 打回标记(幂等); 打回理由进校准。
+- `available-now`: `novelcraft_ingest_file`, `novelcraft_propose_next_chapter`,
+  `novelcraft_generate_next_chapter`, `novelcraft_store_adopt(kind=chapter_candidate)`；
+  `novelcraft_llm_step(spec=semantic_review)` 只返回 raw review preview。
+- `core-only`: `reviewChapter`/`applyRevision`/`rejectFinding` 与正文 update/version/restore
+  尚未组成 public tool/client 竖切, 不应由 Skill 假装已落 `.assistant/reviews` 或修订候选。
 
 ## 写作台四模式(§17.4, 半屏 D10)
 

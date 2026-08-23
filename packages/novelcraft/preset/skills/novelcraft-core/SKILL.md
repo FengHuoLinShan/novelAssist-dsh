@@ -10,7 +10,7 @@ whenToUse: 用户要求操作 NovelCraft 项目数据、触发 AI 工作流、�
 
 NovelCraft = DSH + @novelcraft 插件族 + 每书一个工作区文件夹(ADR-0016)。
 **文件夹是唯一真相**(章节/Scene/对象/结构/记忆/世界书全部文件化);
-版本与回滚 = git; 派生索引(sqlite KV / rag-index.json)可全量重建。
+版本与回滚 = git; 派生索引(`.assistant/rag-index.json` 与 DSH cache)可全量重建。
 DSH 是编排层, 不是事实源——写已采用资产永远经 approval(fail-closed)。
 
 ## 工作区(~/Novels/<书名>/)
@@ -25,7 +25,7 @@ world/pending/*.md          待处理候选(suggestion queue = 此目录)
 structure/{threads,arcs,foreshadowing,reveal}/ + outline.md
 memory/events.jsonl         事件溯源(append-only, 幂等)
 bible/*.md                  世界书(draft/canonical)
-imports/*.md                导入原文停靠(统一 .txt/.md)
+imports/*.md                导入原文停靠(当前公开摄入只验证 .txt)
 .assistant/                 policy.yml / llm.yml / calibration.md /
                             checkpoint.json / signals/ / reviews/ / merge-log.jsonl
 ```
@@ -59,6 +59,18 @@ imports/*.md                导入原文停靠(统一 .txt/.md)
 | 已采用资产 | canonical 文件(git 提交) | 只读; 修改走既有流程 + approval |
 | 候选正文(candidate) | chapters/pending/*.md | 审阅/放弃/等待作者采用 |
 
+## 当前可执行面
+
+- `available-now`: 当前 agent catalog 有 19 个 `novelcraft_*` 领域工具, 覆盖内容步、索引、
+  采用、收件箱、深导入、续写、结构检查、文本摄入、雷达、RAG 与 Map Atlas。所有 Vault
+  工具仍以 session 绑定为 authority; `root` 参数不能切书。失败由 DSH rc.8 原生
+  `isError/HarnessError.code` 承载; 不得把失败描述成已完成。
+- `UI-only`: Story Map、章节档案、写作台与 Map Atlas 面板是 client 读面/intent 面,
+  不是可由 Skill 假装调用的 agent 工具。
+- `core-only`: 包内导出的 deterministic 函数只供领域服务编排; Skill 不授予直接调用权。
+- `deferred`: 多书创建/删除、附件承运、独立审查返修、长任务控制与 RP 未有公开闭环。
+- 正常作者 preset 不暴露 Shell、terminal 或裸文件系统; 只能走上述领域工具与原生 `skill`。
+
 ## 关键文档(回答具体问题前先读)
 
 - specs/(资产/规则/裁定: adjudications.md 是全部裁定的权威记录)
@@ -71,4 +83,4 @@ imports/*.md                导入原文停靠(统一 .txt/.md)
 - 破坏性/采用类动作: 先展示「将写入什么/影响范围/来源/可回滚标记」,
   得作者明确同意后才触发 adopt/merge(approval fail-closed)。
 - 低置信、冲突、无法消歧: 留在待处理/收件箱并向作者解释, 不擅自选择。
-- 每次会话开始: 确认当前书(哪个工作区), 不跨书混用上下文。
+- 每次会话开始: 使用宿主已绑定的当前书; session 未绑定时停止, 不接受模型自填路径切书。

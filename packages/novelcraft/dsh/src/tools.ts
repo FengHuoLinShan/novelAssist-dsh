@@ -4,20 +4,19 @@
 // 取消贯通: 五个内容手工具(llm_step/deep_import/propose/generate/map_atlas_plan)
 // 把 exec.signal 传 service(service 层 withAbortSignal 与 llm-step timeout 合并)。
 // tools 服务缺失时静默跳过注册(最小 profile/纯进程内测试仍可用服务门面)。
-// defineTool 显式泛型: S=ParameterSchemaSpec, O=ObjectValueSchemaSpec
-// (对象开放是 dsh-tools 的强制要求); 工具内部把 args 收窄到本地接口。
+// 工具内部把 args 收窄到本地接口; 成功输出用 closed schema 锁定完整合同。
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
+import { HarnessError, type ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { realpathSync } from 'node:fs';
 import * as assistant from '@novelcraft/assistant';
 import * as store from '@novelcraft/store';
 import type { AdoptableKind } from '@novelcraft/store';
-import { GateDeniedError } from './approval/gate.js';
+import { GateDeniedError, GateRequiredError } from './approval/gate.js';
 import { svc } from './ctx.js';
-import { importTraceFile } from './deep-import.js';
+import { DeepImportDeniedError, importTraceFile } from './deep-import.js';
 import { EVENT_RADAR_MAP, fireRadarHooks } from './radar-hooks.js';
 import { fireRagHook } from './rag-hooks.js';
 import type { NovelCraftService } from './service.js';
@@ -48,15 +47,48 @@ const render = (_args: unknown, value: unknown): ContentBlock[] => [
   { type: 'text', text: JSON.stringify(value) },
 ];
 
-/** 错误 → 作者语言消息(工具结果不抛给模型栈, 转 ok:false)。 */
-function errMessage(err: unknown): string {
-  if (err instanceof GateDeniedError) return err.message;
-  if (err instanceof store.StoreError) return `store: ${err.message}`;
-  return err instanceof Error ? err.message : String(err);
+/** DSH seam 唯一错误映射: 失败必须进入宿主 HarnessError/isError 通道。 */
+function toolError(
+  err: unknown,
+  fallback: { code: string; message: string } = {
+    code: 'NOVELCRAFT_TOOL_ERROR',
+    message: 'NovelCraft 工具执行失败, 已停止后续动作',
+  },
+): HarnessError {
+  if (err instanceof HarnessError) return err;
+  if (err instanceof WorkspaceIsolationError) {
+    return new HarnessError(err.message, 'WORKSPACE_ISOLATION', { cause: err });
+  }
+  if (err instanceof GateDeniedError || err instanceof DeepImportDeniedError) {
+    return new HarnessError(err.message, `APPROVAL_${err.decision.toUpperCase().replace('-', '_')}`, { cause: err });
+  }
+  if (err instanceof GateRequiredError) {
+    return new HarnessError(err.message, 'APPROVAL_REQUIRED', { cause: err });
+  }
+  if (err instanceof store.StoreError) {
+    return new HarnessError(`store: ${err.message}`, `STORE_${err.code}`, { cause: err });
+  }
+  if (err instanceof Error && err.name === 'AbortError') {
+    return new HarnessError('工具执行已取消', 'ABORTED', { cause: err });
+  }
+  return new HarnessError(fallback.message, fallback.code, { cause: err });
+}
+
+const LLM_ERROR_CODES: Record<string, string> = {
+  spec_not_found: 'LLM_SPEC_NOT_FOUND',
+  budget_exceeded: 'LLM_BUDGET_EXCEEDED',
+  timeout: 'LLM_TIMEOUT',
+  schema_violation: 'LLM_SCHEMA_VIOLATION',
+  provider_retryable: 'LLM_PROVIDER_RETRYABLE',
+  provider_fatal: 'LLM_PROVIDER_FATAL',
+};
+
+function llmError(kind: string | undefined, message: string | undefined): HarnessError {
+  return new HarnessError(message || '模型步骤失败', LLM_ERROR_CODES[kind ?? ''] ?? 'LLM_FAILED');
 }
 
 /**
- * N34 工作区隔离错误(统一 fail-closed 拒绝; 转作者语言 ok:false 消息)。
+ * N34 工作区隔离错误(统一 fail-closed 拒绝; 由 toolError 映射宿主失败通道)。
  * 由 resolveBoundRoot 抛出: 无 session / 未绑定 / root 与绑定不一致。
  */
 export class WorkspaceIsolationError extends Error {
@@ -130,7 +162,6 @@ const ADOPTABLE_KINDS = [
 const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
 
 const RADARS = ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'] as const;
-const SEVERITIES = ['hint', 'note', 'risk', 'conflict'] as const;
 
 /** 每个工具的具体参数形状(defineTool 的 args 为宽泛 JsonValue, 在此收窄)。 */
 interface LlmStepArgs {
@@ -161,15 +192,6 @@ interface InboxActArgs extends RootArgs {
   reason?: string;
   modified_title?: string;
   modified_proposed_action?: string;
-}
-interface PushArgs extends RootArgs {
-  radar: string;
-  severity: string;
-  title: string;
-  evidence: string[];
-  proposed_action: string;
-  reversibility: boolean;
-  expires_when_draft_changes?: boolean;
 }
 interface DeepImportArgs extends RootArgs {
   start_chapter: number;
@@ -247,13 +269,13 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          text: { type: 'string' },
-          input_tokens: { type: 'integer' },
-          output_tokens: { type: 'integer' },
-          error: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          text: { type: 'string', required: true },
+          input_tokens: { type: 'integer', required: true },
+          output_tokens: { type: 'integer', required: true },
+          error: { type: 'string', required: true },
           },
         },
         render,
@@ -268,7 +290,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         try {
           boundRoot = await resolveBoundRoot(service, exec);
         } catch (err) {
-          return { ok: false, text: '', input_tokens: 0, output_tokens: 0, error: errMessage(err) };
+          throw toolError(err);
         }
         // exec.signal(工具取消)贯通: runStep 层与 llm-step timeout 合并(withAbortSignal)。
         const result = await service.capabilities.propose.runStep({
@@ -282,13 +304,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           },
           fixAttempts: args.fix_attempts ?? 1,
         }, boundRoot, exec.signal);
-        const text = result.ok
-          ? result.result && typeof result.result === 'object'
-            ? JSON.stringify(result.result)
-            : String(result.result ?? '')
-          : '';
+        if (!result.ok) throw llmError(result.error?.kind, result.error?.message);
+        const text = result.result && typeof result.result === 'object'
+          ? JSON.stringify(result.result)
+          : String(result.result ?? '');
         return {
-          ok: result.ok,
+          ok: true,
           text: text.slice(0, 8000),
           input_tokens: result.usage.inputTokens,
           output_tokens: result.usage.outputTokens,
@@ -307,14 +328,16 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          objects: { type: 'integer' },
-          aliases: { type: 'integer' },
-          relations: { type: 'integer' },
-          scenes: { type: 'integer' },
-          chapters: { type: 'integer' },
-          structure: { type: 'integer' },
+          ok: { type: 'boolean', required: true },
+          objects: { type: 'integer', required: true },
+          aliases: { type: 'integer', required: true },
+          relations: { type: 'integer', required: true },
+          scenes: { type: 'integer', required: true },
+          chapters: { type: 'integer', required: true },
+          structure: { type: 'integer', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -338,7 +361,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               `${index.relations.length} 关系)`,
           };
         } catch (err) {
-          return { ok: false, objects: 0, aliases: 0, relations: 0, scenes: 0, chapters: 0, structure: 0, message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
@@ -348,7 +371,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       name: 'novelcraft_store_adopt',
       description:
         '采用一个待处理/候选资产(copy-on-adopt 或状态迁移 + git commit)。' +
-        '写操作必经用户审批(fail-closed); 审批拒绝时返回 ok:false。',
+        '写操作必经用户审批(fail-closed); 审批未放行时进入宿主工具失败通道。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         kind: { type: 'string', required: true, enum: [...ADOPTABLE_KINDS] },
@@ -360,12 +383,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          commit: { type: 'string' },
-          target_rel_path: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          commit: { type: 'string', required: true },
+          target_rel_path: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -396,9 +419,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               ? [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]
               : EVENT_RADAR_MAP.adopt,
           );
-          // 事件触发 RAG 索引(§11): adopt(含章候选分支)后资产/正文变化, 增量同步派生索引;
-          // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
-          fireRagHook(ctx, root, () => service.capabilities.propose.ragEmbed(root));
+          // 事件触发 RAG 索引(§11): adopt(含章候选分支)后只同步词法派生索引;
+          // 向量写入由显式 novelcraft_rag_embed 独占。
+          fireRagHook(ctx, root);
           return {
             ok: true,
             commit: result.commit,
@@ -406,7 +429,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `已采用 ${result.kind} → ${result.toStatus}(commit ${result.commit.slice(0, 12)})`,
           };
         } catch (err) {
-          return { ok: false, commit: '', target_rel_path: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
@@ -422,9 +445,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          signals: { type: 'array' },
+          ok: { type: 'boolean', required: true },
+          signals: { type: 'array', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -449,7 +474,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `收件箱 ${signals.length} 条新鲜信号`,
           };
         } catch (err) {
-          return { ok: false, signals: [], message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
@@ -471,13 +496,13 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          action: { type: 'string' },
-          kind: { type: 'string' },
-          microflow: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          action: { type: 'string', required: true },
+          kind: { type: 'string', required: true },
+          microflow: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -516,60 +541,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: guide,
           };
         } catch (err) {
-          return { ok: false, action: String(args.action ?? ''), kind: 'record', microflow: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 6. 推信号(雷达产出 → 收件箱, 只写信号文件) ----
-    defineTool({
-      name: 'novelcraft_signal_push',
-      description:
-        '雷达产出推入收件箱: 创建一条 open 信号(作者语言可执行命题 + 证据)。六雷达: ' +
-        'ingest/dedup/suggest/plot/risk/writing。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        radar: { type: 'string', required: true, enum: [...RADARS] },
-        severity: { type: 'string', required: true, enum: [...SEVERITIES] },
-        title: { type: 'string', required: true, description: '可执行命题(卡片首行)' },
-        evidence: { type: 'array', items: { type: 'string' }, required: true, description: '证据(来源+引用, 至少一条)' },
-        proposed_action: { type: 'string', required: true },
-        reversibility: { type: 'boolean', required: true },
-        expires_when_draft_changes: { type: 'boolean', description: '正文变化即过期(写作/审查类)' },
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: true,
-          properties: {
-          id: { type: 'string' },
-          },
-        },
-        render,
-      },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as PushArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const signal = assistant.pushSignal(root, {
-            radar: args.radar as assistant.RadarKind,
-            severity: args.severity as assistant.Severity,
-            title: args.title,
-            evidence: args.evidence,
-            proposed_action: args.proposed_action,
-            reversibility: args.reversibility,
-            ...(args.expires_when_draft_changes !== undefined
-              ? { expires_when_draft_changes: args.expires_when_draft_changes }
-              : {}),
-          });
-          pushSignalsChanged(ctx, { root });
-          return { ok: true, id: signal.id, message: `已推送信号 ${signal.id}` };
-        } catch (err) {
-          return { ok: false, id: '', message: errMessage(err) };
-        }
-      },
-    }),
-    // ---- 7. 深度导入(范围授权 + adopt/2b 独立审批门; trace 落 .assistant/import-trace.jsonl) ----
+    // ---- 6. 深度导入(范围授权 + adopt/2b 独立审批门; trace 落 .assistant/import-trace.jsonl) ----
     defineTool({
       name: 'novelcraft_deep_import',
       description:
@@ -585,17 +562,17 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          workflow_id: { type: 'string' },
-          adopted: { type: 'integer' },
-          committed: { type: 'integer' },
-          skipped: { type: 'integer' },
-          conflicts: { type: 'integer' },
-          rejected: { type: 'boolean' },
-          trace_file: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          workflow_id: { type: 'string', required: true },
+          adopted: { type: 'integer', required: true },
+          committed: { type: 'integer', required: true },
+          skipped: { type: 'integer', required: true },
+          conflicts: { type: 'integer', required: true },
+          rejected: { type: 'boolean', required: true },
+          trace_file: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -610,11 +587,14 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             startChapter: args.start_chapter,
             endChapter: args.end_chapter,
           }, exec.signal);
+          if (result.rejected) {
+            throw new HarnessError('深度导入的 Scene 采用未获批准, 候选保持未采用', 'APPROVAL_REJECTED');
+          }
           // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
           fireRadarHooks(ctx, root, EVENT_RADAR_MAP.deepImport);
-          // 事件触发 RAG 索引(§11): 导入后章节内容变化, 增量同步派生索引;
-          // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
-          fireRagHook(ctx, root, () => service.capabilities.propose.ragEmbed(root));
+          // 事件触发 RAG 索引(§11): 导入后只同步词法派生索引;
+          // 向量写入由显式 novelcraft_rag_embed 独占。
+          fireRagHook(ctx, root);
           return {
             ok: true,
             workflow_id: result.workflow_id,
@@ -624,17 +604,15 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             conflicts: result.conflicts.length,
             rejected: result.rejected,
             trace_file: importTraceFile(root),
-            message: result.rejected
-              ? '深度导入完成: Scene 采用未获批准(无提交)。'
-              : '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
+            message: '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
           };
         } catch (err) {
-          return { ok: false, workflow_id: '', adopted: 0, committed: 0, skipped: 0, conflicts: 0, rejected: false, trace_file: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 8. 续写提案(计划台; 内容手直连 ctx.llm, 落 .assistant/proposals/) ----
+    // ---- 7. 续写提案(计划台; 内容手直连 ctx.llm, 落 .assistant/proposals/) ----
     defineTool({
       name: 'novelcraft_propose_next_chapter',
       description:
@@ -647,12 +625,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          next_chapter: { type: 'integer' },
-          proposals: { type: 'array' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          next_chapter: { type: 'integer', required: true },
+          proposals: { type: 'array', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -664,7 +642,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           const root = await resolveBoundRoot(service, exec, args.root);
           const r = await service.capabilities.propose.proposeNextChapter(root, args.chapter, exec.signal);
           if (!r.ok || !r.proposal) {
-            return { ok: false, next_chapter: 0, proposals: [], message: r.error?.message ?? '提案失败' };
+            throw llmError(r.error?.kind, r.error?.message ?? '提案失败');
           }
           return {
             ok: true,
@@ -679,12 +657,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `已生成 ${r.proposal.proposals.length} 条下一章方案(选定后可按需 writing_generate 出正文候选)。`,
           };
         } catch (err) {
-          return { ok: false, next_chapter: 0, proposals: [], message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 9. 结构健康信号扫描(确定性, 幂等落盘收件箱 + 自动结算) ----
+    // ---- 8. 结构健康信号扫描(确定性, 幂等落盘收件箱 + 自动结算) ----
     defineTool({
       name: 'novelcraft_health_scan',
       description:
@@ -697,13 +675,15 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          created: { type: 'integer' },
-          skipped: { type: 'integer' },
-          resolved: { type: 'integer' },
-          reopened: { type: 'integer' },
-          total: { type: 'integer' },
+          ok: { type: 'boolean', required: true },
+          created: { type: 'integer', required: true },
+          skipped: { type: 'integer', required: true },
+          resolved: { type: 'integer', required: true },
+          reopened: { type: 'integer', required: true },
+          total: { type: 'integer', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -724,12 +704,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `结构健康扫描完成(新 ${r.created}/结 ${r.resolved}/复 ${r.reopened})`,
           };
         } catch (err) {
-          return { ok: false, created: 0, skipped: 0, resolved: 0, reopened: 0, total: 0, message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 10. 续写提案第二阶段(选定方向 → writing_generate 正文候选) ----
+    // ---- 9. 续写提案第二阶段(选定方向 → writing_generate 正文候选) ----
     defineTool({
       name: 'novelcraft_generate_next_chapter',
       description:
@@ -744,11 +724,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          file: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          file: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -762,7 +742,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             proposalTitle: args.proposal_title,
             ...(args.premise ? { premise: args.premise } : {}),
           }, exec.signal);
-          if (!r.ok) return { ok: false, file: '', message: r.error?.message ?? '生成失败' };
+          if (!r.ok) throw llmError(r.error?.kind, r.error?.message ?? '生成失败');
           // 事件触发雷达(§11): 新候选入库后写作面对账。
           fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
           return {
@@ -771,12 +751,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `已生成第 ${args.chapter + 1} 章候选(chapters/pending); 采用请走 novelcraft_store_adopt。`,
           };
         } catch (err) {
-          return { ok: false, file: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 11. 文本入库(Track 1b: 路径 → 章节切分 → wiki 化存储; D9a 纯文本) ----
+    // ---- 10. 文本入库(Track 1b: 路径 → 章节切分 → wiki 化存储; D9a 纯文本) ----
     defineTool({
       name: 'novelcraft_ingest_file',
       description:
@@ -793,14 +773,14 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          total: { type: 'integer' },
-          imported: { type: 'integer' },
-          skipped: { type: 'integer' },
-          conflicts: { type: 'array' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          total: { type: 'integer', required: true },
+          imported: { type: 'integer', required: true },
+          skipped: { type: 'integer', required: true },
+          conflicts: { type: 'array', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -815,13 +795,13 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             ...(args.force ? { force: true } : {}),
           });
           if (!report.ok) {
-            return { ok: false, total: 0, imported: 0, skipped: 0, conflicts: [], message: report.reason ?? '导入失败' };
+            throw new HarnessError(report.reason ?? '导入失败', 'INGEST_FAILED');
           }
           // 事件触发雷达(§11): 摄入对账 + 写作健康。
           fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
-          // 事件触发 RAG 索引(§11): 新章落库后增量同步派生索引;
-          // 同步后异步尽力而为地补嵌入(llm.yml 设 embedding 才生效, 失败吞掉)。
-          fireRagHook(ctx, root, () => service.capabilities.propose.ragEmbed(root));
+          // 事件触发 RAG 索引(§11): 新章落库后只同步词法派生索引;
+          // 向量写入由显式 novelcraft_rag_embed 独占。
+          fireRagHook(ctx, root);
           const dup = report.warnings.includes('duplicate_import');
           const conflictNote = (report.conflicts?.length ?? 0) > 0
             ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
@@ -839,12 +819,15 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message,
           };
         } catch (err) {
-          return { ok: false, total: 0, imported: 0, skipped: 0, conflicts: [], message: errMessage(err) };
+          throw toolError(err, {
+            code: 'INGEST_FAILED',
+            message: err instanceof Error ? err.message : '导入失败',
+          });
         }
       },
     }),
 
-    // ---- 12. 雷达巡检(§11 手动触发; 默认五面, 幂等 + 自动结算) ----
+    // ---- 11. 雷达巡检(§11 手动触发; 默认五面, 幂等 + 自动结算) ----
     defineTool({
       name: 'novelcraft_radar_sweep',
       description:
@@ -857,12 +840,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          results: { type: 'object', additionalProperties: true },
-          plot_summary: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          results: { type: 'object', additionalProperties: true, required: true },
+          plot_summary: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -876,8 +859,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             args.radar ? [args.radar as assistant.RadarKind] : undefined,
           );
           pushSignalsChanged(ctx, { root });
-          // 输出摊平为开放对象(dsh-tools 输出根必须 JSON 开放; 逐键构造字面量,
-          // 使每条计数对象可赋给 JsonValue 索引签名)。
+          // results 的 radar 键是动态集合, 仅该嵌套对象保持开放。
           const results: Record<string, { created: number; skipped: number; resolved: number; reopened: number; total: number }> = {};
           const summaryParts: string[] = [];
           for (const [k, v] of Object.entries(r.results)) {
@@ -893,11 +875,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `巡检完成(${summary || '无命中'})。当前: ${r.plotSummary}`,
           };
         } catch (err) {
-          return { ok: false, results: {}, plot_summary: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
-    // ---- 13. RAG 语义检索(只读; 索引由事件钩子维护, 本工具不触发同步) ----
+    // ---- 12. RAG 语义检索(只读; 索引由事件钩子维护, 本工具不触发同步) ----
     defineTool({
       name: 'novelcraft_rag_search',
       description:
@@ -914,13 +896,13 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          hits: { type: 'array' },
-          ranking: { type: 'string' },
-          degraded: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          hits: { type: 'array', required: true },
+          ranking: { type: 'string', required: true },
+          degraded: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -933,7 +915,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
             ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
           });
-          // hits 摊平为作者可读字段(dsh-tools 输出根必须 JSON 开放; 逐键构造字面量)。
+          // hits 摊平为作者可读字段。
           const hits = r.hits.map((c) => ({
             chunk_id: c.chunk_id,
             source_type: c.source_type,
@@ -952,31 +934,31 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             : '无命中或索引为空, 可先文本入库/采用资产后重试。';
           return { ok: true, hits, ranking: r.ranking, degraded: r.degraded ?? '', message };
         } catch (err) {
-          return { ok: false, hits: [], ranking: 'bm25', degraded: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 14. RAG 批量嵌入(L2; 全链可降级, 后端不可用返回提示不报错) ----
+    // ---- 13. RAG 批量嵌入(L2; 后端不可用进入宿主失败通道) ----
     defineTool({
       name: 'novelcraft_rag_embed',
       description:
         '批量嵌入: 对索引中待向量化片段(pending/failed 且无 vector)调用本地 BGE 嵌入后端生成向量, ' +
         '逐批落盘 .assistant/rag-index.json(中断可重入)。需在 .assistant/llm.yml 设 embedding: bge-local-v1 ' +
-        '且 @novelcraft/rag-bge 已安装; 未启用时返回提示, 不报错。',
+        '且 @novelcraft/rag-bge 已安装; 未启用时返回可机读的宿主工具错误。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
       },
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          embedded: { type: 'integer' },
-          failed: { type: 'integer' },
-          skipped: { type: 'integer' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          embedded: { type: 'integer', required: true },
+          failed: { type: 'integer', required: true },
+          skipped: { type: 'integer', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -987,8 +969,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           const root = await resolveBoundRoot(service, exec, args.root);
           const r = await service.capabilities.propose.ragEmbed(root);
           if (r.message !== undefined) {
-            // 后端不可用: 原样返回提示(作者语言), ok=false。
-            return { ok: false, embedded: 0, failed: 0, skipped: 0, message: r.message };
+            throw new HarnessError(r.message, 'RAG_EMBEDDING_UNAVAILABLE');
           }
           return {
             ok: true,
@@ -998,11 +979,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `已嵌入 ${r.embedded} 个片段(失败 ${r.failed}, 跳过 ${r.skipped})`,
           };
         } catch (err) {
-          return { ok: false, embedded: 0, failed: 0, skipped: 0, message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
-    // ---- 15. 地图册规划(catalog §4.11; 同步长跑 timeout 3600s; 候选落 pending, 不过审批) ----
+    // ---- 14. 地图册规划(catalog §4.11; 同步长跑 timeout 3600s; 候选落 pending, 不过审批) ----
     defineTool({
       name: 'novelcraft_map_atlas_plan',
       description:
@@ -1019,15 +1000,15 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          run_id: { type: 'string' },
-          status: { type: 'string' },
-          planned_page_count: { type: 'integer' },
-          error_code: { type: 'string' },
-          evidence_summary: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          run_id: { type: 'string', required: true },
+          status: { type: 'string', required: true },
+          planned_page_count: { type: 'integer', required: true },
+          error_code: { type: 'string', required: true },
+          evidence_summary: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -1044,6 +1025,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             include_interiors: args.include_interiors,
             full_rebuild: args.full_rebuild,
           }, exec.signal, undefined, exec.agent);
+          if (r.run.status === 'failed') {
+            throw new HarnessError(r.run.error_message || '地图册规划失败', 'MAP_ATLAS_PLAN_FAILED');
+          }
           const ev = (r.run.spatial_evidence ?? {}) as {
             supported?: unknown[]; visual_fill?: unknown[]; conflicts?: unknown[];
             degraded?: boolean; reused?: boolean;
@@ -1056,25 +1040,23 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             reused: ev.reused === true,
           });
           return {
-            ok: r.run.status !== 'failed',
+            ok: true,
             run_id: r.run.id,
             status: r.run.status,
             planned_page_count: r.run.planned_page_count,
             error_code: r.run.error_code ?? '',
             evidence_summary: evidenceSummary,
-            message: r.run.status === 'failed'
-              ? `规划失败(${r.run.error_code}): ${r.run.error_message ?? ''}`
-              : r.run.planned_page_count === 0
-                ? '无变化(missing/changed/new 均空), 未调用 LLM。'
-                : `已规划 ${r.run.planned_page_count} 页候选(prompt_only); 上传图片后走 novelcraft_map_atlas_review adopt。`,
+            message: r.run.planned_page_count === 0
+              ? '无变化(missing/changed/new 均空), 未调用 LLM。'
+              : `已规划 ${r.run.planned_page_count} 页候选(prompt_only); 上传图片后走 novelcraft_map_atlas_review adopt。`,
           };
         } catch (err) {
-          return { ok: false, run_id: '', status: 'failed', planned_page_count: 0, error_code: 'exception', evidence_summary: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 16. 地图册视图(只读) ----
+    // ---- 15. 地图册视图(只读) ----
     defineTool({
       name: 'novelcraft_map_atlas_view',
       description:
@@ -1087,16 +1069,16 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          adopted_nodes: { type: 'integer' },
-          adopted_pages: { type: 'integer' },
-          pending_nodes: { type: 'integer' },
-          pending_pages: { type: 'integer' },
-          tree: { type: 'string' },
-          run: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          adopted_nodes: { type: 'integer', required: true },
+          adopted_pages: { type: 'integer', required: true },
+          pending_nodes: { type: 'integer', required: true },
+          pending_pages: { type: 'integer', required: true },
+          tree: { type: 'string', required: true },
+          run: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -1117,12 +1099,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `已采用 ${tree.nodes.length} 节点/${tree.pages.length} 页; 候选 ${tree.pendingNodes.length} 节点/${tree.pendingPages.length} 页。`,
           };
         } catch (err) {
-          return { ok: false, adopted_nodes: 0, adopted_pages: 0, pending_nodes: 0, pending_pages: 0, tree: '', run: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 17. 本机图片导入(候选写入不过审批, N29; 附录 A.3/A.4) ----
+    // ---- 16. 本机图片导入(候选写入不过审批, N29; 附录 A.3/A.4) ----
     defineTool({
       name: 'novelcraft_map_atlas_upload',
       description:
@@ -1140,14 +1122,14 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          page_id: { type: 'string' },
-          node_ref: { type: 'string' },
-          generation_status: { type: 'string' },
-          image: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          page_id: { type: 'string', required: true },
+          node_ref: { type: 'string', required: true },
+          generation_status: { type: 'string', required: true },
+          image: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -1176,12 +1158,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             message: `已导入候选图 ${r.page.image?.file ?? ''}(页 ${r.page.id}); 采用请走 novelcraft_map_atlas_review。`,
           };
         } catch (err) {
-          return { ok: false, page_id: '', node_ref: args.node_ref ?? '', generation_status: '', image: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 18. 地图页/节点生命周期(adopt 类必经 ApprovalGate, fail-closed) ----
+    // ---- 17. 地图页/节点生命周期(adopt 类必经 ApprovalGate, fail-closed) ----
     defineTool({
       name: 'novelcraft_map_atlas_review',
       description:
@@ -1201,11 +1183,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          action: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          action: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -1223,12 +1205,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           );
           return { ok: true, action: args.action, message: r.detail };
         } catch (err) {
-          return { ok: false, action: args.action, message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 19. 标注应用(N35: 唯一受控结构化入口 = 消费 UI 队列; 作者内容编辑不过审批) ----
+    // ---- 18. 标注应用(N35: 唯一受控结构化入口 = 消费 UI 队列; 作者内容编辑不过审批) ----
     defineTool({
       name: 'novelcraft_map_atlas_annotation',
       description:
@@ -1243,12 +1225,13 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          applied: { type: 'integer' },
-          queue_files: { type: 'integer' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          status: { type: 'string', enum: ['complete', 'partial', 'no_change'], required: true },
+          applied: { type: 'integer', required: true },
+          queue_files: { type: 'integer', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -1258,8 +1241,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         try {
           const root = await resolveBoundRoot(service, exec, args.root);
           const r = await service.capabilities.propose.authorEdit.annotations(root);
+          const status: 'complete' | 'partial' | 'no_change' = r.failed > 0
+            ? 'partial'
+            : r.files === 0 ? 'no_change' : 'complete';
           return {
-            ok: r.failed === 0,
+            ok: true,
+            status,
             applied: r.applied,
             queue_files: r.files,
             message: r.files === 0
@@ -1267,12 +1254,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
               : `已消费 ${r.files} 个队列文件, 应用 ${r.applied} 条标注${r.failed > 0 ? `(失败 ${r.failed}: ${r.errors.join('; ')})` : ''}。`,
           };
         } catch (err) {
-          return { ok: false, applied: 0, queue_files: 0, message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),
 
-    // ---- 20. 改 prompt_only 候选页 prompt(候选面, 不过审批) ----
+    // ---- 19. 改 prompt_only 候选页 prompt(候选面, 不过审批) ----
     defineTool({
       name: 'novelcraft_map_atlas_update_prompt',
       description:
@@ -1287,12 +1274,12 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       output: {
         schema: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
-          ok: { type: 'boolean' },
-          page_id: { type: 'string' },
-          content_hash: { type: 'string' },
-          message: { type: 'string' },
+          ok: { type: 'boolean', required: true },
+          page_id: { type: 'string', required: true },
+          content_hash: { type: 'string', required: true },
+          message: { type: 'string', required: true },
           },
         },
         render,
@@ -1304,7 +1291,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           const page = await service.capabilities.propose.updateAtlasPrompt(root, args.page_ref, args.prompt, args.expected_content_hash);
           return { ok: true, page_id: page.id, content_hash: page.content_hash, message: `已更新页 ${page.id} 的 prompt。` };
         } catch (err) {
-          return { ok: false, page_id: args.page_ref, content_hash: '', message: errMessage(err) };
+          throw toolError(err);
         }
       },
     }),

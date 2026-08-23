@@ -126,11 +126,14 @@ describe('novelcraft_ingest_file(Track 1b 文本入库, D9a)', () => {
     const env = await setup();
     const docx = path.join(env.workDir, '书稿.docx');
     writeFileSync(docx, 'fake', 'utf8');
-    const r1 = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: docx });
-    expect(r1.ok).toBe(false);
-    expect(String(r1.message)).toContain('.docx'); // 门禁作者语言(白名单提示)
-    const r2 = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: path.join(env.workDir, '不存在.txt') });
-    expect(r2.ok).toBe(false);
+    await expect(call(env, 'novelcraft_ingest_file', { root: env.root, file_path: docx })).rejects.toMatchObject({
+      code: 'INGEST_FAILED',
+      message: expect.stringContaining('.docx'),
+    });
+    await expect(call(env, 'novelcraft_ingest_file', {
+      root: env.root,
+      file_path: path.join(env.workDir, '不存在.txt'),
+    })).rejects.toMatchObject({ code: 'INGEST_FAILED' });
   });
 });
 

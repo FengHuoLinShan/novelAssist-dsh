@@ -179,12 +179,10 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
         { ...env.exec, name: 'novelcraft_generate_next_chapter' },
       );
       const t = tool(env, 'novelcraft_store_adopt');
-      const out = (await t.execute(
+      await expect(t.execute(
         { root: env.root, kind: 'chapter_candidate', ref: '002', note: '采用第二章候选' },
         { ...env.exec, name: 'novelcraft_store_adopt' },
-      )) as { ok: boolean; message: string };
-      expect(out.ok).toBe(false);
-      expect(out.message).toContain('未获批准');
+      )).rejects.toMatchObject({ code: `APPROVAL_${outcome.toUpperCase()}` });
       // fail-closed: 正文未写, 候选仍保留为 candidate。
       expect(existsSync(path.join(env.root, 'chapters', '002.md'))).toBe(false);
       const candidate = path.join(env.root, 'chapters', 'pending', '002.md');

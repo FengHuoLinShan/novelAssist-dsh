@@ -1,9 +1,9 @@
 # @novelcraft/dsh — 挂载阶段适配包
 
-把 13 个纯 TS 核心包接入 DSH rc.6 插件 seam 的 **Cordis 服务插件**(ADR-0017 §2)。
+把 13 个纯 TS 核心包接入 DSH rc.8 插件 seam 的 **Cordis 服务插件**(ADR-0017 §2)。
 核心包保持零 DSH 运行时依赖不变; 本包是唯一的 DSH 接触面。
 
-## 组装(profile patch 形式, D21 锁 rc.6)
+## 组装(profile patch 形式, D21 锁 rc.8)
 
 ```yaml
 plugins:
@@ -26,7 +26,7 @@ plugins:
 | `ctx.jobs` | `RadarScheduler` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval` |
 | `ctx.credentials` | (消费面) | 内容手 Key 由 DSH credentials/LLM 适配器层解析; `.assistant/llm.yml` 只存模型名与参数(N5), 本包不落 Key |
 | 会话↔vault | `SessionVaultBinder` | D17 一书一会话一 vault 根; 内存 + domain 双面绑定; §14 子代理 prompt 注入(书名/路径/纪律条款) |
-| `ctx.tools` | `registerNovelcraftTools` | 20 工具: llm_step / store_index / store_adopt / inbox_view / inbox_act / signal_push / deep_import / propose_next_chapter / health_scan / generate_next_chapter / ingest_file / radar_sweep / rag_search / rag_embed / map_atlas_plan / map_atlas_view / map_atlas_upload / map_atlas_review / map_atlas_annotation / map_atlas_update_prompt（store_adopt 与 map_atlas_review 的 adopt 类动作审批门控 / inbox_act 四动词 / deep_import 六阶段 adopt 经审批门 + trace 落盘; tools 服务缺失时静默跳过） |
+| `ctx.tools` | `registerNovelcraftTools` | 19 个领域工具；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功值使用 required + closed schema；scope/approval/store/LLM/未知失败映射 rc.8 `HarnessError`，由宿主产出 `isError:true`。 |
 | client-modules | (host 侧注册面) | client UI 本体留 R7/client 阶段(B); 本包不产出 client bundle |
 
 服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + `facades`(13 核心包
@@ -37,14 +37,14 @@ plugins:
 
 1. 所有 DSH 服务读取走 `svc(ctx, name)`(ctx.get): cordis 的 inject 门禁按 fiber 生效,
    工具执行可能在别的 fiber 下跑; 缺失服务由各适配器降级或 fail-closed, 不炸插件。
-2. 测试 = vitest: 真实 Cordis Context + 真实 storage/storage-json/storage-domain/llm
-   + 假 approval/jobs/credentials(test/helpers.ts), 31 条行为契约, 断言注释引 seam 契约。
+2. 测试 = vitest: 真实 Cordis Context + 真实 storage/storage-json/storage-domain/llm/tools
+   + 假 approval/jobs/credentials(test/helpers.ts), 断言注释引 seam 契约。
 3. 集成 demo: `node scripts/m5-mount-demo.mjs`(仓库根)纯 node 跑通挂载全链。
 4. dist 是 Node 可加载 ESM(相对导入 .js 后缀); 构建 `npm run build`。
 
 ## 依赖策略
 
-- `@deepseek-ai/*` 全部 **peerDependencies**(^0.1.0-rc.6; cordis ^4.0.1), 由宿主
+- `@deepseek-ai/*` 全部锁定 **0.1.0-rc.8 peerDependencies**(cordis ^4.0.1), 由宿主
   profile 提供单实例(避免多份 cordis 破坏 Context 增强); 本包 devDependencies
   自备同版本用于测试。
 - `@novelcraft/*` 为 workspace 依赖; zod ^4(schemastery 由 dsh 包带入)。

@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
+import { pushSignal } from '@novelcraft/assistant';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { NovelCraftService } from '../src/index.js';
 import { makeContext, type HarnessServices } from './helpers.js';
@@ -101,39 +102,29 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
     const env = await setup();
     const write = tool(env, 'novelcraft_store_adopt');
     const read = tool(env, 'novelcraft_store_index');
-    const outW = (await write.execute(
+    await expect(write.execute(
       { root: env.rootA, kind: 'object', ref: 'x' },
       execOf('novelcraft_store_adopt', undefined),
-    )) as { ok?: boolean; message?: string };
-    expect(outW.ok).toBe(false);
-    expect(outW.message).toMatch(/工作区隔离|session/);
-    const outR = (await read.execute(
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
+    await expect(read.execute(
       { root: env.rootA },
       execOf('novelcraft_store_index', undefined),
-    )) as { ok?: boolean; message?: string };
-    expect(outR.ok).toBe(false);
-    expect(outR.message).toMatch(/工作区隔离|session/);
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     expect(env.h.approval.requests).toHaveLength(0);
     env.cleanup();
   });
 
   it('session 未绑定(有 id 但无绑定)→ 读写工具 fail-closed', async () => {
     const env = await setup();
-    const write = tool(env, 'novelcraft_signal_push');
-    const out = (await write.execute(
+    const write = tool(env, 'novelcraft_inbox_act');
+    await expect(write.execute(
       {
         root: env.rootA,
-        radar: 'dedup',
-        severity: 'hint',
-        title: 'x',
-        evidence: ['e'],
-        proposed_action: 'p',
-        reversibility: true,
+        signal_id: 'missing',
+        action: 'defer',
       },
-      execOf('novelcraft_signal_push', agentUnbound),
-    )) as { ok?: boolean; message?: string };
-    expect(out.ok).toBe(false);
-    expect(out.message).toMatch(/未绑定|工作区隔离/);
+      execOf('novelcraft_inbox_act', agentUnbound),
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     env.cleanup();
   });
 
@@ -141,12 +132,10 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
     const env = await setup();
     const before = snapshot(env.rootB);
     const write = tool(env, 'novelcraft_store_adopt');
-    const out = (await write.execute(
+    await expect(write.execute(
       { root: env.rootB, kind: 'object', ref: '不存在' },
       execOf('novelcraft_store_adopt', agentA),
-    )) as { ok?: boolean; message?: string };
-    expect(out.ok).toBe(false);
-    expect(out.message).toMatch(/工作区隔离|不一致/);
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     // 拒绝发生在审批之前(审批零请求)与任何 B 的 fs 访问之前
     expect(env.h.approval.requests).toHaveLength(0);
     expect(snapshot(env.rootB)).toBe(before);
@@ -176,14 +165,11 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
     const before = snapshot(env.rootB);
 
     const read = tool(env, 'novelcraft_inbox_view');
-    const out = (await read.execute(
+    await expect(read.execute(
       { root: env.rootB },
       execOf('novelcraft_inbox_view', agentA),
-    )) as { ok?: boolean; signals?: unknown[]; message?: string };
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     // 拒绝: 不返回 B 的信号(零读泄漏), 也不写 B(零写)。
-    expect(out.ok).toBe(false);
-    expect(out.message).toMatch(/工作区隔离|不一致/);
-    expect(out.signals ?? []).not.toContainEqual(expect.objectContaining({ id: 'secret-b' }));
     expect(snapshot(env.rootB)).toBe(before);
     env.cleanup();
   });
@@ -198,22 +184,26 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
     )) as { objects?: number; ok?: boolean };
     expect(outR.ok ?? outR.objects !== undefined).toBe(true);
 
-    // 写: 信号推送落在 A(而非 B)。
-    const write = tool(env, 'novelcraft_signal_push');
+    // 写: 领域 producer 先在 A 产生信号，模型只可提交确定性决定。
+    const signal = pushSignal(env.rootA, {
+      radar: 'dedup',
+      severity: 'hint',
+      title: 'A 的信号',
+      evidence: ['e'],
+      proposed_action: 'p',
+      reversibility: true,
+    });
+    const write = tool(env, 'novelcraft_inbox_act');
     const outW = (await write.execute(
       {
         root: env.rootA,
-        radar: 'dedup',
-        severity: 'hint',
-        title: 'A 的信号',
-        evidence: ['e'],
-        proposed_action: 'p',
-        reversibility: true,
+        signal_id: signal.id,
+        action: 'defer',
       },
-      execOf('novelcraft_signal_push', agentA),
-    )) as { ok?: boolean; id?: string };
+      execOf('novelcraft_inbox_act', agentA),
+    )) as { ok?: boolean };
     expect(outW.ok).toBe(true);
-    expect(existsSync(path.join(env.rootA, '.assistant', 'signals', `${outW.id}.json`))).toBe(true);
+    expect(existsSync(path.join(env.rootA, '.assistant', 'signals', `${signal.id}.json`))).toBe(true);
     expect(readdirSync(path.join(env.rootB, '.assistant', 'signals')).filter((name) => name.endsWith('.json'))).toEqual([]);
     env.cleanup();
   });
@@ -262,30 +252,22 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
     symlinkSync(env.rootB, linkB, process.platform === 'win32' ? 'junction' : 'dir');
     const beforeB = snapshot(env.rootB);
     const read = tool(env, 'novelcraft_store_index');
-    const outRead = (await read.execute(
+    await expect(read.execute(
       { root: linkB },
       execOf('novelcraft_store_index', agentA),
-    )) as { ok?: boolean; message?: string };
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     // 读拒绝 + B 零变化。
-    expect(outRead.ok).toBe(false);
-    expect(outRead.message).toMatch(/工作区隔离|不一致/);
     expect(snapshot(env.rootB)).toBe(beforeB);
 
-    const write = tool(env, 'novelcraft_signal_push');
-    const outWrite = (await write.execute(
+    const write = tool(env, 'novelcraft_inbox_act');
+    await expect(write.execute(
       {
         root: linkB,
-        radar: 'dedup',
-        severity: 'hint',
-        title: 'x',
-        evidence: ['e'],
-        proposed_action: 'p',
-        reversibility: true,
+        signal_id: 'missing',
+        action: 'defer',
       },
-      execOf('novelcraft_signal_push', agentA),
-    )) as { ok?: boolean; message?: string };
-    expect(outWrite.ok).toBe(false);
-    expect(outWrite.message).toMatch(/工作区隔离|不一致/);
+      execOf('novelcraft_inbox_act', agentA),
+    )).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     expect(snapshot(env.rootB)).toBe(beforeB);
     expect(env.h.approval.requests).toHaveLength(0);
     rmSync(linkB, { recursive: true, force: true });

@@ -6,35 +6,13 @@
     complete: true
     includeRuntimeContext: false
 
-# 持久 bash 与文件系统(经 host 沙箱策略), 供 agent 在仓库中执行确定性操作。
-- id: persistent-shell
-  name: cordis:group
-  group: true
-  isolate:
-    terminals: true
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
   config:
-    - id: pty
-      name: '@deepseek-ai/dsh-terminal'
+    providerName: novelcraft
+    includeDefaultRoots: false
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../../skills/', baseUrl))"
 
-    - id: terminal-bash
-      name: '@deepseek-ai/dsh-terminal-bash'
-      config:
-        timeoutMs: 300000
-
-    - id: persistent-bash
-      name: '@deepseek-ai/dsh-tool-bash-persistent'
-      config:
-        timeoutMs: 300000
-        description: |-
-          Run commands in a bash shell; long-lived commands run in the background.
-
-- id: filesystem
-  name: cordis:group
-  group: true
-  isolate:
-    fs: true
-  config:
-    - id: fs-local
-      name: '@deepseek-ai/dsh-fs-local'
-      config:
-        cwd: !!js process.env.DSH_CWD ?? process.cwd()
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'

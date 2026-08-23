@@ -1,5 +1,5 @@
 // @novelcraft/dsh — 挂载阶段主入口(Cordis 服务插件)。
-// 用法(D21 锁 rc.6):
+// 用法(D21 锁 rc.8):
 //   ctx.plugin(NovelCraftService, { llm: { provider: 'deepseek', model: '...' }, vaultsDir: '~/Novels' })
 // 或经 profile patch:
 //   plugins:

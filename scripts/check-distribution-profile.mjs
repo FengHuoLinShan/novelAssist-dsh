@@ -182,6 +182,27 @@ if (dshPkg.optionalDependencies?.['@novelcraft/rag-bge'] === undefined || dshPkg
   failures.push('@novelcraft/dsh must keep rag-bge in optionalDependencies only')
 }
 
+const presetRoot = join(packagesRoot, 'preset')
+const presetPkg = JSON.parse(readFileSync(join(presetRoot, 'package.json'), 'utf8'))
+for (const dependency of ['@deepseek-ai/dsh-skill', '@deepseek-ai/dsh-skill-filesystem', '@deepseek-ai/dsh-tool-skill']) {
+  if (presetPkg.peerDependencies?.[dependency] !== '0.1.0-rc.8') {
+    failures.push(`@novelcraft/preset must pin ${dependency} to D21 rc.8`)
+  }
+}
+const activePresets = ['novelcraft-author', 'novelcraft-import-review', 'novelcraft-worldbuilder']
+for (const preset of activePresets) {
+  const text = readFileSync(join(presetRoot, 'presets', preset, 'agent.cordis.yml'), 'utf8')
+  if (!text.includes('@deepseek-ai/dsh-skill-filesystem') || !text.includes('@deepseek-ai/dsh-tool-skill')) {
+    failures.push(`${preset}: native Skill provider and consumer must both be mounted`)
+  }
+  if (/dsh-(?:tool-bash|terminal|fs-)/.test(text)) {
+    failures.push(`${preset}: model-facing shell or raw filesystem is forbidden`)
+  }
+}
+const skillEntries = readdirSync(join(presetRoot, 'skills'), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && existsSync(join(presetRoot, 'skills', entry.name, 'SKILL.md')))
+if (skillEntries.length !== 9) failures.push(`@novelcraft/preset must ship exactly 9 Skill bundles, found ${skillEntries.length}`)
+
 // N36: default CI 只验证 optional 缺失与文本链降级，不构建/测试 BGE capability；
 // 显式 bge-profile 才 include optional 并执行 rag-bge tests/audit。
 const DEFAULT_WORKSPACES = 'vault trace store llm-step rag memory outline writing imports world context assistant dsh client'
@@ -205,6 +226,7 @@ function validateCiProfiles(text) {
   if (/for p in[^\n]*\brag-bge\b/.test(defaultCi) || /run:\s*(?:\|\s*)?npm (?:test|run typecheck)\s*(?:\n|$)/.test(defaultCi)) {
     out.push('default CI must not run rag-bge or root test/typecheck')
   }
+  if (!/npm test -w @novelcraft\/preset/.test(defaultCi)) out.push('default CI must test the source-only preset/Skill profile')
   if (!/node-version:\s*24\.x/.test(bgeCi)) out.push('bge-profile must run on Node 24.x')
   if (!/npm ci --include=optional/.test(bgeCi)) out.push('bge-profile must install optional dependencies')
   if (!/npm run build -w @novelcraft\/rag\b/.test(bgeCi) || !/npm run build -w @novelcraft\/rag-bge\b/.test(bgeCi)) {
@@ -221,6 +243,7 @@ const ciMutations = [
   ['node matrix', 'node: [22.19.0, 24.x]', 'node: [20.x]'],
   ['default install', 'npm ci --omit=optional', 'npm install'],
   ['default loops', DEFAULT_WORKSPACES, `${DEFAULT_WORKSPACES} rag-bge`],
+  ['preset test', 'npm test -w @novelcraft/preset', 'echo skip-preset-test'],
   ['physical adapter absence', 'rm -f node_modules/@novelcraft/rag-bge', 'echo keep-rag-bge-link'],
   ['absence probe', "await import('@novelcraft/rag-bge')", "await import('@novelcraft/rag')"],
   ['BGE install', 'npm ci --include=optional', 'npm ci --omit=optional'],

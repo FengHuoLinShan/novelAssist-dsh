@@ -4,5 +4,22 @@
   "private": true,
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "description": "NovelCraft skills 家族(9 册)与 agent presets(4 套)——profile bundle 入口",
-  "files": ["skills", "presets", "README.md"]
+  "files": ["skills", "presets", "README.md"],
+  "scripts": {
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-skill": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-tool-skill": "0.1.0-rc.8"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-fs": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-sandbox": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-skill": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-tool-skill": "0.1.0-rc.8",
+    "vitest": "^3.2.6"
+  }
 }

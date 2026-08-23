@@ -26,7 +26,7 @@
 四态判定: 待确认(open ≥ threshold, N3=5)> 忙碌(novelcraft-radar job 运行中)>
 微光(0 < open < threshold)> 静默。键盘流: j/k 选择、1/2/3/4 四动词、u 刷新、Esc 关闭。
 
-## 构建(D21 锁 rc.6)
+## 构建(D21 锁 rc.8)
 
 - 宿主半身: `npm run build:host`(tsc → dist/index.js, 供 Loader 装载);
 - 浏览器半身: `npm run build:client`(tsdown + vendor 的 DSH 共享预设

@@ -1,6 +1,6 @@
 ---
 name: novelcraft-map
-description: NovelCraft 剧情地图(M4): map observations/空间事实 → 剧情雷达与 Story Map 读面; 世界地图册(map atlas)规划/审核/图片导入。地图类任务先读本 skill。
+description: "NovelCraft 剧情地图(M4): map observations/空间事实 → 剧情雷达与 Story Map 读面; 世界地图册(map atlas)规划/审核/图片导入。地图类任务先读本 skill。"
 whenToUse: 涉及地图状态、空间事实、剧情地图(Story Map)展示、世界地图册(map atlas)规划/审核/图片导入时。
 ---
 
@@ -9,11 +9,12 @@ whenToUse: 涉及地图状态、空间事实、剧情地图(Story Map)展示、�
 ## Story Map / map observations
 
 - map observations 是派生读面(源数据在 scenes/memory/世界对象); 文件真相优先。
-- Story Map(§17.5): 章 × 线索 × Scene 时间线视图; 数据来自剧情雷达读面
-  (memory.projectWorldState + outline 结构)。
+- Story Map(§17.5)是章/Scene/结构关系总览, 不是统一叙事时间线、张力曲线或兑现进度。
 - 章节档案(§17.5.1): 剧情地图/写作台的章节行可点开整页档案(Scene 分解/人物在场/POV/
   伏笔种下-回收对账/设定引用/节奏/审查/信号); 纯读, 不写资产。
 - 纪律: 地图展示不改资产; 修订提案进收件箱。
+
+Story Map 与章节档案当前是 `UI-only` client 读面, 不在 model-facing 工具目录。
 
 ## 世界地图册 map atlas(M4, 无生图; 随 Phase 5 落地)
 
@@ -30,7 +31,7 @@ whenToUse: 涉及地图状态、空间事实、剧情地图(Story Map)展示、�
   队列, 由助手 agent 调 `novelcraft_map_atlas_annotation` 工具应用; 工具只消费队列或精确 ops,
   拒绝自然语言坐标描述, 坐标恒归一化 0–1; 标签是作者内容编辑, 不走 ApprovalGate。
 
-### 工具清单预告(随 Phase 5 落地)
+### `available-now` 工具
 
 1. `novelcraft_map_atlas_plan` — 规划 run **同步执行**(同 deep_import 模式, timeout 3600s),
    返回 run_id/status/planned_page_count/evidence_summary/message。

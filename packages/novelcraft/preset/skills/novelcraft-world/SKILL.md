@@ -13,8 +13,16 @@ whenToUse: 操作世界对象、复核待处理建议、生成中心对话/收�
 - 别名不建新对象(R1); 已采用不硬删(git); 关系同向同型 create-or-merge。
 - 世界书: bible/*.md(frontmatter status draft/canonical); 发布走 adopt+commit;
   页面建议是整页提案, apply 前重验 baseline。
-- 确定性操作经 @novelcraft/world 的 CRUD 面; 合并/拆分经 @novelcraft/store
-  (已采用合并需二次确认 R37)。
+- 世界 CRUD/合并/拆分当前是 `core-only`; model-facing 写面只有对既有候选的
+  `novelcraft_store_adopt` 与 Map Atlas 专用工具。
+
+## 当前可执行面
+
+- `available-now`: `novelcraft_llm_step` 返回共创/检修等 raw preview,
+  `novelcraft_inbox_view`/`novelcraft_inbox_act` 记录复核决定,
+  `novelcraft_store_adopt` 审批采用既有候选, 以及 6 个 `novelcraft_map_atlas_*` 工具。
+- `core-only`: 世界对象 CRUD、世界书 page suggestion/publish/history 与生成中心多轮编排
+  尚未成为 public capability; raw `llm_step` 不会自动写 `world/pending` 或 bible draft。
 
 ## 生成中心五模式(§19: 不再是并列 UI, 是编排脑按意图调用的内容手步骤)
 
@@ -24,8 +32,8 @@ whenToUse: 操作世界对象、复核待处理建议、生成中心对话/收�
 | 「把这几页设定收束一下」 | llm_step(spec=world_convergence) 只读汇聚 |
 | 「还有什么可挖的」 | llm_step(spec=world_exploration) ≤3 个一跳缺口 |
 | 「检修这一页」 | llm_step(spec=world_semantic_inspection) findings 供复核 |
-| 对象建议 | llm_step(spec=world_core_entity) → world/pending(不自动采用) |
-| 页面提案 | llm_step(spec=world_bible_page / world_bible_new_page) → bible draft |
+| 对象建议 | llm_step(spec=world_core_entity), 当前只返回 raw preview |
+| 页面提案 | llm_step(spec=world_bible_page / world_bible_new_page), 当前只返回 raw preview |
 
 ## 复核纪律
 

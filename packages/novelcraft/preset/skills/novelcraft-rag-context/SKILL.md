@@ -1,6 +1,6 @@
 ---
 name: novelcraft-rag-context
-description: NovelCraft 检索与上下文编译(M6): 三层 RAG(L0 BM25 / L1 内容手精排 / L2 可选 BGE 向量)、rag 索引可重建、Tier P0–P4 上下文编译。涉及检索/上下文先读本 skill。
+description: "NovelCraft 检索与上下文编译(M6): 三层 RAG(L0 BM25 / L1 内容手精排 / L2 可选 BGE 向量)、rag 索引可重建、Tier P0–P4 上下文编译。涉及检索/上下文先读本 skill。"
 whenToUse: 检索设定、重建索引、编译上下文、诊断检索质量、启用嵌入后端时。
 ---
 
@@ -12,7 +12,7 @@ whenToUse: 检索设定、重建索引、编译上下文、诊断检索质量、
   世界对象切块(chunkChapterText), index_version=cn-novel-v1, visibility 默认 author_only;
   chunk 是派生索引, 可全量重建(R12)——文件是唯一真相。
 - **L1 内容手精排(默认开)**: `llm_step(spec=rag_rerank)` 对召回候选按相关性重排
-  (预算 2048 / temp 0.1 / 超时 120s), 返回 `ranked_ids`; 失败自动回退 L0 原序。
+  (预算 4096 / temp 0.1 / 超时 120s), 返回 `ranked_ids`; 失败自动回退 L0 原序。
 - **L2 本地 BGE 向量召回(可选)**: llm.yml 设 `embedding: bge-local-v1` 启用;
   @novelcraft/rag-bge 懒加载 transformers.js 本地模型, 失败回退文本检索。
 - **降级链**: L2 失败→L0/L1, L1 失败→L0; 检索永不阻断写作, 失败只在结果 `degraded`
@@ -25,12 +25,12 @@ whenToUse: 检索设定、重建索引、编译上下文、诊断检索质量、
   索引由事件钩子自动维护, 本工具只检索不建索引; 无索引时提示先入库/采用资产。
 - `novelcraft_rag_embed`: 前置条件 = 该书 `.assistant/llm.yml` 设 `embedding: bge-local-v1`
   且 @novelcraft/rag-bge 已安装; 批量补向量逐批落盘 .assistant/rag-index.json(中断可重入);
-  未启用时返回提示, 不报错。
+  未启用时以 `RAG_EMBEDDING_UNAVAILABLE` 进入宿主失败通道, 先配置后重试。
 
 ## 索引维护纪律
 
-- 索引由 adopt/ingest/deep_import 事件钩子(fireRagHook)增量维护, 钩子尽力而为, 失败
-  不进主工具调用链; chapters/pending 不入索引。
+- adopt/ingest/deep_import 事件钩子只同步词法索引; 不在工具返回后启动后台 embedding writer。
+  向量补全只由显式 `novelcraft_rag_embed` 执行。
 - .assistant/rag-index.json 是派生索引(向量为派生字段), 任何时刻可全量重建, 已入 vault
   .gitignore 不提交 git。
 
@@ -48,6 +48,10 @@ whenToUse: 检索设定、重建索引、编译上下文、诊断检索质量、
   超预算截断/驱逐(事件流可审计); CONTEXT_BUDGET 默认 4000 内置(N4)。
 - 编译摘要是作者语言(不暴露 raw JSON); 供计划确认/成本预告。
 
+`core-only`: `compileContext` 当前没有稳定生成消费者或 public tool; 不能把其存在当成已冻结
+来源 receipt。`available-now` 只有 `novelcraft_rag_search` 与显式 `novelcraft_rag_embed`。
+
 ## 纪律
 
-- 检索只读; 重建索引不影响文件真相; 编译结果不进资产; 嵌入/精排失败只降级不报错。
+- 检索只读; 重建索引不影响文件真相; 编译结果不进资产。`rag_search` 内嵌入/精排失败可降级;
+  显式 `rag_embed` 后端不可用则报宿主错误, 不伪装成功。

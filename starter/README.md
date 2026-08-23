@@ -5,24 +5,19 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 ## 前置
 
 - Node ≥ 22
-- DSH `@deepseek-ai/dsh` **0.1.0-rc.6**(D21 锁定; 兼容矩阵见下)
+- DSH `@deepseek-ai/dsh` **0.1.0-rc.8**(D21 锁定; 兼容矩阵见下)
 - 作者在 DSH 侧保存模型连接(编排脑默认 deepseek-v4-flash + high, D13)
 
-## 安装(发布后)
+## 当前 source-only 挂载
 
 ```sh
-# 1. 安装插件族(发布后): dsh 是唯一 DSH 接触面(挂载阶段 A, ADR-0017),
-#    其余核心包是它的纯 TS 依赖, 随 npm 自动拉取。
-dsh plugin add @novelcraft/dsh @novelcraft/preset @novelcraft/client
-
+# 1. 在 DSH 开发 profile 挂本仓库 workspace 的 @novelcraft/dsh 与 @novelcraft/client。
 # 2. profile patch 加一行(见 dev-profile/cordis.patch.yml):
 #    plugins:
 #      novelcraft: { name: "@novelcraft/dsh", config: { vaultsDir: ~/Novels } }
-
-# 3. 装 agent presets
-#    packages/novelcraft/preset/presets/novelcraft-* → $DSH_HOME/.agent-presets/<name>/
-
-# 4. 开 DSH web, 说「新建一本书」——插件会在 ~/Novels/<书名>/ 建工作区
+# 3. 将 DSH agent preset 的 system root 指向
+#    <repo>/packages/novelcraft/preset/presets；不要只复制单个 preset 子目录。
+# 4. 打开已初始化并绑定到 session 的 NovelCraft Vault。
 ```
 
 ## 开发模式(本仓库内)
@@ -38,18 +33,19 @@ dsh plugin add @novelcraft/dsh @novelcraft/preset @novelcraft/client
 
 ## 一句话开始
 
-> 「新建一本书, 导入我拖给你的 Word 文本, 做一次深度导入, 然后陪我把这一卷写完。」
+> 「把这份本机 UTF-8 纯文本停靠进当前书, 做一次深度导入, 然后给我下一章提案。」
 
-助手会: 建工作区 → 停靠章节 → 计划协商 → 六阶段导入 → 去重报告一次确认 →
-六雷达守望 → 写作中参照/写作后评审 → 修订候选采用(全部经 approval)。
+当前可执行链是: session 已绑定 Vault → `.txt` 停靠 → 六阶段导入 → 收件箱复核 →
+下一章提案/正文候选 → `store_adopt` 审批采用。浏览器附件承运、自然语言新建多书、
+独立语义审查/定向返修和 RP 尚未形成公开端到端入口, 不在这里预先承诺。
 
 ## 兼容矩阵(D21)
 
 | 依赖面 | 版本 | 备注 |
 |---|---|---|
-| DSH | 0.1.0-rc.6 | 锁版本; 升级窗口随官方破坏性变更公告单独评估 |
-| seam: llm / approval / storage-domain / jobs / credentials / tools | rc.6 行为 | **挂载阶段 A 已实现**于 `@novelcraft/dsh`(peer deps); 升级前跑其 31 条行为契约 |
-| seam: client-modules / schedule | rc.6 行为 | client UI 待 client 阶段(B); 低频巡检默认关(D6) |
+| DSH | 0.1.0-rc.8 | 精确锁版本; 升级窗口随官方破坏性变更公告单独评估 |
+| seam: llm / approval / storage-domain / jobs / credentials / tools | rc.8 行为 | **挂载阶段 A 已实现**于 `@novelcraft/dsh`; 升级前跑全仓行为契约 |
+| seam: client-modules / schedule / Skill | rc.8 行为 | client UI 与 9 册原生 Skill 已实现; 低频巡检默认关(D6) |
 | Node | ≥ 22 | |
 | git | 任意现代版本 | 每书一个 git 仓库(版本真相) |
 

@@ -2,39 +2,6 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: "你是 NovelCraft RP 旅程的陪伴代理, 为只想进入优秀作品世界的用户服务。用纯故事语言沟通, 绝不使用 branch、revision、task、token 等术语; 只讨论当前旅程的选中故事与总回顾, 不引入作者项目设定或训练知识里的幕后答案; 尊重用户的开场与纠正, 未选分支不算发生。行动建议 1-3 个、自然且不剧透。"
+    text: "NovelCraft RP 持久旅程已按 D23 延后至 R6 之后单独立项。当前 preset 仅保留产品占位，不提供故事生成、分支、回顾、持久化、文件或 Shell 能力；请如实说明当前不可用，不要模拟已保存旅程。"
     complete: true
     includeRuntimeContext: false
-
-# 持久 bash 与文件系统(经 host 沙箱策略), 供 agent 在仓库中执行确定性操作。
-- id: persistent-shell
-  name: cordis:group
-  group: true
-  isolate:
-    terminals: true
-  config:
-    - id: pty
-      name: '@deepseek-ai/dsh-terminal'
-
-    - id: terminal-bash
-      name: '@deepseek-ai/dsh-terminal-bash'
-      config:
-        timeoutMs: 300000
-
-    - id: persistent-bash
-      name: '@deepseek-ai/dsh-tool-bash-persistent'
-      config:
-        timeoutMs: 300000
-        description: |-
-          Run commands in a bash shell; long-lived commands run in the background.
-
-- id: filesystem
-  name: cordis:group
-  group: true
-  isolate:
-    fs: true
-  config:
-    - id: fs-local
-      name: '@deepseek-ai/dsh-fs-local'
-      config:
-        cwd: !!js process.env.DSH_CWD ?? process.cwd()

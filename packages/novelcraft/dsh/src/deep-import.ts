@@ -342,7 +342,7 @@ export async function deepImport(
     });
     if (decision !== 'allowed-once') {
       // fail-closed: rejected/cancelled/unavailable 一律拒绝 —— 零 provider 调用、
-      // 零 plan/checkpoint/trace 文件与 canonical 写(工具层现有 catch 转 ok:false)。
+      // 零 plan/checkpoint/trace 文件与 canonical 写(工具层映射宿主 HarnessError 通道)。
       throw new DeepImportDeniedError(
         decision,
         `深度导入第 ${opts.startChapter}-${opts.endChapter} 章未获范围授权(决策: ${decision}); 未发起任何 LLM 调用或文件写入`,

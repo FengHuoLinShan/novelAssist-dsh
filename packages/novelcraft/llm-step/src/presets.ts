@@ -24,7 +24,7 @@ export interface ContentPreset {
 /** 种子预设(可在预设面板增删改; 模型槽位按用户 DSH 已配置 provider 选择)。 */
 export const DEFAULT_CONTENT_PRESETS: ContentPreset[] = [
   { name: "default", label: "默认(继承助手配置)" },
-  // DSH rc.6 GenerateOptions 尚无 top_p transport；种子卡不得默认携带不可执行参数。
+  // DSH rc.8 GenerateOptions 尚无 top_p transport；种子卡不得默认携带不可执行参数。
   { name: "writing-day", label: "写作日", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.7 },
   { name: "import-day", label: "导入日", provider: "deepseek", model: "deepseek-v4-flash", temperature: 0.2, timeout_ms: 900_000 },
   { name: "polish", label: "精修校对", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.25 },

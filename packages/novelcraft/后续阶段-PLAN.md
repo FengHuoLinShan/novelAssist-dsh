@@ -36,7 +36,7 @@
   **注意**: 需 DSH 源码 checkout 构建 client 插件(dsh-rebuild 最终报告 §2.3 缺口 3 已记录
   此依赖), 实现期再核实 client-modules 的构建链。
 - `novelcraft-starter`: profile bundle(plugins + presets + skills + 示例 vault)+
-  一键安装文档 + seam 兼容矩阵(D21: 锁 rc.6)。
+  一键安装文档 + seam 兼容矩阵(D21: 锁 rc.8)。
 - 发布: npm 拆包发布 @novelcraft/*; monorepo 版本策略(D22)。
 
 ## 贯穿约定(所有后续阶段)

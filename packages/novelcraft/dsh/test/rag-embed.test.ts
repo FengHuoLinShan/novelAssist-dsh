@@ -69,25 +69,22 @@ const call = async (env: TestEnv, name: string, args: Record<string, unknown>) =
   (await tool(env, name).execute(args as never, env.exec as never)) as Record<string, unknown>;
 
 describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
-  it('注册: 共 20 个工具且 novelcraft_rag_embed 存在(输出 schema 开放)', async () => {
+  it('注册: 共 19 个工具且 novelcraft_rag_embed 使用 closed success schema', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(20); // 14 → 20: M7 map-atlas Phase 5 新增 6 工具
+    expect(env.tools.length).toBe(19); // 删除 model-facing signal_push；信号只由确定性 producer 产生
     const t = tool(env, 'novelcraft_rag_embed');
     const schema = t.output?.schema as { type: string; additionalProperties?: boolean };
     expect(schema.type).toBe('object');
-    expect(schema.additionalProperties).toBe(true);
+    expect(schema.additionalProperties).toBe(false);
     expect(t.parameters).toMatchObject({ type: 'object', required: ['root'] });
   });
 
-  it('embedding 未配置 → rag_embed 返回提示且不嵌(ok:false + 全 0 + 作者语言提示)', async () => {
+  it('embedding 未配置 → 宿主失败通道且不嵌', async () => {
     const env = await setup(); // 全新 vault, 无 llm.yml → embedding 未启用
-    const r = await call(env, 'novelcraft_rag_embed', { root: env.root });
-    expect(r.ok).toBe(false);
-    expect(r.embedded).toBe(0);
-    expect(r.failed).toBe(0);
-    expect(r.skipped).toBe(0);
-    expect(String(r.message)).toContain('嵌入未启用或后端不可用');
-    expect(String(r.message)).toContain('embedding: bge-local-v1');
+    await expect(call(env, 'novelcraft_rag_embed', { root: env.root })).rejects.toMatchObject({
+      code: 'RAG_EMBEDDING_UNAVAILABLE',
+      message: expect.stringContaining('embedding: bge-local-v1'),
+    });
   });
 
   it('llm.yml 写 embedding: bge-local-v1 → 通过可注入 optional loader 创建 backend(零真实安装依赖)', async () => {
@@ -113,6 +110,19 @@ describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
     writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'embedding: bge-local-v1\n', 'utf8');
     expect(await env.service.embeddingBackendFor(env.root)).toBeUndefined();
     await expect(env.service.ragEmbed(env.root)).resolves.toMatchObject({ embedded: 0, failed: 0, skipped: 0 });
+  });
+
+  it('摄入事件只同步词法索引，不在工具返回后启动后台 embedding writer', async () => {
+    const env = await setup();
+    const load = vi.spyOn(optionalBgeLoader, 'load');
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'embedding: bge-local-v1\n', 'utf8');
+    const manuscript = path.join(env.vaultsDir, '手稿.txt');
+    writeFileSync(manuscript, '第一章 雨夜\n雨下了一夜。', 'utf8');
+
+    const result = await call(env, 'novelcraft_ingest_file', { root: env.root, file_path: manuscript });
+    expect(result.ok).toBe(true);
+    await Promise.resolve();
+    expect(load).not.toHaveBeenCalled();
   });
 
   it('rag_search 在 embedding 未配置时行为与之前一致(L0/L1)', async () => {

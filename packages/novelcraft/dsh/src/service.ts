@@ -17,7 +17,7 @@ import * as store from '@novelcraft/store';
 import { ensureVaultGitignore, paths as pathsFor } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
-import { ApprovalGate, GateRequiredError } from './approval/gate.js';
+import { ApprovalGate, GateDeniedError, GateRequiredError } from './approval/gate.js';
 import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './capabilities.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
@@ -385,8 +385,10 @@ export class NovelCraftService extends Service {
   ): Promise<{ ok: true; detail: string }> {
     const approve: world.AtlasApprove = async (a, summary, items) => {
       const decision = await this.approval.request(agent, { action: a, summary, items });
-      // ApprovalDecision 无 cancelled: 一切非 allowed-once 均 fail-closed。
-      return decision === 'allowed-once' ? 'allowed-once' : 'rejected';
+      if (decision !== 'allowed-once') {
+        throw new GateDeniedError(decision, `未获批准, 已放弃「${a}」(决策: ${decision})`);
+      }
+      return 'allowed-once';
     };
     switch (action) {
       case 'adopt': {

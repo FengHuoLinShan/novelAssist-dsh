@@ -1,6 +1,6 @@
 ---
 name: novelcraft-imports
-description: NovelCraft 深度导入(M4 六阶段): 文本停靠、计划授权、Scene 切分/补全/融合、实体/别名关系、结构分析、去重 L0–L4 与恢复。导入类任务先读本 skill。
+description: "NovelCraft 深度导入(M4 六阶段): 文本停靠、计划授权、Scene 切分/补全/融合、实体/别名关系、结构分析、去重 L0–L4 与恢复。导入类任务先读本 skill。"
 whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重报告、恢复中断的导入时。
 ---
 
@@ -8,14 +8,16 @@ whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重�
 
 ## 入口与限制
 
-- 拖文件(DSH 网页原生接收)或粘贴 → 统一转 .txt/.md 停靠到 imports/(D9a,
-  不保留原格式); 文件夹守望 v1 不做。
+- `available-now`: `novelcraft_ingest_file` 读取当前宿主可见的 UTF-8 `.txt`,
+  `novelcraft_deep_import` 对已停靠章节执行六阶段流程, `novelcraft_store_adopt` 采用
+  已生成的结构候选。浏览器附件、粘贴承运与 `.md` 端到端尚未接通。
+- `core-only`: `planImport`/`sliceChapterBatch`/`resumeImport` 等阶段函数由 DSH 服务编排,
+  不是模型可直接调用的工具。当前没有 list/status/resume/abandon 公共动作。
 - 六阶段由 @novelcraft/imports 的确定性函数执行: planImport(授权快照,
   authorization_confirmed 强制)→ sliceChapterBatch(1a)→ enrichSceneBatch(1b)
   → fuseSceneBatch(1c)→ commitScenes(provenance_key 幂等)→ extractEntityBatch(2a)
   → aliasRelationBatch(2b)→ analyzeStructure(3)→ dedupReport/applyDedup(L0–L3)。
-- 编排真相 = .assistant/checkpoint.json; 重跑幂等(provenance_key/entity_key 跳过),
-  resumeImport 给续跑说明; 每步资产变更 = git commit。
+- 编排真相 = durable import run + checkpoint; 重跑依赖 provenance/entity key 幂等。
 
 ## 阶段语义(M4 落点)
 
@@ -31,7 +33,7 @@ whenToUse: 作者要导入作品、跑深度导入、复核导入结果/去重�
 
 ## 授权与复核纪律(agent 必守)
 
-- planImport 未 confirmed 抛错; 授权范围写入 checkpoint 后不可变。
+- 新 run 与恢复范围必须经过 ApprovalGate; 工具没有公开的持久项目级授权。
 - 降级条款(policy.yml): 1b 失败空语义进复核; 2b 失败只降级不丢对象;
   1a 重叠整章 fallback 不部分采用。
 - 低置信/冲突/无法消歧 → 收件箱信号, 不替作者决定。

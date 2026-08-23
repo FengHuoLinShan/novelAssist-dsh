@@ -4,8 +4,9 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
+import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
+import { pushSignal } from '@novelcraft/assistant';
 import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
 import { NovelCraftService } from '../src/index.js';
 import { registerNovelcraftTools } from '../src/tools.js';
@@ -13,7 +14,7 @@ import { makeContext, type HarnessServices } from './helpers.js';
 
 const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
 
-function writePendingObject(env: TestEnv): void {
+function writePendingObject(env: { root: string }): void {
   const abs = path.join(env.root, 'world', 'pending', 'pend_red.md');
   mkdirSync(path.dirname(abs), { recursive: true });
   writeFileSync(abs, serializeFrontmatter(
@@ -80,6 +81,62 @@ const tool = (env: TestEnv, name: string): ToolDefinition => {
 };
 
 describe('NovelCraftService 端到端', () => {
+  it('真实 rc.8 ToolRuntime: scope/provider/approval 失败均 isError=true 且带稳定 code', async () => {
+    const h = await makeContext({ approval: { outcome: 'rejected' } });
+    h.ctx.provide('systemPrompt', {
+      tools: () => () => {},
+      section: () => () => {},
+    } as never);
+    new ToolRuntime(h.ctx, { mode: 'native' });
+    const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-real-tools-'));
+    await h.ctx.plugin(NovelCraftService, {
+      llm: { provider: 'fake', model: 'fake-model' },
+      vaultsDir,
+      watch: { enabled: false, intervalMinutes: 60 },
+    });
+    const binding = h.ctx.novelcraft.vaults.ensureVault('真实运行时');
+
+    const isolated = await h.ctx.tools.execute({
+      callId: 'scope-1' as never,
+      name: 'novelcraft_store_index',
+      arguments: { root: binding.root },
+      signal: new AbortController().signal,
+    });
+    expect(isolated).toMatchObject({
+      isError: true,
+      error: { info: { name: 'HarnessError', code: 'WORKSPACE_ISOLATION' } },
+    });
+
+    await h.ctx.novelcraft.vaults.bindSession('s1', binding);
+    h.adapter.enqueue({ finishKind: 'error', failure: { code: 'RATE_LIMIT', message: '稍后重试' } });
+    const provider = await h.ctx.tools.execute({
+      callId: 'provider-1' as never,
+      name: 'novelcraft_llm_step',
+      arguments: { spec: 'semantic_review', input: '正文' },
+      agent: fakeAgent,
+      signal: new AbortController().signal,
+    });
+    expect(provider).toMatchObject({
+      isError: true,
+      error: { info: { name: 'HarnessError', code: expect.stringMatching(/^LLM_/) } },
+    });
+
+    writePendingObject({ root: binding.root });
+    const approval = await h.ctx.tools.execute({
+      callId: 'approval-1' as never,
+      name: 'novelcraft_store_adopt',
+      arguments: { root: binding.root, kind: 'object', ref: 'pend_red' },
+      agent: fakeAgent,
+      signal: new AbortController().signal,
+    });
+    expect(approval).toMatchObject({
+      isError: true,
+      error: { info: { name: 'HarnessError', code: 'APPROVAL_REJECTED' } },
+    });
+    expect(existsSync(path.join(binding.root, 'world', 'objects', 'pend_red.md'))).toBe(false);
+    rmSync(vaultsDir, { recursive: true, force: true });
+  });
+
   it('服务装配: 全部适配器暴露在 ctx.novelcraft', async () => {
     const env = await setup();
     expect(env.service.config.llm).toEqual({ provider: 'fake', model: 'fake-model' });
@@ -103,10 +160,18 @@ describe('NovelCraftService 端到端', () => {
       'novelcraft_radar_sweep',
       'novelcraft_rag_embed',
       'novelcraft_rag_search',
-      'novelcraft_signal_push',
       'novelcraft_store_adopt',
       'novelcraft_store_index',
     ]);
+    for (const definition of env.tools) {
+      const schema = definition.output.schema as {
+        additionalProperties?: boolean;
+        properties?: Record<string, unknown>;
+        required?: string[];
+      };
+      expect(schema.additionalProperties, definition.name).toBe(false);
+      expect([...schema.required ?? []].sort(), definition.name).toEqual(Object.keys(schema.properties ?? {}).sort());
+    }
     env.cleanup();
   });
 
@@ -143,21 +208,19 @@ describe('NovelCraftService 端到端', () => {
     env.cleanup();
   });
 
-  it('工具 novelcraft_llm_step: exec.signal 捕获并贯通(已 abort → provider 同步收到 aborted signal)', async () => {
+  it('工具 novelcraft_llm_step: exec.signal 捕获并贯通(已 abort → 宿主失败通道)', async () => {
     const env = await setup();
     env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
     const controller = new AbortController();
     controller.abort();
     const t = tool(env, 'novelcraft_llm_step');
-    const out = await t.execute(
+    await expect(t.execute(
       { spec: 'semantic_review', input: '正文' },
       { ...env.exec, name: 'novelcraft_llm_step', signal: controller.signal },
-    );
+    )).rejects.toMatchObject({ code: expect.stringMatching(/^LLM_/) });
     // exec.signal 已 abort → runStep 层 withAbortSignal 合并 controller 同步 abort
     // → DshProvider 请求(adapter.requests[0])携带的 signal 变 aborted(工具取消贯通)。
     expect(env.h.adapter.requests[0]?.signal?.aborted).toBe(true);
-    // 已 abort 必须 fail-closed；请求仍携带 aborted signal 供 provider/adapter 观察。
-    expect(out).toMatchObject({ ok: false });
     env.cleanup();
   });
 
@@ -173,19 +236,14 @@ describe('NovelCraftService 端到端', () => {
 
   it('收件箱: push → view → act(accept → adopt 指引)', async () => {
     const env = await setup();
-    const push = tool(env, 'novelcraft_signal_push');
-    const pushed = (await push.execute(
-      {
-        root: env.root,
-        radar: 'dedup',
-        severity: 'risk',
-        title: '「红衣女子」与「红衣女」疑似重复',
-        evidence: ['第3章 与 第5章'],
-        proposed_action: '合并并保留较早对象',
-        reversibility: true,
-      },
-      { ...env.exec, name: 'novelcraft_signal_push' },
-    )) as { id: string };
+    const pushed = pushSignal(env.root, {
+      radar: 'dedup',
+      severity: 'risk',
+      title: '「红衣女子」与「红衣女」疑似重复',
+      evidence: ['第3章 与 第5章'],
+      proposed_action: '合并并保留较早对象',
+      reversibility: true,
+    });
 
     const view = tool(env, 'novelcraft_inbox_view');
     const inbox = (await view.execute({ root: env.root }, { ...env.exec, name: 'novelcraft_inbox_view' })) as {
@@ -220,7 +278,7 @@ describe('NovelCraftService 端到端', () => {
     env.cleanup();
   });
 
-  it('审批拒绝 → 采用工具返回 ok:false(fail-closed 全链)', async () => {
+  it('审批拒绝 → 采用工具抛稳定 HarnessError(fail-closed 全链)', async () => {
     const h = await makeContext({ approval: { outcome: 'rejected' } });
     const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-service-'));
     const tools: ToolDefinition[] = [];
@@ -247,12 +305,12 @@ describe('NovelCraftService 端到端', () => {
     gitCommit(binding.root, 'fixture: rejected adopt candidate');
     const t = tools.find((x) => x.name === 'novelcraft_store_adopt');
     if (!t) throw new Error('missing tool');
-    const out = (await t.execute(
+    await expect(t.execute(
       { root: binding.root, kind: 'object', ref: 'pend_red' },
       { callId: 'c1', name: 'novelcraft_store_adopt', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    )) as { ok: boolean; message: string };
-    expect(out.ok).toBe(false);
-    expect(out.message).toContain('未获批准');
+    )).rejects.toMatchObject({ code: 'APPROVAL_REJECTED' });
+    expect(existsSync(path.join(binding.root, 'world', 'pending', 'pend_red.md'))).toBe(true);
+    expect(existsSync(path.join(binding.root, 'world', 'objects', 'pend_red.md'))).toBe(false);
     rmSync(vaultsDir, { recursive: true, force: true });
   });
 

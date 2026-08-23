@@ -310,17 +310,18 @@ describe('deepImport(DSH 挂载)', () => {
     env.cleanup();
   });
 
-  it('工具: 范围授权拒绝 → ok:false 含拒绝原因, 零副作用(现有 catch 转 ok:false)', async () => {
+  it('工具: 范围授权拒绝 → 宿主失败通道, 零副作用', async () => {
     const env = await setup('rejected', ['rejected']);
     const t = env.tools.find((x) => x.name === 'novelcraft_deep_import');
     expect(t).toBeDefined();
 
-    const out = (await t!.execute(
+    await expect(t!.execute(
       { root: env.root, start_chapter: 1, end_chapter: 2 },
       { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    )) as { ok: boolean; message: string };
-    expect(out.ok).toBe(false);
-    expect(out.message).toContain('范围授权');
+    )).rejects.toMatchObject({
+      code: 'APPROVAL_REJECTED',
+      message: expect.stringContaining('范围授权'),
+    });
     expect(env.h.adapter.requests).toHaveLength(0);
     expect(existsSync(importTraceFile(env.root))).toBe(false);
     env.cleanup();
