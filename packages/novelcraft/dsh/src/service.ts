@@ -14,6 +14,7 @@ import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import { ApprovalGate } from './approval/gate.js';
 import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './capabilities.js';
+import { createNovelcraftClientFace, type NovelcraftUiFace } from './client-face.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
 import { DshRadarJobHost, RadarScheduler } from './jobs/radar.js';
@@ -77,6 +78,8 @@ export class NovelCraftService extends Service {
   readonly nodeRuntime: NovelcraftNodeRuntime;
   /** N35 防误用能力面；新插件只能按 read/propose/adoptGuarded 语义消费。 */
   readonly capabilities: NovelCraftCapabilities;
+  /** 客户端 UI 面(loopback RPC 数据源: 只读聚合 + 收据暂存 + 决定记录 + 配置; 不写正史)。 */
+  readonly ui: NovelcraftUiFace;
   private readonly toolDisposers: Array<() => void>;
 
   constructor(ctx: Context, config: ConfigType) {
@@ -130,6 +133,7 @@ export class NovelCraftService extends Service {
     });
     this.nodeRuntime.start();
     this.capabilities = createNovelCraftCapabilities(this);
+    this.ui = createNovelcraftClientFace(ctx, this);
     this.toolDisposers.push(...registerNovelcraftTools(ctx, this, config.tools));
   }
 

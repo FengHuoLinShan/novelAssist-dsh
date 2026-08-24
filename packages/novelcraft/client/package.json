@@ -40,14 +40,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "@novelcraft/assistant": "*",
-    "@novelcraft/llm-step": "*",
-    "@novelcraft/store": "*",
-    "@novelcraft/vault": "*",
-    "@novelcraft/world": "*",
-    "@novelcraft/writing": "*"
-  },
+  "dependencies": {},
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-connection": "0.1.0-rc.8",
@@ -68,6 +61,12 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.8",
     "@deepseek-ai/dsh-host-apiproxy": "0.1.0-rc.8",
     "react": "^18.2.0",
+    "@novelcraft/assistant": "*",
+    "@novelcraft/llm-step": "*",
+    "@novelcraft/store": "*",
+    "@novelcraft/vault": "*",
+    "@novelcraft/world": "*",
+    "@novelcraft/writing": "*",
     "@types/react": "~18.3.1",
     "tsdown": "^0.22.2",
     "lightningcss": "^1.32.0",

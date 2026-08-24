@@ -7,6 +7,7 @@
 // seam 见 packages/novelcraft/README.md「DSH 挂载阶段 seam 契约」。
 export { NovelCraftService, NovelCraftService as default } from './service.js';
 export * from './capabilities.js';
+export * from './client-face.js';
 export * from './config.js';
 export * from './ctx.js';
 export * from './llm/preset.js';

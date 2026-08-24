@@ -60,8 +60,14 @@ function extractPackages(source, fileName = 'source.tsx') {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind)
   const visit = (node) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      const value = literalValue(node.moduleSpecifier)
-      if (value !== undefined) out.add(value)
+      // `import type` / `export type` 只存在于编译期, 不进入发布运行时 ——
+      // 由 devDependencies 提供类型是 npm 标准实践, 不算掩盖发布依赖。
+      if (node.importClause?.isTypeOnly || node.isTypeOnly) {
+        // type-only 声明: 跳过(其引用经 isImportTypeNode 分支处理为类型引用)。
+      } else {
+        const value = literalValue(node.moduleSpecifier)
+        if (value !== undefined) out.add(value)
+      }
     } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const value = literalValue(node.arguments[0])
       if (value !== undefined) out.add(value)
@@ -115,6 +121,8 @@ function runSelfTest() {
     { src: "import 'a-side'\nimport { b } from 'b-from'", expect: ['a-side', 'b-from'] },
     { src: "import 's1'; import { x } from 'p1'; import 's2'", expect: ['s1', 'p1', 's2'] },
     { src: "// import 'x'\nimport { ok } from 'fine'", expect: ['fine'] },
+    { src: "import type { T } from 'type-only-pkg'", expect: [] },
+    { src: "export type { T } from 'type-only-pkg'", expect: [] },
     { src: "const s = `import 'x' from 'y'`", expect: [] },
     { src: "const s = `import ${x}`", expect: [] },
     { src: "const o = { import: 'x' }", expect: [] },

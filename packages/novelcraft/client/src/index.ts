@@ -73,38 +73,28 @@ export function apply(ctx: Context): void {
   const handler: ConnectionRpcHandler = async (endpoint, payload, _signal): Promise<RpcResult<unknown>> => {
     // Optional host services may mount after this client row; resolve them at request time.
     const handlers = createNovelcraftHandlers(ctx);
-    switch (endpoint) {
-      case ENDPOINTS.watchState:
-        return handlers.watchState(payload as never);
-      case ENDPOINTS.inboxList:
-        return handlers.inboxList(payload as never);
-      case ENDPOINTS.inboxAct:
-        return handlers.inboxAct(payload as never);
-      case ENDPOINTS.storyMap:
-        return handlers.storyMap(payload as never);
-      case ENDPOINTS.writingDesk:
-        return handlers.writingDesk(payload as never);
-      case ENDPOINTS.intakeStage:
-        return handlers.intakeStage(payload as never);
-      case ENDPOINTS.intakeStageImage:
-        return handlers.intakeStageImage(payload as never);
-      case ENDPOINTS.chapterDossier:
-        return handlers.chapterDossier(payload as never);
-      case ENDPOINTS.chapterWorkspace:
-        return handlers.chapterWorkspace(payload as never);
-      case ENDPOINTS.chapterStageEdit:
-        return handlers.chapterStageEdit(payload as never);
-      case ENDPOINTS.presetsList:
-        return handlers.presetsList(payload as never);
-      case ENDPOINTS.presetsSelect:
-        return handlers.presetsSelect(payload as never);
-      case ENDPOINTS.atlasView:
-        return handlers.atlasView(payload as never);
-      case ENDPOINTS.atlasAnnotationRequest:
-        return handlers.atlasAnnotationRequest(payload as never);
-      default:
-        return { ok: false, error: { code: 'internal', message: `unknown endpoint: ${endpoint}`, details: {} } };
+    // 分发表(与 ENDPOINTS 一一对应; 新端点 = 表加一行, 不再手写 switch)。
+    const routes: Record<string, (payload: never) => Promise<RpcResult<unknown>>> = {
+      [ENDPOINTS.watchState]: (p) => handlers.watchState(p),
+      [ENDPOINTS.inboxList]: (p) => handlers.inboxList(p),
+      [ENDPOINTS.inboxAct]: (p) => handlers.inboxAct(p),
+      [ENDPOINTS.storyMap]: (p) => handlers.storyMap(p),
+      [ENDPOINTS.writingDesk]: (p) => handlers.writingDesk(p),
+      [ENDPOINTS.intakeStage]: (p) => handlers.intakeStage(p),
+      [ENDPOINTS.intakeStageImage]: (p) => handlers.intakeStageImage(p),
+      [ENDPOINTS.chapterDossier]: (p) => handlers.chapterDossier(p),
+      [ENDPOINTS.chapterWorkspace]: (p) => handlers.chapterWorkspace(p),
+      [ENDPOINTS.chapterStageEdit]: (p) => handlers.chapterStageEdit(p),
+      [ENDPOINTS.presetsList]: (p) => handlers.presetsList(p),
+      [ENDPOINTS.presetsSelect]: (p) => handlers.presetsSelect(p),
+      [ENDPOINTS.atlasView]: (p) => handlers.atlasView(p),
+      [ENDPOINTS.atlasAnnotationRequest]: (p) => handlers.atlasAnnotationRequest(p),
+    };
+    const route = routes[endpoint];
+    if (route === undefined) {
+      return { ok: false, error: { code: 'internal', message: `unknown endpoint: ${endpoint}`, details: {} } };
     }
+    return route(payload as never);
   };
   const disposer = connection.rpc.handle(RPC_CHANNEL, handler, { authority: 'loopback' });
   ctx.effect(() => () => {

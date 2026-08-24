@@ -18,6 +18,7 @@ import {
   type ChapterWorkspaceValue,
   type NovelcraftHostService,
 } from '../src/index.js';
+import { makeHostUi } from './host-ui.js';
 
 interface TestEnv {
   ctx: Context;
@@ -37,6 +38,7 @@ function setup(overrides: {
       resolve: async (sessionId) => (sessionId === 's1' ? { book: '测试书', root } : undefined),
       resolveFromPath: (p) => (p.startsWith(root) ? { book: '测试书', root } : undefined),
     },
+    ui: makeHostUi(),
     ...overrides.service,
   };
   ctx.provide('novelcraft', service);
