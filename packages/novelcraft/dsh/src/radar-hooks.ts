@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
 import { validateInitializedVault } from '@novelcraft/vault';
 import { pushSignalsChanged } from './push.js';
+import { fireRagHook } from './rag-hooks.js';
 
 /** 事件→雷达映射(§11 唤醒条件 2: 事件触发)。 */
 export const EVENT_RADAR_MAP = {
@@ -21,6 +22,41 @@ export const EVENT_RADAR_MAP = {
   /** 正文候选生成后: 写作面 */
   generate: ['writing'],
 } as const satisfies Record<string, readonly assistant.RadarKind[]>;
+
+/** 变更事件键(EVENT_RADAR_MAP 的键)。 */
+export type MutationEvent = keyof typeof EVENT_RADAR_MAP;
+
+/** 变更后副作用声明: 传 radars 即雷达对账+信号推送; push 为无雷达的纯推送; rag 同步词法索引。 */
+export interface AfterMutationOptions {
+  /** 触发哪些变更事件的雷达面(事件键展开为 EVENT_RADAR_MAP 的雷达列表)。 */
+  radars?: readonly MutationEvent[];
+  /** 同步 RAG 词法派生索引(向量写入仍由显式 novelcraft_rag_embed 独占)。 */
+  rag?: boolean;
+  /** 仅推送信号变化(收件箱已因记录决定/扫描而变化, 无需再跑雷达)。 */
+  push?: boolean;
+}
+
+/**
+ * 变更后副作用唯一入口(§11 事件驱动): 收敛「雷达对账 + 信号推送 + RAG 索引同步」
+ * 三连扇出, 变更类工具不得再各自手调 fireRadarHooks/fireRagHook/pushSignalsChanged
+ * (漏调一处 = 信号/索引静默过期)。顺序与既有工具一致: 先雷达(含推送)后 RAG。
+ * 全部尽力而为: 任何异常不外抛, 不破坏主工具调用链(同 fireRadarHooks 纪律)。
+ */
+export async function afterMutation(ctx: Context, root: string, opts: AfterMutationOptions): Promise<void> {
+  if (opts.radars !== undefined && opts.radars.length > 0) {
+    // fireRadarHooks 内部在扫描后推送信号变化(含吞错)。
+    await fireRadarHooks(ctx, root, opts.radars.flatMap((event) => [...EVENT_RADAR_MAP[event]]));
+  } else if (opts.push === true) {
+    try {
+      pushSignalsChanged(ctx, { root });
+    } catch {
+      // 推送通道缺省(无 client/push 补丁)时静默。
+    }
+  }
+  if (opts.rag === true) {
+    fireRagHook(ctx, root);
+  }
+}
 
 /** 跑一组雷达并推送信号变化; 非已初始化 vault 或扫描异常时跳过(返回 undefined), 推送仍尝试。 */
 export async function fireRadarHooks(

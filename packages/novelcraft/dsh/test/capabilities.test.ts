@@ -8,7 +8,7 @@ function fakeService(): NovelCraftService {
   const service: Record<string, unknown> = { marker: 'bound' };
   const methods = [
     'viewMapAtlas', 'inbox', 'ragSearch', 'chapterCurrent', 'chapterHistory', 'chapterDiff', 'chapterReview',
-    'runStep', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
+    'runStep', 'actOnSignal', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
     'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'ingestTextFile',
     'reviewChapter', 'reviseChapter', 'rejectChapterFinding', 'rejectChapterCandidate', 'scanHealth',
     'radarSweep', 'refreshIndex', 'ragSync', 'ragEmbed', 'applyAtlasAnnotationQueue', 'adoptGuarded',

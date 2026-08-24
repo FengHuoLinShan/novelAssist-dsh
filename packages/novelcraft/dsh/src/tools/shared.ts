@@ -1,5 +1,6 @@
 import { HarnessError, type ContentBlock } from '@deepseek-ai/dsh-llm';
 import { realpathSync } from 'node:fs';
+import { llmErrorCode } from '@novelcraft/llm-step';
 import * as store from '@novelcraft/store';
 import * as writing from '@novelcraft/writing';
 import { GateDeniedError, GateRequiredError } from '../approval/gate.js';
@@ -40,17 +41,8 @@ export function toolError(
   return new HarnessError(fallback.message, fallback.code, { cause: err });
 }
 
-const LLM_ERROR_CODES: Record<string, string> = {
-  spec_not_found: 'LLM_SPEC_NOT_FOUND',
-  budget_exceeded: 'LLM_BUDGET_EXCEEDED',
-  timeout: 'LLM_TIMEOUT',
-  schema_violation: 'LLM_SCHEMA_VIOLATION',
-  provider_retryable: 'LLM_PROVIDER_RETRYABLE',
-  provider_fatal: 'LLM_PROVIDER_FATAL',
-};
-
 export function llmError(kind: string | undefined, message: string | undefined): HarnessError {
-  return new HarnessError(message || '模型步骤失败', LLM_ERROR_CODES[kind ?? ''] ?? 'LLM_FAILED');
+  return new HarnessError(message || '模型步骤失败', llmErrorCode(kind));
 }
 
 /** N34 工作区隔离错误。 */

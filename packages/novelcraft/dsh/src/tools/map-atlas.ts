@@ -1,36 +1,17 @@
-import type { Agent } from '@deepseek-ai/dsh-agent';
+// @novelcraft/dsh · 地图册工具(规划/视图/上传/生命周期/标注队列/prompt 更新)。
+// 一律经 novelcraftToolFactory 定义(N34 隔离/toolError 映射)。
+// 有意排除 afterMutation: atlas 页不在 radar/rag 语料面(§11 事件映射无 atlas 事件),
+// 维持现状零雷达零索引副作用; 若未来纳入语料, 在 EVENT_RADAR_MAP 加事件键即可。
+import type { Context } from '@deepseek-ai/cordis';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { NovelCraftService } from '../service.js';
-import { render, resolveBoundRoot, sessionIdOf, toolError } from './shared.js';
+import { novelcraftToolFactory } from './define.js';
 
-interface RootArgs { root: string }
-interface MapAtlasPlanArgs extends RootArgs {
-  style_note?: string;
-  include_working_drafts?: boolean;
-  include_interiors?: boolean;
-  full_rebuild?: boolean;
-}
-interface MapAtlasViewArgs extends RootArgs { run_id?: string }
-interface MapAtlasUploadArgs extends RootArgs { receipt_id: string }
-interface MapAtlasReviewArgs extends RootArgs {
-  page_ref?: string;
-  node_ref?: string;
-  action: string;
-  confirm_conflicts?: boolean;
-  expected_content_hash?: string;
-  note?: string;
-}
-interface MapAtlasUpdatePromptArgs extends RootArgs {
-  page_ref: string;
-  prompt: string;
-  expected_content_hash?: string;
-}
-
-export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[] {
+export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
+  const tool = novelcraftToolFactory(ctx, service);
   return [
-    defineTool({
+    tool({
       name: 'novelcraft_map_atlas_plan',
       description:
         '地图册规划: 编译 canonical 证据 → 空间事实 → LLM 产出 ≤20 页 AtlasPlan 并校验, ' +
@@ -44,10 +25,9 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
         full_rebuild: { type: 'boolean', description: '忽略现有地图册, 按 initial 规划' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           run_id: { type: 'string', required: true },
           status: { type: 'string', required: true },
@@ -55,57 +35,49 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
           error_code: { type: 'string', required: true },
           evidence_summary: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
       timeoutMs: 3_600_000,
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as MapAtlasPlanArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.propose.planMapAtlas(root, {
-            run_kind: args.full_rebuild ? 'initial' : 'update',
-            style_note: args.style_note,
-            include_working_drafts: args.include_working_drafts,
-            include_interiors: args.include_interiors,
-            full_rebuild: args.full_rebuild,
-          }, exec.signal, undefined, exec.agent);
-          if (result.run.status === 'failed') {
-            throw new HarnessError(result.run.error_message || '地图册规划失败', 'MAP_ATLAS_PLAN_FAILED');
-          }
-          const evidence = (result.run.spatial_evidence ?? {}) as {
-            supported?: unknown[];
-            visual_fill?: unknown[];
-            conflicts?: unknown[];
-            degraded?: boolean;
-            reused?: boolean;
-          };
-          const evidenceSummary = JSON.stringify({
-            supported: evidence.supported?.length ?? 0,
-            visual_fill: evidence.visual_fill?.length ?? 0,
-            conflicts: evidence.conflicts?.length ?? 0,
-            degraded: evidence.degraded === true,
-            reused: evidence.reused === true,
-          });
-          return {
-            ok: true,
-            run_id: result.run.id,
-            status: result.run.status,
-            planned_page_count: result.run.planned_page_count,
-            error_code: result.run.error_code ?? '',
-            evidence_summary: evidenceSummary,
-            message: result.run.planned_page_count === 0
-              ? '无变化(missing/changed/new 均空), 未调用 LLM。'
-              : `已规划 ${result.run.planned_page_count} 页候选(prompt_only); 上传图片后走 novelcraft_map_atlas_review adopt。`,
-          };
-        } catch (err) {
-          throw toolError(err);
+      async execute(args, run) {
+        const result = await run.service.capabilities.propose.planMapAtlas(run.root, {
+          run_kind: args.full_rebuild ? 'initial' : 'update',
+          style_note: args.style_note,
+          include_working_drafts: args.include_working_drafts,
+          include_interiors: args.include_interiors,
+          full_rebuild: args.full_rebuild,
+        }, run.signal, undefined, run.agent);
+        if (result.run.status === 'failed') {
+          throw new HarnessError(result.run.error_message || '地图册规划失败', 'MAP_ATLAS_PLAN_FAILED');
         }
+        const evidence = (result.run.spatial_evidence ?? {}) as {
+          supported?: unknown[];
+          visual_fill?: unknown[];
+          conflicts?: unknown[];
+          degraded?: boolean;
+          reused?: boolean;
+        };
+        const evidenceSummary = JSON.stringify({
+          supported: evidence.supported?.length ?? 0,
+          visual_fill: evidence.visual_fill?.length ?? 0,
+          conflicts: evidence.conflicts?.length ?? 0,
+          degraded: evidence.degraded === true,
+          reused: evidence.reused === true,
+        });
+        return {
+          ok: true,
+          run_id: result.run.id,
+          status: result.run.status,
+          planned_page_count: result.run.planned_page_count,
+          error_code: result.run.error_code ?? '',
+          evidence_summary: evidenceSummary,
+          message: result.run.planned_page_count === 0
+            ? '无变化(missing/changed/new 均空), 未调用 LLM。'
+            : `已规划 ${result.run.planned_page_count} 页候选(prompt_only); 上传图片后走 novelcraft_map_atlas_review adopt。`,
+        };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_map_atlas_view',
       description:
         '地图册只读视图: 已采用树(图片页/空页占位/image_missing 派生位) + 候选(pending nodes/pages) + 指定或最近 run 摘要。' +
@@ -115,10 +87,9 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
         run_id: { type: 'string', description: '指定 run(缺省 = 最近一次)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           adopted_nodes: { type: 'integer', required: true },
           adopted_pages: { type: 'integer', required: true },
@@ -127,32 +98,24 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
           tree: { type: 'string', required: true },
           run: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as MapAtlasViewArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const { tree, run } = service.capabilities.read.viewMapAtlas(root, args.run_id);
-          return {
-            ok: true,
-            adopted_nodes: tree.nodes.length,
-            adopted_pages: tree.pages.length,
-            pending_nodes: tree.pendingNodes.length,
-            pending_pages: tree.pendingPages.length,
-            tree: JSON.stringify(tree),
-            run: run ? JSON.stringify(run) : '',
-            message: `已采用 ${tree.nodes.length} 节点/${tree.pages.length} 页; 候选 ${tree.pendingNodes.length} 节点/${tree.pendingPages.length} 页。`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const { tree, run: atlasRun } = run.service.capabilities.read.viewMapAtlas(run.root, args.run_id);
+        return {
+          ok: true,
+          adopted_nodes: tree.nodes.length,
+          adopted_pages: tree.pages.length,
+          pending_nodes: tree.pendingNodes.length,
+          pending_pages: tree.pendingPages.length,
+          tree: JSON.stringify(tree),
+          run: atlasRun ? JSON.stringify(atlasRun) : '',
+          message: `已采用 ${tree.nodes.length} 节点/${tree.pages.length} 页; 候选 ${tree.pendingNodes.length} 节点/${tree.pendingPages.length} 页。`,
+        };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_map_atlas_upload',
       description:
         '消费用户在当前地图册选择图片后获得的会话收据(PNG/JPEG ≤50MB, 16~8192px):' +
@@ -163,43 +126,34 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
         receipt_id: { type: 'string', required: true, description: '当前会话地图册生成的图片收据 ID' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           page_id: { type: 'string', required: true },
           node_ref: { type: 'string', required: true },
           generation_status: { type: 'string', required: true },
           image: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as MapAtlasUploadArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = service.capabilities.propose.importAtlasImage(root, {
-            receiptId: args.receipt_id,
-            sessionId: sessionIdOf(exec),
-          });
-          return {
-            ok: true,
-            page_id: result.page.id,
-            node_ref: result.page.node_ref,
-            generation_status: result.page.generation_status,
-            image: result.page.image?.file ?? '',
-            message: `已导入候选图 ${result.page.image?.file ?? ''}(页 ${result.page.id}); 采用请走 novelcraft_map_atlas_review。`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const result = run.service.capabilities.propose.importAtlasImage(run.root, {
+          receiptId: args.receipt_id,
+          sessionId: run.sessionId(),
+        });
+        return {
+          ok: true,
+          page_id: result.page.id,
+          node_ref: result.page.node_ref,
+          generation_status: result.page.generation_status,
+          image: result.page.image?.file ?? '',
+          message: `已导入候选图 ${result.page.image?.file ?? ''}(页 ${result.page.id}); 采用请走 novelcraft_map_atlas_review。`,
+        };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_map_atlas_review',
       description:
         '地图页/节点生命周期: adopt(采用候选页, 需 review_ready+有图) / adopt_placeholder(采用空页占位节点) / ' +
@@ -216,36 +170,27 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
         note: { type: 'string', description: 'review_note' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           action: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as MapAtlasReviewArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.adoptGuarded.reviewMapAtlas(
-            exec.agent as Agent | undefined,
-            root,
-            { pageRef: args.page_ref, nodeRef: args.node_ref },
-            args.action as 'adopt' | 'adopt_placeholder' | 'reject' | 'archive' | 'restore',
-            { confirmConflicts: args.confirm_conflicts, expectedContentHash: args.expected_content_hash, note: args.note },
-          );
-          return { ok: true, action: args.action, message: result.detail };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const result = await run.service.capabilities.adoptGuarded.reviewMapAtlas(
+          run.agent,
+          run.root,
+          { pageRef: args.page_ref, nodeRef: args.node_ref },
+          args.action,
+          { confirmConflicts: args.confirm_conflicts, expectedContentHash: args.expected_content_hash, note: args.note },
+        );
+        return { ok: true, action: args.action, message: result.detail };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_map_atlas_annotation',
       description:
         '应用地图页文字标注: 只消费 .assistant/atlas/annotation-queue/ 队列文件(UI 已落盘的精确' +
@@ -257,43 +202,34 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           status: { type: 'string', enum: ['complete', 'partial', 'no_change'], required: true },
           applied: { type: 'integer', required: true },
           queue_files: { type: 'integer', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as RootArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.propose.authorEdit.annotations(root);
-          const status: 'complete' | 'partial' | 'no_change' = result.failed > 0
-            ? 'partial'
-            : result.files === 0 ? 'no_change' : 'complete';
-          return {
-            ok: true,
-            status,
-            applied: result.applied,
-            queue_files: result.files,
-            message: result.files === 0
-              ? '标注队列为空(.assistant/atlas/annotation-queue/ 无文件)。'
-              : `已消费 ${result.files} 个队列文件, 应用 ${result.applied} 条标注${result.failed > 0 ? `(失败 ${result.failed}: ${result.errors.join('; ')})` : ''}。`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(_args, run) {
+        const result = await run.service.capabilities.propose.authorEdit.annotations(run.root);
+        const status: 'complete' | 'partial' | 'no_change' = result.failed > 0
+          ? 'partial'
+          : result.files === 0 ? 'no_change' : 'complete';
+        return {
+          ok: true,
+          status,
+          applied: result.applied,
+          queue_files: result.files,
+          message: result.files === 0
+            ? '标注队列为空(.assistant/atlas/annotation-queue/ 无文件)。'
+            : `已消费 ${result.files} 个队列文件, 应用 ${result.applied} 条标注${result.failed > 0 ? `(失败 ${result.failed}: ${result.errors.join('; ')})` : ''}。`,
+        };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_map_atlas_update_prompt',
       description:
         '更新 prompt_only 候选页的外部生图参考文本(仅 prompt_only 候选可改; expected_content_hash 做 CAS)。' +
@@ -305,32 +241,23 @@ export function buildMapAtlasTools(service: NovelCraftService): ToolDefinition[]
         expected_content_hash: { type: 'string', description: 'CAS: 期望的页 content_hash' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           page_id: { type: 'string', required: true },
           content_hash: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as MapAtlasUpdatePromptArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const page = await service.capabilities.propose.updateAtlasPrompt(
-            root,
-            args.page_ref,
-            args.prompt,
-            args.expected_content_hash,
-          );
-          return { ok: true, page_id: page.id, content_hash: page.content_hash, message: `已更新页 ${page.id} 的 prompt。` };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const page = await run.service.capabilities.propose.updateAtlasPrompt(
+          run.root,
+          args.page_ref,
+          args.prompt,
+          args.expected_content_hash,
+        );
+        return { ok: true, page_id: page.id, content_hash: page.content_hash, message: `已更新页 ${page.id} 的 prompt。` };
       },
     }),
   ];

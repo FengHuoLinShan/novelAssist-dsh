@@ -28,6 +28,7 @@ import type { ResolveExecutionProfileOptions } from './llm/execution-profile.js'
 import { optionalBgeLoader } from './optional-bge.js';
 import { NovelcraftCache } from './storage/domain.js';
 import { registerNovelcraftTools } from './tools.js';
+import { pushSignalsChanged } from './push.js';
 import { SessionVaultBinder } from './vault/binding.js';
 
 declare module '@deepseek-ai/cordis' {
@@ -578,6 +579,35 @@ export class NovelCraftService extends Service {
   /** 便捷: 收件箱视图(新鲜信号, 风险前置)。 */
   inbox(root: string, currentContentHash?: string): assistant.Signal[] {
     return assistant.inboxView(root, currentContentHash);
+  }
+
+  /** 收件箱四动词(§9): 记录决定 + 尽力而为的信号变化推送(ADR-0018 通道缺省时静默)。
+   *  资产写入另走采用/微工作流工具; 本方法不写 canonical 资产。 */
+  actOnSignal(
+    root: string,
+    signalId: string,
+    action: assistant.InboxAction,
+    opts?: { reason?: string; modifiedTitle?: string; modifiedProposedAction?: string },
+  ): assistant.ActionDescriptor {
+    const descriptor = assistant.act(root, {
+      signalId,
+      action,
+      ...(opts?.reason ? { reason: opts.reason } : {}),
+      ...(action === 'modify'
+        ? {
+            modified: {
+              ...(opts?.modifiedTitle ? { title: opts.modifiedTitle } : {}),
+              ...(opts?.modifiedProposedAction ? { proposed_action: opts.modifiedProposedAction } : {}),
+            },
+          }
+        : {}),
+    });
+    try {
+      pushSignalsChanged(this.ctx, { root });
+    } catch {
+      // 推送是尽力而为副作用(同 afterMutation 纪律); 决定已落盘不受影响。
+    }
+    return descriptor;
   }
 
   /** 便捷: 深度导入六阶段(范围授权 + adopt/2b 独立审批门, trace 落 .assistant/import-trace.jsonl)。

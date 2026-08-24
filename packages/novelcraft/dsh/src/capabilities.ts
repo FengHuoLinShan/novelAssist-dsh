@@ -23,6 +23,7 @@ export interface NovelCraftAuthorEditCapabilities {
 
 export interface NovelCraftProposeCapabilities {
   runStep: Bound<'runStep'>;
+  actOnSignal: Bound<'actOnSignal'>;
   planMapAtlas: Bound<'planMapAtlas'>;
   importAtlasImage: Bound<'importAtlasImage'>;
   updateAtlasPrompt: Bound<'updateAtlasPrompt'>;
@@ -79,6 +80,7 @@ export function createNovelCraftCapabilities(service: NovelCraftService): NovelC
     }),
     propose: Object.freeze({
       runStep: bind(service, 'runStep'),
+      actOnSignal: bind(service, 'actOnSignal'),
       planMapAtlas: bind(service, 'planMapAtlas'),
       importAtlasImage: bind(service, 'importAtlasImage'),
       updateAtlasPrompt: bind(service, 'updateAtlasPrompt'),

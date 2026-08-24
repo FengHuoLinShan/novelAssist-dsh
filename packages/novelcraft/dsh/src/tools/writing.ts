@@ -1,46 +1,12 @@
+// @novelcraft/dsh · 写作域工具(计划台提案/生成、单章审查闭环、单章版本工作流)。
+// 一律经 novelcraftToolFactory 定义(N34 隔离/toolError 映射/afterMutation 副作用纪律)。
 import type { Context } from '@deepseek-ai/cordis';
-import type { Agent } from '@deepseek-ai/dsh-agent';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { defineTool } from '@deepseek-ai/dsh-tools';
 import * as writing from '@novelcraft/writing';
-import { EVENT_RADAR_MAP, fireRadarHooks } from '../radar-hooks.js';
-import { fireRagHook } from '../rag-hooks.js';
 import type { NovelCraftService } from '../service.js';
-import { llmError, render, resolveBoundRoot, sessionIdOf, toolError } from './shared.js';
-
-interface ProposeNextChapterArgs {
-  root: string;
-  chapter: number;
-}
-
-interface GenerateNextChapterArgs extends ProposeNextChapterArgs {
-  proposal_title: string;
-  premise?: string;
-}
-
-interface ChapterReviewArgs {
-  root: string;
-  action: string;
-  target: string;
-  chapter: number;
-  ref?: string;
-  review_id?: string;
-  finding_id?: string;
-  finding_ids?: string[];
-  reason?: string;
-  expected_content_hash?: string;
-}
-
-interface ChapterVersionArgs {
-  root: string;
-  action: string;
-  chapter: number;
-  receipt_id?: string;
-  commit?: string;
-  compare_commit?: string;
-  expected_content_hash?: string;
-}
+import { novelcraftToolFactory } from './define.js';
+import { llmError } from './shared.js';
 
 function reviewFindingCards(findings: readonly writing.ReviewFinding[]): Array<Record<string, string>> {
   return findings.map((finding) => ({
@@ -53,8 +19,9 @@ function reviewFindingCards(findings: readonly writing.ReviewFinding[]): Array<R
 }
 
 export function buildWritingTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
+  const tool = novelcraftToolFactory(ctx, service);
   return [
-    defineTool({
+    tool({
       name: 'novelcraft_propose_next_chapter',
       description:
         '计划台续写提案: 基于总纲/剧情线/上一章结尾, 生成下一章 2–3 条续写方向(各带依据/成本/风险)。' +
@@ -64,46 +31,37 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         chapter: { type: 'integer', required: true, description: '当前最后一章序号(1 起); 提案其下一章' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           next_chapter: { type: 'integer', required: true },
           proposals: { type: 'array', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
       timeoutMs: 300_000,
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as ProposeNextChapterArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.propose.proposeNextChapter(root, args.chapter, exec.signal);
-          if (!result.ok || !result.proposal) {
-            throw llmError(result.error?.kind, result.error?.message ?? '提案失败');
-          }
-          return {
-            ok: true,
-            next_chapter: result.proposal.next_chapter,
-            proposals: result.proposal.proposals.map((proposal) => ({
-              title: proposal.title,
-              premise: proposal.premise,
-              basis: proposal.basis ?? [],
-              cost: proposal.cost ?? '',
-              risk: proposal.risk ?? '',
-            })),
-            message: `已生成 ${result.proposal.proposals.length} 条下一章方案(选定后可按需 writing_generate 出正文候选)。`,
-          };
-        } catch (err) {
-          throw toolError(err);
+      async execute(args, run) {
+        const result = await run.service.capabilities.propose.proposeNextChapter(run.root, args.chapter, run.signal);
+        if (!result.ok || !result.proposal) {
+          throw llmError(result.error?.kind, result.error?.message ?? '提案失败');
         }
+        return {
+          ok: true,
+          next_chapter: result.proposal.next_chapter,
+          proposals: result.proposal.proposals.map((proposal) => ({
+            title: proposal.title,
+            premise: proposal.premise,
+            basis: proposal.basis ?? [],
+            cost: proposal.cost ?? '',
+            risk: proposal.risk ?? '',
+          })),
+          message: `已生成 ${result.proposal.proposals.length} 条下一章方案(选定后可按需 writing_generate 出正文候选)。`,
+        };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_generate_next_chapter',
       description:
         '续写提案第二阶段: 按选定方向生成下一章正文候选(writing_generate, 续写模式)。' +
@@ -115,40 +73,31 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         premise: { type: 'string', description: '选定提案前提(可空)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           file: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
       timeoutMs: 300_000,
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as GenerateNextChapterArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.propose.generateNextChapter(root, args.chapter, {
-            proposalTitle: args.proposal_title,
-            ...(args.premise ? { premise: args.premise } : {}),
-          }, exec.signal);
-          if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '生成失败');
-          await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
-          return {
-            ok: true,
-            file: result.file ?? '',
-            message: `已生成第 ${args.chapter + 1} 章候选(chapters/pending); 采用请走 novelcraft_store_adopt。`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const result = await run.service.capabilities.propose.generateNextChapter(run.root, args.chapter, {
+          proposalTitle: args.proposal_title,
+          ...(args.premise ? { premise: args.premise } : {}),
+        }, run.signal);
+        if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '生成失败');
+        await run.afterMutation({ radars: ['generate'] });
+        return {
+          ok: true,
+          file: result.file ?? '',
+          message: `已生成第 ${args.chapter + 1} 章候选(chapters/pending); 采用请走 novelcraft_store_adopt。`,
+        };
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_chapter_review',
       description:
         '单章审查闭环。review 可审 current 或 candidate；revise 只接受 fresh current review 的 finding_ids 并产新候选；' +
@@ -167,34 +116,29 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         expected_content_hash: { type: 'string', description: 'adopt 的候选 CAS hash' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            ok: { type: 'boolean', required: true },
-            action: { type: 'string', required: true },
-            target: { type: 'string', required: true },
-            chapter: { type: 'integer', required: true },
-            ref: { type: 'string', required: true },
-            review_id: { type: 'string', required: true },
-            verdict: { type: 'string', required: true },
-            content_hash: { type: 'string', required: true },
-            findings: { type: 'array', required: true },
-            file: { type: 'string', required: true },
-            commit: { type: 'string', required: true },
-            message: { type: 'string', required: true },
-          },
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          action: { type: 'string', required: true },
+          target: { type: 'string', required: true },
+          chapter: { type: 'integer', required: true },
+          ref: { type: 'string', required: true },
+          review_id: { type: 'string', required: true },
+          verdict: { type: 'string', required: true },
+          content_hash: { type: 'string', required: true },
+          findings: { type: 'array', required: true },
+          file: { type: 'string', required: true },
+          commit: { type: 'string', required: true },
+          message: { type: 'string', required: true },
         },
-        render,
       },
       timeoutMs: 1_800_000,
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as ChapterReviewArgs;
-        const target = args.target === 'candidate' ? 'candidate' : args.target === 'current' ? 'current' : null;
-        if (!target) throw new HarnessError('target 非法', 'INVALID_ARGUMENT');
+      async execute(args, run) {
+        const target = args.target;
         const ref = args.ref ?? String(args.chapter).padStart(3, '0');
         const blank = {
-          ok: true,
+          ok: true as const,
           action: args.action,
           target,
           chapter: args.chapter,
@@ -206,97 +150,91 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           file: '',
           commit: '',
         };
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          if (args.action === 'inspect') {
-            const review = service.capabilities.read.chapterReview(root, args.chapter, target, ref);
-            return review
-              ? {
-                  ...blank,
-                  review_id: review.review_id,
-                  verdict: review.verdict ?? '',
-                  content_hash: review.target_content_hash ?? review.content_hash,
-                  findings: reviewFindingCards(review.findings),
-                  message: `第 ${args.chapter} 章 ${target} 最新审查: ${review.verdict ?? '未裁定'}。`,
-                }
-              : { ...blank, message: `第 ${args.chapter} 章 ${target} 尚无审查。` };
-          }
-          if (args.action === 'review') {
-            const result = await service.capabilities.propose.reviewChapter(
-              root,
-              args.chapter,
-              target,
-              target === 'candidate' ? ref : undefined,
-              exec.signal,
-            );
-            if (!result.ok || !result.review) throw llmError(result.error?.kind, result.error?.message ?? '审查失败');
-            return {
-              ...blank,
-              review_id: result.review.review_id,
-              verdict: result.review.verdict ?? '',
-              content_hash: result.review.target_content_hash ?? result.review.content_hash,
-              findings: reviewFindingCards(result.review.findings),
-              message: `第 ${args.chapter} 章 ${target} 审查完成: ${result.review.verdict ?? '未裁定'}，${result.review.findings.length} 条 finding。`,
-            };
-          }
-          if (args.action === 'revise') {
-            if (target !== 'current' || !Array.isArray(args.finding_ids) || args.finding_ids.length === 0) {
-              throw new HarnessError('revise 只接受 current + 非空 finding_ids', 'INVALID_ARGUMENT');
-            }
-            const result = await service.capabilities.propose.reviseChapter(root, args.chapter, args.finding_ids, exec.signal);
-            if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '返修失败');
-            await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
-            return { ...blank, file: result.file ?? '', message: `第 ${args.chapter} 章返修候选已生成；采用前必须独立审查 candidate。` };
-          }
-          if (args.action === 'reject_finding') {
-            if (target !== 'current' || !args.review_id || !args.finding_id || !args.reason) {
-              throw new HarnessError('reject_finding 缺少 current/review_id/finding_id/reason', 'INVALID_ARGUMENT');
-            }
-            await service.capabilities.propose.rejectChapterFinding(
-              root, args.chapter, args.review_id, args.finding_id, args.reason,
-            );
-            return { ...blank, review_id: args.review_id, message: `已打回 finding ${args.finding_id} 并记录理由。` };
-          }
-          if (args.action === 'reject') {
-            if (target !== 'candidate' || !args.reason || !args.expected_content_hash) {
-              throw new HarnessError('reject 缺少 candidate/reason/expected_content_hash', 'INVALID_ARGUMENT');
-            }
-            const result = await service.capabilities.propose.rejectChapterCandidate(
-              root, args.chapter, ref, args.expected_content_hash, args.reason,
-            );
-            return {
-              ...blank,
-              content_hash: args.expected_content_hash,
-              commit: result.commit,
-              message: `第 ${args.chapter} 章候选已拒绝并释放待处理槽(commit ${result.commit.slice(0, 12)})。`,
-            };
-          }
-          if (args.action === 'adopt') {
-            if (target !== 'candidate') throw new HarnessError('adopt 只接受 candidate', 'INVALID_ARGUMENT');
-            const result = await service.capabilities.adoptGuarded.storeAdopt(
-              exec.agent as Agent | undefined,
-              root,
-              'chapter_candidate',
-              ref,
-              args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {},
-              `采用第 ${args.chapter} 章候选 ${ref}`,
-            );
-            await fireRadarHooks(ctx, root, [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]);
-            fireRagHook(ctx, root);
-            return {
-              ...blank,
-              commit: result.commit,
-              message: `第 ${args.chapter} 章候选已采用(commit ${result.commit.slice(0, 12)})。`,
-            };
-          }
-          throw new HarnessError('action 非法', 'INVALID_ARGUMENT');
-        } catch (err) {
-          throw toolError(err);
+        if (args.action === 'inspect') {
+          const review = run.service.capabilities.read.chapterReview(run.root, args.chapter, target, ref);
+          return review
+            ? {
+                ...blank,
+                review_id: review.review_id,
+                verdict: review.verdict ?? '',
+                content_hash: review.target_content_hash ?? review.content_hash,
+                findings: reviewFindingCards(review.findings),
+                message: `第 ${args.chapter} 章 ${target} 最新审查: ${review.verdict ?? '未裁定'}。`,
+              }
+            : { ...blank, message: `第 ${args.chapter} 章 ${target} 尚无审查。` };
         }
+        if (args.action === 'review') {
+          const result = await run.service.capabilities.propose.reviewChapter(
+            run.root,
+            args.chapter,
+            target,
+            target === 'candidate' ? ref : undefined,
+            run.signal,
+          );
+          if (!result.ok || !result.review) throw llmError(result.error?.kind, result.error?.message ?? '审查失败');
+          return {
+            ...blank,
+            review_id: result.review.review_id,
+            verdict: result.review.verdict ?? '',
+            content_hash: result.review.target_content_hash ?? result.review.content_hash,
+            findings: reviewFindingCards(result.review.findings),
+            message: `第 ${args.chapter} 章 ${target} 审查完成: ${result.review.verdict ?? '未裁定'}，${result.review.findings.length} 条 finding。`,
+          };
+        }
+        if (args.action === 'revise') {
+          if (target !== 'current' || !Array.isArray(args.finding_ids) || args.finding_ids.length === 0) {
+            throw new HarnessError('revise 只接受 current + 非空 finding_ids', 'INVALID_ARGUMENT');
+          }
+          const result = await run.service.capabilities.propose.reviseChapter(run.root, args.chapter, args.finding_ids, run.signal);
+          if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '返修失败');
+          await run.afterMutation({ radars: ['generate'] });
+          return { ...blank, file: result.file ?? '', message: `第 ${args.chapter} 章返修候选已生成；采用前必须独立审查 candidate。` };
+        }
+        if (args.action === 'reject_finding') {
+          if (target !== 'current' || !args.review_id || !args.finding_id || !args.reason) {
+            throw new HarnessError('reject_finding 缺少 current/review_id/finding_id/reason', 'INVALID_ARGUMENT');
+          }
+          await run.service.capabilities.propose.rejectChapterFinding(
+            run.root, args.chapter, args.review_id, args.finding_id, args.reason,
+          );
+          return { ...blank, review_id: args.review_id, message: `已打回 finding ${args.finding_id} 并记录理由。` };
+        }
+        if (args.action === 'reject') {
+          if (target !== 'candidate' || !args.reason || !args.expected_content_hash) {
+            throw new HarnessError('reject 缺少 candidate/reason/expected_content_hash', 'INVALID_ARGUMENT');
+          }
+          const result = await run.service.capabilities.propose.rejectChapterCandidate(
+            run.root, args.chapter, ref, args.expected_content_hash, args.reason,
+          );
+          return {
+            ...blank,
+            content_hash: args.expected_content_hash,
+            commit: result.commit,
+            message: `第 ${args.chapter} 章候选已拒绝并释放待处理槽(commit ${result.commit.slice(0, 12)})。`,
+          };
+        }
+        if (args.action === 'adopt') {
+          if (target !== 'candidate') throw new HarnessError('adopt 只接受 candidate', 'INVALID_ARGUMENT');
+          const result = await run.service.capabilities.adoptGuarded.storeAdopt(
+            run.agent,
+            run.root,
+            'chapter_candidate',
+            ref,
+            args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {},
+            `采用第 ${args.chapter} 章候选 ${ref}`,
+          );
+          await run.afterMutation({ radars: ['adopt', 'adoptChapterCandidate'], rag: true });
+          return {
+            ...blank,
+            commit: result.commit,
+            message: `第 ${args.chapter} 章候选已采用(commit ${result.commit.slice(0, 12)})。`,
+          };
+        }
+        throw new HarnessError('action 非法', 'INVALID_ARGUMENT');
       },
     }),
 
-    defineTool({
+    tool({
       name: 'novelcraft_chapter_version',
       description:
         '单章正文版本工作流。inspect/history/diff 为只读；save 消费章节页内编辑收据；' +
@@ -311,28 +249,24 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         expected_content_hash: { type: 'string', description: 'restore: 当前正文 CAS hash' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            ok: { type: 'boolean', required: true },
-            action: { type: 'string', required: true },
-            chapter: { type: 'integer', required: true },
-            content_hash: { type: 'string', required: true },
-            commit: { type: 'string', required: true },
-            body: { type: 'string', required: true },
-            history: { type: 'array', required: true },
-            diff: { type: 'string', required: true },
-            truncated: { type: 'boolean', required: true },
-            message: { type: 'string', required: true },
-          },
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          action: { type: 'string', required: true },
+          chapter: { type: 'integer', required: true },
+          content_hash: { type: 'string', required: true },
+          commit: { type: 'string', required: true },
+          body: { type: 'string', required: true },
+          history: { type: 'array', required: true },
+          diff: { type: 'string', required: true },
+          truncated: { type: 'boolean', required: true },
+          message: { type: 'string', required: true },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as ChapterVersionArgs;
+      async execute(args, run) {
         const blank = {
-          ok: true,
+          ok: true as const,
           action: args.action,
           chapter: args.chapter,
           content_hash: '',
@@ -342,96 +276,89 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           diff: '',
           truncated: false,
         };
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          if (args.action === 'inspect') {
-            const current = service.capabilities.read.chapterCurrent(root, args.chapter);
-            return {
-              ...blank,
-              content_hash: current.contentHash,
-              commit: current.head,
-              body: current.body,
-              message: `第 ${args.chapter} 章当前正文已读取(${current.status})。`,
-            };
-          }
-          if (args.action === 'history') {
-            const history = service.capabilities.read.chapterHistory(root, args.chapter).map((entry) => ({
-              commit: entry.commit,
-              authored_at: entry.authoredAt,
-              subject: entry.subject,
-              status: entry.status,
-              title: entry.title ?? '',
-              content_hash: entry.contentHash,
-              declared_hash_valid: entry.declaredHashValid,
-              byte_length: entry.byteLength,
-            }));
-            return {
-              ...blank,
-              history,
-              message: `第 ${args.chapter} 章共有 ${history.length} 条可见 Git 版本。`,
-            };
-          }
-          if (args.action === 'diff') {
-            if (!args.commit) throw new HarnessError('diff 缺少 commit', 'INVALID_ARGUMENT');
-            const diff = service.capabilities.read.chapterDiff(root, args.chapter, args.commit, args.compare_commit);
-            return {
-              ...blank,
-              content_hash: diff.to.contentHash,
-              commit: diff.to.commit,
-              diff: diff.patch,
-              truncated: diff.truncated,
-              message: `已生成第 ${args.chapter} 章版本差异${diff.truncated ? '(展示已限长)' : ''}。`,
-            };
-          }
-          if (args.action === 'save') {
-            if (!args.receipt_id) throw new HarnessError('save 缺少 receipt_id', 'INVALID_ARGUMENT');
-            const result = await service.capabilities.adoptGuarded.saveChapter(
-              exec.agent as Agent | undefined,
-              root,
-              sessionIdOf(exec),
-              args.receipt_id,
-            );
-            if (!result.skipped) {
-              await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
-              fireRagHook(ctx, root);
-            }
-            return {
-              ...blank,
-              content_hash: result.contentHash,
-              commit: result.commit,
-              message: result.skipped
-                ? `第 ${args.chapter} 章内容未变化, 未创建版本。`
-                : `第 ${args.chapter} 章已保存为新版本(commit ${result.commit.slice(0, 12)})。`,
-            };
-          }
-          if (args.action === 'restore') {
-            if (!args.commit || !args.expected_content_hash) {
-              throw new HarnessError('restore 缺少 commit 或 expected_content_hash', 'INVALID_ARGUMENT');
-            }
-            const result = await service.capabilities.adoptGuarded.restoreChapter(
-              exec.agent as Agent | undefined,
-              root,
-              args.chapter,
-              args.commit,
-              args.expected_content_hash,
-            );
-            if (!result.skipped) {
-              await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
-              fireRagHook(ctx, root);
-            }
-            return {
-              ...blank,
-              content_hash: result.contentHash,
-              commit: result.commit,
-              message: result.skipped
-                ? `第 ${args.chapter} 章已与所选版本一致, 未创建版本。`
-                : `第 ${args.chapter} 章已恢复为新版本(commit ${result.commit.slice(0, 12)})。`,
-            };
-          }
-          throw new HarnessError('action 非法', 'INVALID_ARGUMENT');
-        } catch (err) {
-          throw toolError(err);
+        if (args.action === 'inspect') {
+          const current = run.service.capabilities.read.chapterCurrent(run.root, args.chapter);
+          return {
+            ...blank,
+            content_hash: current.contentHash,
+            commit: current.head,
+            body: current.body,
+            message: `第 ${args.chapter} 章当前正文已读取(${current.status})。`,
+          };
         }
+        if (args.action === 'history') {
+          const history = run.service.capabilities.read.chapterHistory(run.root, args.chapter).map((entry) => ({
+            commit: entry.commit,
+            authored_at: entry.authoredAt,
+            subject: entry.subject,
+            status: entry.status,
+            title: entry.title ?? '',
+            content_hash: entry.contentHash,
+            declared_hash_valid: entry.declaredHashValid,
+            byte_length: entry.byteLength,
+          }));
+          return {
+            ...blank,
+            history,
+            message: `第 ${args.chapter} 章共有 ${history.length} 条可见 Git 版本。`,
+          };
+        }
+        if (args.action === 'diff') {
+          if (!args.commit) throw new HarnessError('diff 缺少 commit', 'INVALID_ARGUMENT');
+          const diff = run.service.capabilities.read.chapterDiff(run.root, args.chapter, args.commit, args.compare_commit);
+          return {
+            ...blank,
+            content_hash: diff.to.contentHash,
+            commit: diff.to.commit,
+            diff: diff.patch,
+            truncated: diff.truncated,
+            message: `已生成第 ${args.chapter} 章版本差异${diff.truncated ? '(展示已限长)' : ''}。`,
+          };
+        }
+        if (args.action === 'save') {
+          if (!args.receipt_id) throw new HarnessError('save 缺少 receipt_id', 'INVALID_ARGUMENT');
+          const result = await run.service.capabilities.adoptGuarded.saveChapter(
+            run.agent,
+            run.root,
+            run.sessionId(),
+            args.receipt_id,
+          );
+          if (!result.skipped) {
+            await run.afterMutation({ radars: ['ingest'], rag: true });
+          }
+          return {
+            ...blank,
+            content_hash: result.contentHash,
+            commit: result.commit,
+            message: result.skipped
+              ? `第 ${args.chapter} 章内容未变化, 未创建版本。`
+              : `第 ${args.chapter} 章已保存为新版本(commit ${result.commit.slice(0, 12)})。`,
+          };
+        }
+        if (args.action === 'restore') {
+          if (!args.commit || !args.expected_content_hash) {
+            throw new HarnessError('restore 缺少 commit 或 expected_content_hash', 'INVALID_ARGUMENT');
+          }
+          const result = await run.service.capabilities.adoptGuarded.restoreChapter(
+            run.agent,
+            run.root,
+            args.chapter,
+            args.commit,
+            args.expected_content_hash,
+          );
+          if (!result.skipped) {
+            await run.afterMutation({ radars: ['ingest'], rag: true });
+          }
+          return {
+            ...blank,
+            content_hash: result.contentHash,
+            commit: result.commit,
+            message: result.skipped
+              ? `第 ${args.chapter} 章已与所选版本一致, 未创建版本。`
+              : `第 ${args.chapter} 章已恢复为新版本(commit ${result.commit.slice(0, 12)})。`,
+          };
+        }
+        throw new HarnessError('action 非法', 'INVALID_ARGUMENT');
       },
     }),
   ];

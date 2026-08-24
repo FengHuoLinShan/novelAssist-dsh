@@ -4,23 +4,18 @@
 // 取消贯通: 五个内容手工具(llm_step/deep_import/propose/generate/map_atlas_plan)
 // 把 exec.signal 传 service(service 层 withAbortSignal 与 llm-step timeout 合并)。
 // tools 服务缺失时静默跳过注册(最小 profile/纯进程内测试仍可用服务门面)。
-// 工具内部把 args 收窄到本地接口; 成功输出用 closed schema 锁定完整合同。
+// 工具一律经 novelcraftToolFactory 定义: schema 推断 args 类型、N34 隔离、
+// toolError 单点映射、afterMutation 副作用纪律由包装器结构性保证。
 import type { Context } from '@deepseek-ai/cordis';
-import type { Agent } from '@deepseek-ai/dsh-agent';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { defineTool } from '@deepseek-ai/dsh-tools';
-import * as assistant from '@novelcraft/assistant';
-import type { AdoptableKind } from '@novelcraft/store';
 import { svc } from './ctx.js';
 import { importTraceFile } from './deep-import.js';
-import { EVENT_RADAR_MAP, fireRadarHooks } from './radar-hooks.js';
-import { fireRagHook } from './rag-hooks.js';
 import type { NovelCraftService } from './service.js';
-import { pushSignalsChanged } from './push.js';
+import { novelcraftToolFactory } from './tools/define.js';
 import { buildMapAtlasTools } from './tools/map-atlas.js';
 import { buildWritingTools } from './tools/writing.js';
-import { llmError, render, resolveBoundRoot, sessionIdOf, toolError } from './tools/shared.js';
+import { llmError } from './tools/shared.js';
 
 export { WorkspaceIsolationError } from './tools/shared.js';
 
@@ -61,59 +56,13 @@ const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
 
 const RADARS = ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'] as const;
 
-/** 每个工具的具体参数形状(defineTool 的 args 为宽泛 JsonValue, 在此收窄)。 */
-interface LlmStepArgs {
-  spec: string;
-  input: string;
-  model?: string;
-  temperature?: number;
-  max_tokens?: number;
-  timeout_ms?: number;
-  fix_attempts?: number;
-}
-interface RootArgs {
-  root: string;
-}
-interface AdoptArgs extends RootArgs {
-  kind: string;
-  ref: string;
-  expected_content_hash?: string;
-  adopted_by?: string;
-  note?: string;
-}
-interface InboxViewArgs extends RootArgs {
-  content_hash?: string;
-}
-interface InboxActArgs extends RootArgs {
-  signal_id: string;
-  action: string;
-  reason?: string;
-  modified_title?: string;
-  modified_proposed_action?: string;
-}
-interface DeepImportArgs extends RootArgs {
-  start_chapter: number;
-  end_chapter: number;
-}
-interface IngestFileArgs extends RootArgs {
-  receipt_id: string;
-  start_chapter?: number;
-  force?: boolean;
-}
-interface RadarSweepArgs extends RootArgs {
-  radar?: string;
-}
-interface RagSearchArgs extends RootArgs {
-  query: string;
-  top_k?: number;
-  rerank?: boolean;
-}
 function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
+  const tool = novelcraftToolFactory(ctx, service);
   const [proposeNextChapter, generateNextChapter, chapterReview, chapterVersion] =
     buildWritingTools(ctx, service);
   return [
     // ---- 1. llm_step(内容手原语, §12) ----
-    defineTool({
+    tool({
       name: 'novelcraft_llm_step',
       description:
         '内容手一步调用: 按 specRef 运行一次受控 LLM 步骤(schema 校验/预算/超时/journal)。' +
@@ -128,33 +77,24 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         fix_attempts: { type: 'integer', description: 'schema 违例修复重试次数(默认 1)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           text: { type: 'string', required: true },
           input_tokens: { type: 'integer', required: true },
           output_tokens: { type: 'integer', required: true },
           error: { type: 'string', required: true },
-          },
         },
-        render,
       },
       timeoutMs: 300_000,
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as LlmStepArgs;
-        // N34 工作区隔离: llm_step 会访问绑定 vault 的该书 profile/llm.yml(N20),
-        // 统一经 resolveBoundRoot 从 exec.agent.session.id 解析绑定; 无 session/
-        // 未绑定 → fail-closed, 不退回「仅 Config.llm 默认」的任意 root 访问。
-        let boundRoot: string;
-        try {
-          boundRoot = await resolveBoundRoot(service, exec);
-        } catch (err) {
-          throw toolError(err);
-        }
+      // N34 工作区隔离: llm_step 会访问绑定 vault 的该书 profile/llm.yml(N20),
+      // 统一经 session 绑定解析 root; 无 session/未绑定 → fail-closed,
+      // 不退回「仅 Config.llm 默认」的任意 root 访问。
+      bindRoot: 'session',
+      async execute(args, run) {
         // exec.signal(工具取消)贯通: runStep 层与 llm-step timeout 合并(withAbortSignal)。
-        const result = await service.capabilities.propose.runStep({
+        const result = await run.service.capabilities.propose.runStep({
           specRef: args.spec,
           input: args.input,
           overrides: {
@@ -164,7 +104,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
           },
           fixAttempts: args.fix_attempts ?? 1,
-        }, boundRoot, exec.signal);
+        }, run.root, run.signal);
         if (!result.ok) throw llmError(result.error?.kind, result.error?.message);
         const text = result.result && typeof result.result === 'object'
           ? JSON.stringify(result.result)
@@ -180,17 +120,16 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
     }),
 
     // ---- 2. 索引重建(只读) ----
-    defineTool({
+    tool({
       name: 'novelcraft_store_index',
       description: '重建全书派生索引(对象/别名/关系/Scene/章节/结构), 并写入可选缓存。文件是唯一真相, 可随时重建。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           objects: { type: 'integer', required: true },
           aliases: { type: 'integer', required: true },
@@ -199,36 +138,28 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           chapters: { type: 'integer', required: true },
           structure: { type: 'integer', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const { root: requestedRoot } = rawArgs as unknown as RootArgs;
-        try {
-          // N34: 只读工具同样隔离——root 必须与 session 绑定完全一致(canonical)。
-          const root = await resolveBoundRoot(service, exec, requestedRoot);
-          const index = service.capabilities.propose.refreshIndex(root);
-          return {
-            ok: true,
-            objects: index.objects.length,
-            aliases: index.aliases.length,
-            relations: index.relations.length,
-            scenes: index.scenes.length,
-            chapters: index.chapters.length,
-            structure: index.structure.length,
-            message: `派生索引已重建(${index.objects.length} 对象/` +
-              `${index.aliases.length} 别名/` +
-              `${index.relations.length} 关系)`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(_args, run) {
+        // N34: 只读工具同样隔离——root 必须与 session 绑定完全一致(canonical)。
+        const index = run.service.capabilities.propose.refreshIndex(run.root);
+        return {
+          ok: true,
+          objects: index.objects.length,
+          aliases: index.aliases.length,
+          relations: index.relations.length,
+          scenes: index.scenes.length,
+          chapters: index.chapters.length,
+          structure: index.structure.length,
+          message: `派生索引已重建(${index.objects.length} 对象/` +
+            `${index.aliases.length} 别名/` +
+            `${index.relations.length} 关系)`,
+        };
       },
     }),
 
     // ---- 3. 采用(审批门控写, §9) ----
-    defineTool({
+    tool({
       name: 'novelcraft_store_adopt',
       description:
         '采用一个待处理/候选资产(copy-on-adopt 或状态迁移 + git commit)。' +
@@ -242,61 +173,44 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         note: { type: 'string', description: '一句话审批说明(作者语言)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           commit: { type: 'string', required: true },
           target_rel_path: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as AdoptArgs;
-        const agent = exec.agent as Agent | undefined;
-        try {
-          // N34: root 必须与 session 绑定 canonical 完全一致; 后续 service/钩子
-          // 一律用返回的绑定 root(解析在一切服务调用/文件访问之前 → 零影响 B)。
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.adoptGuarded.storeAdopt(
-            agent,
-            root,
-            args.kind as AdoptableKind,
-            args.ref,
-            {
-              ...(args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {}),
-              ...(args.adopted_by ? { adoptedBy: args.adopted_by } : {}),
-            },
-            args.note,
-          );
-          // 事件触发雷达(§11): adopt 后去重+风险对账; 章候选采用另加写作面。
-          await fireRadarHooks(
-            ctx,
-            root,
-            args.kind === 'chapter_candidate'
-              ? [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]
-              : EVENT_RADAR_MAP.adopt,
-          );
-          // 事件触发 RAG 索引(§11): adopt(含章候选分支)后只同步词法派生索引;
-          // 向量写入由显式 novelcraft_rag_embed 独占。
-          fireRagHook(ctx, root);
-          return {
-            ok: true,
-            commit: result.commit,
-            target_rel_path: result.targetRelPath,
-            message: `已采用 ${result.kind} → ${result.toStatus}(commit ${result.commit.slice(0, 12)})`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const result = await run.service.capabilities.adoptGuarded.storeAdopt(
+          run.agent,
+          run.root,
+          args.kind,
+          args.ref,
+          {
+            ...(args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {}),
+            ...(args.adopted_by ? { adoptedBy: args.adopted_by } : {}),
+          },
+          args.note,
+        );
+        // §11 事件触发: adopt 后去重+风险对账(章候选另加写作面)+ RAG 词法索引同步;
+        // 向量写入由显式 novelcraft_rag_embed 独占。
+        await run.afterMutation({
+          radars: args.kind === 'chapter_candidate' ? ['adopt', 'adoptChapterCandidate'] : ['adopt'],
+          rag: true,
+        });
+        return {
+          ok: true,
+          commit: result.commit,
+          target_rel_path: result.targetRelPath,
+          message: `已采用 ${result.kind} → ${result.toStatus}(commit ${result.commit.slice(0, 12)})`,
+        };
       },
     }),
 
     // ---- 4. 收件箱视图(只读) ----
-    defineTool({
+    tool({
       name: 'novelcraft_inbox_view',
       description: '读收件箱: 全部新鲜信号(风险前置排序)。卡片含 id/radar/severity/title/proposed_action/status。',
       parameters: {
@@ -304,44 +218,35 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         content_hash: { type: 'string', description: '当前正文哈希(判断写作/审查类信号是否过期)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           signals: { type: 'array', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as InboxViewArgs;
-        try {
-          // N34: 只读工具同样隔离(绑定 root 校验在一切读取之前 → 零读 B)。
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const signals = service.capabilities.read.inbox(root, args.content_hash);
-          return {
-            ok: true,
-            signals: signals.map((s) => ({
-              id: s.id,
-              radar: s.radar,
-              severity: s.severity,
-              title: s.title,
-              proposed_action: s.proposed_action,
-              status: s.status,
-              observed_at: s.observed_at,
-            })),
-            message: `收件箱 ${signals.length} 条新鲜信号`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        // N34: 只读工具同样隔离(绑定 root 校验在一切读取之前 → 零读 B)。
+        const signals = run.service.capabilities.read.inbox(run.root, args.content_hash);
+        return {
+          ok: true,
+          signals: signals.map((s) => ({
+            id: s.id,
+            radar: s.radar,
+            severity: s.severity,
+            title: s.title,
+            proposed_action: s.proposed_action,
+            status: s.status,
+            observed_at: s.observed_at,
+          })),
+          message: `收件箱 ${signals.length} 条新鲜信号`,
+        };
       },
     }),
 
     // ---- 5. 收件箱四动词(记录决定; 资产写入另走采用/微工作流工具) ----
-    defineTool({
+    tool({
       name: 'novelcraft_inbox_act',
       description:
         '收件箱四动词: accept 采纳(返回 adopt 指引)/ reject 打回(理由进校准)/ modify 改一改(路由微工作流)/ defer 先放着。' +
@@ -355,60 +260,49 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         modified_proposed_action: { type: 'string', description: 'modify: 修改后的建议动作' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           action: { type: 'string', required: true },
           kind: { type: 'string', required: true },
           microflow: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as InboxActArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const descriptor = assistant.act(root, {
-            signalId: args.signal_id,
-            action: args.action as assistant.InboxAction,
+      async execute(args, run) {
+        const descriptor = await run.service.capabilities.propose.actOnSignal(
+          run.root,
+          args.signal_id,
+          args.action,
+          {
             ...(args.reason ? { reason: args.reason } : {}),
             ...(args.action === 'modify'
               ? {
-                  modified: {
-                    ...(args.modified_title ? { title: args.modified_title } : {}),
-                    ...(args.modified_proposed_action
-                      ? { proposed_action: args.modified_proposed_action }
-                      : {}),
-                  },
+                  ...(args.modified_title ? { modifiedTitle: args.modified_title } : {}),
+                  ...(args.modified_proposed_action ? { modifiedProposedAction: args.modified_proposed_action } : {}),
                 }
               : {}),
-          });
-          const guide =
-            descriptor.kind === 'adopt'
-              ? '采纳动作: 请按信号目标调用 novelcraft_store_adopt 完成资产采用。'
-              : descriptor.kind === 'microflow'
-                ? `已路由微工作流「${descriptor.microflow ?? ''}」: 请按其阶段调用对应工具执行。`
-                : '已记录决定(校准笔记已更新)。';
-          pushSignalsChanged(ctx, { root });
-          return {
-            ok: true,
-            action: descriptor.action,
-            kind: descriptor.kind,
-            microflow: descriptor.microflow ?? '',
-            message: guide,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+          },
+        );
+        const guide =
+          descriptor.kind === 'adopt'
+            ? '采纳动作: 请按信号目标调用 novelcraft_store_adopt 完成资产采用。'
+            : descriptor.kind === 'microflow'
+              ? `已路由微工作流「${descriptor.microflow ?? ''}」: 请按其阶段调用对应工具执行。`
+              : '已记录决定(校准笔记已更新)。';
+        return {
+          ok: true,
+          action: descriptor.action,
+          kind: descriptor.kind,
+          microflow: descriptor.microflow ?? '',
+          message: guide,
+        };
       },
     }),
 
     // ---- 6. 深度导入(范围授权 + adopt/2b 独立审批门; trace 落 .assistant/import-trace.jsonl) ----
-    defineTool({
+    tool({
       name: 'novelcraft_deep_import',
       description:
         '深度导入: 执行前先请求范围授权(授权将调用 LLM 并产出候选; 拒绝则零副作用, fail-closed); ' +
@@ -421,10 +315,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         end_chapter: { type: 'integer', required: true, description: '结束章节(含)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           workflow_id: { type: 'string', required: true },
           adopted: { type: 'integer', required: true },
@@ -434,49 +327,37 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           rejected: { type: 'boolean', required: true },
           trace_file: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
       timeoutMs: 3_600_000,
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as DeepImportArgs;
-        const agent = exec.agent as Agent | undefined;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const result = await service.capabilities.adoptGuarded.deepImport(agent, root, {
-            startChapter: args.start_chapter,
-            endChapter: args.end_chapter,
-          }, exec.signal);
-          if (result.rejected) {
-            throw new HarnessError('深度导入的 Scene 采用未获批准, 候选保持未采用', 'APPROVAL_REJECTED');
-          }
-          // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
-          await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.deepImport);
-          // 事件触发 RAG 索引(§11): 导入后只同步词法派生索引;
-          // 向量写入由显式 novelcraft_rag_embed 独占。
-          fireRagHook(ctx, root);
-          return {
-            ok: true,
-            workflow_id: result.workflow_id,
-            adopted: result.adopted,
-            committed: result.committed.length,
-            skipped: result.skipped.length,
-            conflicts: result.conflicts.length,
-            rejected: result.rejected,
-            trace_file: importTraceFile(root),
-            message: '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
-          };
-        } catch (err) {
-          throw toolError(err);
+      async execute(args, run) {
+        const result = await run.service.capabilities.adoptGuarded.deepImport(run.agent, run.root, {
+          startChapter: args.start_chapter,
+          endChapter: args.end_chapter,
+        }, run.signal);
+        if (result.rejected) {
+          throw new HarnessError('深度导入的 Scene 采用未获批准, 候选保持未采用', 'APPROVAL_REJECTED');
         }
+        // §11 事件触发: 导入后去重/风险/剧情/写作四面对账 + RAG 词法索引同步。
+        await run.afterMutation({ radars: ['deepImport'], rag: true });
+        return {
+          ok: true,
+          workflow_id: result.workflow_id,
+          adopted: result.adopted,
+          committed: result.committed.length,
+          skipped: result.skipped.length,
+          conflicts: result.conflicts.length,
+          rejected: result.rejected,
+          trace_file: importTraceFile(run.root),
+          message: '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
+        };
       },
     }),
 
     proposeNextChapter,
 
     // ---- 8. 结构健康信号扫描(确定性, 幂等落盘收件箱 + 自动结算) ----
-    defineTool({
+    tool({
       name: 'novelcraft_health_scan',
       description:
         '结构健康信号扫描: 确定性扫描 Scene 四键 + 结构资产两键, 把命中写成收件箱信号' +
@@ -486,10 +367,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           created: { type: 'integer', required: true },
           skipped: { type: 'integer', required: true },
@@ -497,35 +377,27 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           reopened: { type: 'integer', required: true },
           total: { type: 'integer', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const { root: requestedRoot } = rawArgs as unknown as RootArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, requestedRoot);
-          const r = await service.capabilities.propose.scanHealth(root);
-          pushSignalsChanged(ctx, { root });
-          return {
-            ok: true,
-            created: r.created,
-            skipped: r.skipped,
-            resolved: r.resolved,
-            reopened: r.reopened,
-            total: r.total,
-            message: `结构健康扫描完成(新 ${r.created}/结 ${r.resolved}/复 ${r.reopened})`,
-          };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(_args, run) {
+        const r = await run.service.capabilities.propose.scanHealth(run.root);
+        await run.afterMutation({ push: true });
+        return {
+          ok: true,
+          created: r.created,
+          skipped: r.skipped,
+          resolved: r.resolved,
+          reopened: r.reopened,
+          total: r.total,
+          message: `结构健康扫描完成(新 ${r.created}/结 ${r.resolved}/复 ${r.reopened})`,
+        };
       },
     }),
 
     generateNextChapter,
 
     // ---- 10. 文本入库(页内授权收据 → 章节切分 → wiki 化存储; D9a) ----
-    defineTool({
+    tool({
       name: 'novelcraft_ingest_file',
       description:
         '文本入库: 消费用户在当前写作台选择文件后获得的会话收据(.txt/.md, ≤50MB),' +
@@ -539,10 +411,9 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         force: { type: 'boolean', description: '同号章内容不同时覆盖(默认跳过并报告冲突)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           receipt_id: { type: 'string', required: true },
           total: { type: 'integer', required: true },
@@ -550,52 +421,41 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
           skipped: { type: 'integer', required: true },
           conflicts: { type: 'array', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as IngestFileArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const sessionId = sessionIdOf(exec);
-          const report = service.capabilities.propose.ingestTextFile(root, {
-            receiptId: args.receipt_id,
-            sessionId,
-            ...(args.start_chapter !== undefined ? { startChapter: args.start_chapter } : {}),
-            ...(args.force ? { force: true } : {}),
-          });
-          if (!report.ok) {
-            throw new HarnessError(report.reason ?? '导入失败', 'INGEST_FAILED');
-          }
-          // 事件触发雷达(§11): 摄入对账 + 写作健康。
-          await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
-          // 事件触发 RAG 索引(§11): 新章落库后只同步词法派生索引;
-          // 向量写入由显式 novelcraft_rag_embed 独占。
-          fireRagHook(ctx, root);
-          const dup = report.warnings.includes('duplicate_import');
-          const conflictNote = (report.conflicts?.length ?? 0) > 0
-            ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
-            : '';
-          const noHeading = report.warnings.includes('no_headings') ? ', 未识别到章节标题已按单章处理' : '';
-          const message = dup
-            ? '该文件此前已导入(幂等跳过, 不写任何文件)。'
-            : `已入库 ${report.imported ?? 0} 章(共解析 ${report.total ?? 0} 章${conflictNote}${noHeading})。下一步可跑深度导入(novelcraft_deep_import)。`;
-          return {
-            ok: true,
-            receipt_id: args.receipt_id,
-            total: report.total ?? 0,
-            imported: report.imported ?? 0,
-            skipped: report.skipped ?? 0,
-            conflicts: report.conflicts ?? [],
-            message,
-          };
-        } catch (err) {
-          throw toolError(err, {
-            code: 'INGEST_FAILED',
-            message: err instanceof Error ? err.message : '导入失败',
-          });
+      errorFallback: (err) => ({
+        code: 'INGEST_FAILED',
+        message: err instanceof Error ? err.message : '导入失败',
+      }),
+      async execute(args, run) {
+        const report = run.service.capabilities.propose.ingestTextFile(run.root, {
+          receiptId: args.receipt_id,
+          sessionId: run.sessionId(),
+          ...(args.start_chapter !== undefined ? { startChapter: args.start_chapter } : {}),
+          ...(args.force ? { force: true } : {}),
+        });
+        if (!report.ok) {
+          throw new HarnessError(report.reason ?? '导入失败', 'INGEST_FAILED');
         }
+        // §11 事件触发: 摄入对账 + 写作健康 + RAG 词法索引同步。
+        await run.afterMutation({ radars: ['ingest'], rag: true });
+        const dup = report.warnings.includes('duplicate_import');
+        const conflictNote = (report.conflicts?.length ?? 0) > 0
+          ? `, ${report.conflicts!.length} 章冲突跳过(第 ${report.conflicts!.join('/')} 章, 可用 force 覆盖)`
+          : '';
+        const noHeading = report.warnings.includes('no_headings') ? ', 未识别到章节标题已按单章处理' : '';
+        const message = dup
+          ? '该文件此前已导入(幂等跳过, 不写任何文件)。'
+          : `已入库 ${report.imported ?? 0} 章(共解析 ${report.total ?? 0} 章${conflictNote}${noHeading})。下一步可跑深度导入(novelcraft_deep_import)。`;
+        return {
+          ok: true,
+          receipt_id: args.receipt_id,
+          total: report.total ?? 0,
+          imported: report.imported ?? 0,
+          skipped: report.skipped ?? 0,
+          conflicts: report.conflicts ?? [],
+          message,
+        };
       },
     }),
 
@@ -603,7 +463,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
     chapterVersion,
 
     // ---- 11. 雷达巡检(§11 手动触发; 默认五面, 幂等 + 自动结算) ----
-    defineTool({
+    tool({
       name: 'novelcraft_radar_sweep',
       description:
         '雷达巡检: 五面确定性扫描器对账收件箱信号(摄入/去重/建议/风险/写作; 幂等落盘 + ' +
@@ -613,49 +473,40 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         radar: { type: 'string', enum: [...RADARS], description: '只跑某一面(缺省全五面)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           results: { type: 'object', additionalProperties: true, required: true },
           plot_summary: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as RadarSweepArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const r = await service.capabilities.propose.radarSweep(
-            root,
-            args.radar ? [args.radar as assistant.RadarKind] : undefined,
-          );
-          pushSignalsChanged(ctx, { root });
-          // results 的 radar 键是动态集合, 仅该嵌套对象保持开放。
-          const results: Record<string, { created: number; skipped: number; resolved: number; reopened: number; total: number }> = {};
-          const summaryParts: string[] = [];
-          for (const [k, v] of Object.entries(r.results)) {
-            if (!v) continue;
-            results[k] = { created: v.created, skipped: v.skipped, resolved: v.resolved, reopened: v.reopened, total: v.total };
-            summaryParts.push(`${k}: 新${v.created}/结${v.resolved}/复${v.reopened}`);
-          }
-          const summary = summaryParts.join(', ');
-          return {
-            ok: true,
-            results,
-            plot_summary: r.plotSummary,
-            message: `巡检完成(${summary || '无命中'})。当前: ${r.plotSummary}`,
-          };
-        } catch (err) {
-          throw toolError(err);
+      async execute(args, run) {
+        const r = await run.service.capabilities.propose.radarSweep(
+          run.root,
+          args.radar ? [args.radar] : undefined,
+        );
+        await run.afterMutation({ push: true });
+        // results 的 radar 键是动态集合, 仅该嵌套对象保持开放。
+        const results: Record<string, { created: number; skipped: number; resolved: number; reopened: number; total: number }> = {};
+        const summaryParts: string[] = [];
+        for (const [k, v] of Object.entries(r.results)) {
+          if (!v) continue;
+          results[k] = { created: v.created, skipped: v.skipped, resolved: v.resolved, reopened: v.reopened, total: v.total };
+          summaryParts.push(`${k}: 新${v.created}/结${v.resolved}/复${v.reopened}`);
         }
+        const summary = summaryParts.join(', ');
+        return {
+          ok: true,
+          results,
+          plot_summary: r.plotSummary,
+          message: `巡检完成(${summary || '无命中'})。当前: ${r.plotSummary}`,
+        };
       },
     }),
     // ---- 12. RAG 语义检索(只读; 索引由事件钩子维护, 本工具不触发同步) ----
-    defineTool({
+    tool({
       name: 'novelcraft_rag_search',
       description:
         '语义检索: 在已索引片段(章节正文/角色/世界对象)中按查询找相关片段。BM25 召回 + 内容手精排' +
@@ -669,53 +520,44 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         rerank: { type: 'boolean', description: '内容手精排开关(缺省 true; false = 纯 BM25, 不调 LLM)' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           hits: { type: 'array', required: true },
           ranking: { type: 'string', required: true },
           degraded: { type: 'string', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as RagSearchArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const r = await service.capabilities.read.ragSearch(root, args.query, {
-            ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
-            ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
-          });
-          // hits 摊平为作者可读字段。
-          const hits = r.hits.map((c) => ({
-            chunk_id: c.chunk_id,
-            source_type: c.source_type,
-            ...(c.chapter_index !== undefined ? { chapter_index: c.chapter_index } : {}),
-            char_count: c.char_count,
-            text: c.text,
-          }));
-          const rankingLabel = r.ranking === 'llm_rerank' ? '精排' : r.ranking === 'vector' ? '向量召回' : 'BM25';
-          const degradedNote = r.degraded
-            ? r.degraded.includes('rerank_failed')
-              ? '; 精排失败已降级'
-              : '; 嵌入失败, 已回退文本检索'
-            : '';
-          const message = hits.length > 0
-            ? `命中 ${hits.length} 条(${rankingLabel}${degradedNote})。`
-            : '无命中或索引为空, 可先文本入库/采用资产后重试。';
-          return { ok: true, hits, ranking: r.ranking, degraded: r.degraded ?? '', message };
-        } catch (err) {
-          throw toolError(err);
-        }
+      async execute(args, run) {
+        const r = await run.service.capabilities.read.ragSearch(run.root, args.query, {
+          ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
+          ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
+        });
+        // hits 摊平为作者可读字段。
+        const hits = r.hits.map((c) => ({
+          chunk_id: c.chunk_id,
+          source_type: c.source_type,
+          ...(c.chapter_index !== undefined ? { chapter_index: c.chapter_index } : {}),
+          char_count: c.char_count,
+          text: c.text,
+        }));
+        const rankingLabel = r.ranking === 'llm_rerank' ? '精排' : r.ranking === 'vector' ? '向量召回' : 'BM25';
+        const degradedNote = r.degraded
+          ? r.degraded.includes('rerank_failed')
+            ? '; 精排失败已降级'
+            : '; 嵌入失败, 已回退文本检索'
+          : '';
+        const message = hits.length > 0
+          ? `命中 ${hits.length} 条(${rankingLabel}${degradedNote})。`
+          : '无命中或索引为空, 可先文本入库/采用资产后重试。';
+        return { ok: true, hits, ranking: r.ranking, degraded: r.degraded ?? '', message };
       },
     }),
 
     // ---- 13. RAG 批量嵌入(L2; 后端不可用进入宿主失败通道) ----
-    defineTool({
+    tool({
       name: 'novelcraft_rag_embed',
       description:
         '批量嵌入: 对索引中待向量化片段(pending/failed 且无 vector)调用本地 BGE 嵌入后端生成向量, ' +
@@ -725,39 +567,30 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
       },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           ok: { type: 'boolean', required: true },
           embedded: { type: 'integer', required: true },
           failed: { type: 'integer', required: true },
           skipped: { type: 'integer', required: true },
           message: { type: 'string', required: true },
-          },
         },
-        render,
       },
-      async execute(rawArgs, exec) {
-        const args = rawArgs as unknown as RootArgs;
-        try {
-          const root = await resolveBoundRoot(service, exec, args.root);
-          const r = await service.capabilities.propose.ragEmbed(root);
-          if (r.message !== undefined) {
-            throw new HarnessError(r.message, 'RAG_EMBEDDING_UNAVAILABLE');
-          }
-          return {
-            ok: true,
-            embedded: r.embedded,
-            failed: r.failed,
-            skipped: r.skipped,
-            message: `已嵌入 ${r.embedded} 个片段(失败 ${r.failed}, 跳过 ${r.skipped})`,
-          };
-        } catch (err) {
-          throw toolError(err);
+      async execute(_args, run) {
+        const r = await run.service.capabilities.propose.ragEmbed(run.root);
+        if (r.message !== undefined) {
+          throw new HarnessError(r.message, 'RAG_EMBEDDING_UNAVAILABLE');
         }
+        return {
+          ok: true,
+          embedded: r.embedded,
+          failed: r.failed,
+          skipped: r.skipped,
+          message: `已嵌入 ${r.embedded} 个片段(失败 ${r.failed}, 跳过 ${r.skipped})`,
+        };
       },
     }),
-    ...buildMapAtlasTools(service),
+    ...buildMapAtlasTools(ctx, service),
   ];
 }
