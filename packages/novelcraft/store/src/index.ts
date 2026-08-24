@@ -252,6 +252,7 @@ export * from './health.js';
 export * from './story-map.js';
 export * from './dossier.js';
 export * from './chapter-version.js';
+export * from './chapter-history-view.js';
 export * from './tx-write.js';
 
 // ADR-0021/N32 public transaction seam. Business and host integrations consume

@@ -8,3 +8,4 @@ export * from "./import-log.js";
 export * from "./import-text.js";
 export * from "./intake.js";
 export * from "./version.js";
+export * from "./view-reads.js";
