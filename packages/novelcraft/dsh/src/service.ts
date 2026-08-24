@@ -130,7 +130,7 @@ export class NovelCraftService extends Service {
     });
     this.nodeRuntime.start();
     this.capabilities = createNovelCraftCapabilities(this);
-    this.toolDisposers.push(...registerNovelcraftTools(ctx, this));
+    this.toolDisposers.push(...registerNovelcraftTools(ctx, this, config.tools));
   }
 
   /** 解析一次不可变 ExecutionProfile(N34 / ADR-0023 §6): 组合 Config.llm +

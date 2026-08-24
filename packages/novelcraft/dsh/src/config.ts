@@ -28,6 +28,13 @@ export interface WatchConfig {
   intervalMinutes: number;
 }
 
+export interface ToolsConfig {
+  /** 写作/存储工具组(15 个, novelcraft_ 前缀非 map_atlas 面; 默认开) */
+  writing?: boolean;
+  /** 地图册工具组(6 个, novelcraft_map_atlas_ 前缀; 默认开) */
+  mapAtlas?: boolean;
+}
+
 export interface Config {
   /** 内容手默认路由 */
   llm: LlmRoute;
@@ -35,6 +42,8 @@ export interface Config {
   vaultsDir: string;
   /** 雷达守望 */
   watch: WatchConfig;
+  /** 工具组开关(profile 即产品: 最小面可关掉地图册/写作任一组; 缺省全开) */
+  tools?: ToolsConfig;
 }
 
 export const Config: z<Config> = z.object({
@@ -63,12 +72,19 @@ export const Config: z<Config> = z.object({
       intervalMinutes: z.number().min(1).default(60),
     })
     .default({ enabled: false, intervalMinutes: 60 }),
+  tools: z
+    .object({
+      writing: z.boolean().default(true),
+      mapAtlas: z.boolean().default(true),
+    })
+    .default({ writing: true, mapAtlas: true }),
 });
 
 export const DEFAULT_CONFIG: Config = {
   llm: { provider: 'deepseek', model: 'deepseek-chat' },
   vaultsDir: '~/Novels',
   watch: { enabled: false, intervalMinutes: 60 },
+  tools: { writing: true, mapAtlas: true },
 };
 
 /** 展开 vaultsDir 中的 ~(跨平台, 遵循 $HOME)。 */

@@ -19,14 +19,36 @@ import { llmError } from './tools/shared.js';
 
 export { WorkspaceIsolationError } from './tools/shared.js';
 
-/** tools 服务缺省时的空注册(返回空 disposer 列表)。 */
-export function registerNovelcraftTools(ctx: Context, service: NovelCraftService): Array<() => void> {
+/** 工具组开关(groups.* 缺省 = 全开)。 */
+export interface ToolGroupOptions {
+  writing?: boolean;
+  mapAtlas?: boolean;
+}
+
+/** 地图册工具组按名称前缀识别(novelcraft_map_atlas_*, 其余为写作/存储组)。 */
+export function isMapAtlasTool(name: string): boolean {
+  return name.startsWith('novelcraft_map_atlas_');
+}
+
+/**
+ * tools 服务缺省时的空注册(返回空 disposer 列表)。
+ * 默认组合走本同步路径(非 ctx.plugin 嵌套挂载): rc.8 cordis 对嵌套子插件构造器
+ * 抛错是静默吞掉(deferred start), 同步注册保持 fail-closed 与既有测试契约。
+ * 注册保持 all-or-nothing 回滚; 两个工具组可作为独立 cordis 插件单独挂载
+ * (见 tools/plugins.ts, 共享同一组 build 函数)。
+ */
+export function registerNovelcraftTools(
+  ctx: Context,
+  service: NovelCraftService,
+  groups: ToolGroupOptions = {},
+): Array<() => void> {
   const registry = svc<{ register(definition: ToolDefinition): () => void }>(ctx, 'tools');
   if (!registry || typeof registry.register !== 'function') return [];
 
   const disposers: Array<() => void> = [];
   try {
     for (const tool of buildTools(ctx, service)) {
+      if (isMapAtlasTool(tool.name) ? groups.mapAtlas === false : groups.writing === false) continue;
       disposers.push(registry.register(tool));
     }
     return disposers;
@@ -56,7 +78,8 @@ const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
 
 const RADARS = ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'] as const;
 
-function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
+/** 全量 21 工具定义(写作/存储 15 与地图册 6 的固定交错序; 工具组插件复用)。 */
+export function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   const tool = novelcraftToolFactory(ctx, service);
   const [proposeNextChapter, generateNextChapter, chapterReview, chapterVersion] =
     buildWritingTools(ctx, service);
