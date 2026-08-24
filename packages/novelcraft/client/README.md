@@ -14,7 +14,7 @@
   capability 缺省, 不炸通道。
 - **文件输入**: `intake/stage-text` 只接浏览器选定的 UTF-8 bytes, 产生当前
   session 绑定收据与导入意图; 零章节资产写入。资产入库由 agent 工具消费收据完成。
-- **章节编辑**: rc.8 原生 `conversation.view` 标签承载长正文、Git history/diff、候选和
+- **章节编辑**: rc.8 原生 `conversation.view` 标签承载长正文、Git history/diff、候选采用/拒绝和
   finding 选择；`chapter/stage-edit` 只冻结当前会话编辑 bytes。save/restore/review/revise/adopt
   均提交到当前对话的领域工具，canonical 写仍只有 approval + transaction 一条通路。
 
@@ -60,7 +60,7 @@
 - [x] 构建链(vendor 预设)+ E2E 挂载验证
 - [x] 剧情地图(story/map 端点 + StoryMapAction 面板)
 - [x] 写作台五面(writing/desk + intake/stage-text, 守望/计划/评审/参照/导入 tab)
-- [x] rc.8 `conversation.view` 章节工作区(编辑收据、Git history/diff/restore、finding→返修→候选复审→审批采用)
+- [x] rc.8 `conversation.view` 章节工作区(编辑收据、Git history/diff/restore、finding→返修→候选复审→审批采用/拒绝释放 pending)
 - [x] 事件触发短轮询 + 退避(ADR-0018 §2: 固定 5s 轮询退役; 挂载/聚焦/可见/动作后立即刷新并重置退避)
 - [x] 真 mux 推送: 已落地(ADR-0018 §1: scripts/apply-dsh-patches.mjs 加 client/push allowlist; dsh emit + client ctx.remote.$on 订阅); 上游 Discussion #1289 回应后去 fork 化
 

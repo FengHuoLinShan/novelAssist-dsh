@@ -870,10 +870,11 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
       name: 'novelcraft_chapter_review',
       description:
         '单章审查闭环。review 可审 current 或 candidate；revise 只接受 fresh current review 的 finding_ids 并产新候选；' +
-        'reject_finding 记录作者理由；adopt 只采用 fresh 独立审查 pass 且基线未漂移的候选，并必经审批。',
+        'reject_finding 记录作者理由；reject 以 hash CAS 驳回并释放 active candidate；' +
+        'adopt 只采用 fresh 独立审查 pass 且基线未漂移的候选，并必经审批。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        action: { type: 'string', required: true, enum: ['inspect', 'review', 'revise', 'reject_finding', 'adopt'] },
+        action: { type: 'string', required: true, enum: ['inspect', 'review', 'revise', 'reject_finding', 'reject', 'adopt'] },
         target: { type: 'string', required: true, enum: ['current', 'candidate'] },
         chapter: { type: 'integer', required: true, description: '章节序号(1 起)' },
         ref: { type: 'string', description: 'candidate 的精确 ref(缺省 NNN)' },
@@ -969,10 +970,24 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             if (target !== 'current' || !args.review_id || !args.finding_id || !args.reason) {
               throw new HarnessError('reject_finding 缺少 current/review_id/finding_id/reason', 'INVALID_ARGUMENT');
             }
-            service.capabilities.propose.rejectChapterFinding(
+            await service.capabilities.propose.rejectChapterFinding(
               root, args.chapter, args.review_id, args.finding_id, args.reason,
             );
             return { ...blank, review_id: args.review_id, message: `已打回 finding ${args.finding_id} 并记录理由。` };
+          }
+          if (args.action === 'reject') {
+            if (target !== 'candidate' || !args.reason || !args.expected_content_hash) {
+              throw new HarnessError('reject 缺少 candidate/reason/expected_content_hash', 'INVALID_ARGUMENT');
+            }
+            const result = await service.capabilities.propose.rejectChapterCandidate(
+              root, args.chapter, ref, args.expected_content_hash, args.reason,
+            );
+            return {
+              ...blank,
+              content_hash: args.expected_content_hash,
+              commit: result.commit,
+              message: `第 ${args.chapter} 章候选已拒绝并释放待处理槽(commit ${result.commit.slice(0, 12)})。`,
+            };
           }
           if (args.action === 'adopt') {
             if (target !== 'candidate') throw new HarnessError('adopt 只接受 candidate', 'INVALID_ARGUMENT');

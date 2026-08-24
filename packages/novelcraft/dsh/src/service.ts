@@ -339,7 +339,7 @@ export class NovelCraftService extends Service {
     );
   }
 
-  rejectChapterFinding(root: string, chapterIndex: number, reviewId: string, findingId: string, reason: string): void {
+  async rejectChapterFinding(root: string, chapterIndex: number, reviewId: string, findingId: string, reason: string): Promise<void> {
     if (reason.trim() === '') throw new store.StoreError('VALIDATION_FAILED', '打回 finding 必须说明理由');
     const current = store.readCurrentChapter(root, chapterIndex);
     const review = writing.latestReview(root, chapterIndex);
@@ -349,7 +349,18 @@ export class NovelCraftService extends Service {
     ) {
       throw new store.StoreError('CONFLICT', `审查 ${reviewId} 已过期或不是第 ${chapterIndex} 章 current review`);
     }
-    writing.rejectFindingById(root, chapterIndex, reviewId, findingId, reason);
+    await writing.rejectFindingByIdTransactional(root, chapterIndex, reviewId, findingId, reason);
+  }
+
+  /** Candidate rejection is a writing-domain terminal action; it never mutates the current chapter. */
+  rejectChapterCandidate(
+    root: string,
+    chapterIndex: number,
+    ref: string,
+    expectedContentHash: string,
+    reason: string,
+  ): Promise<writing.ChapterCandidateRejectResult> {
+    return writing.rejectChapterCandidate(root, chapterIndex, ref, expectedContentHash, reason);
   }
 
   /** 页内编辑收据 → 审批 → 冻结 writeSet；loopback RPC 从不写正文。 */

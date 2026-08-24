@@ -8,7 +8,7 @@ import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
 import { pushSignal } from '@novelcraft/assistant';
 import { gitAdd, gitCommit, readCurrentChapter, serializeFrontmatter } from '@novelcraft/store';
-import { ingestChapter, stageChapterEditIntake } from '@novelcraft/writing';
+import { ingestChapter, readChapterCandidate, stageChapterEditIntake } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { registerNovelcraftTools } from '../src/tools.js';
 import { makeContext, type HarnessServices } from './helpers.js';
@@ -326,6 +326,41 @@ describe('NovelCraftService 端到端', () => {
     ) as { commit: string };
     expect(adopted.commit).toMatch(/^[0-9a-f]{40}$/);
     expect(readCurrentChapter(env.root, 1).body).toBe('返修后的正文\n');
+    expect(existsSync(path.join(env.root, 'chapters', 'pending', '001.md'))).toBe(false);
+    env.cleanup();
+  });
+
+  it('chapter_review reject: hash CAS 保存理由、释放 pending、正文不变', async () => {
+    const env = await setup();
+    ingestChapter(env.root, { chapterIndex: 1, text: '初稿正文', source: 'test' });
+    gitAdd(env.root, ['chapters/001.md']);
+    gitCommit(env.root, 'chapter baseline');
+    const reviewTool = tool(env, 'novelcraft_chapter_review');
+    env.h.adapter.enqueue({ deltas: [JSON.stringify({ findings: [
+      { category: 'pacing', severity: 'high', quote: '初稿正文', suggestion: '加强动作' },
+    ] })] });
+    const reviewed = await reviewTool.execute(
+      { root: env.root, action: 'review', target: 'current', chapter: 1 },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    ) as { findings: Array<{ finding_id: string }> };
+    env.h.adapter.enqueue({ deltas: ['不采用的返修'] });
+    await reviewTool.execute(
+      { root: env.root, action: 'revise', target: 'current', chapter: 1, finding_ids: [reviewed.findings[0].finding_id] },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    );
+    const candidate = readChapterCandidate(env.root, 1, '001');
+    const rejected = await reviewTool.execute({
+      root: env.root,
+      action: 'reject',
+      target: 'candidate',
+      chapter: 1,
+      ref: '001',
+      expected_content_hash: candidate.contentHash,
+      reason: '主角不会这样行动',
+    }, { ...env.exec, name: 'novelcraft_chapter_review' }) as { commit: string };
+    expect(rejected.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(existsSync(path.join(env.root, 'chapters', 'pending', '001.md'))).toBe(false);
+    expect(readCurrentChapter(env.root, 1).body).toBe('初稿正文\n');
     env.cleanup();
   });
 

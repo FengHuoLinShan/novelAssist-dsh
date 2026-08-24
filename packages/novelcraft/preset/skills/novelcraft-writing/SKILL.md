@@ -39,6 +39,10 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
   即使从通用 `novelcraft_store_adopt` 进入，也会复用同一 writing 领域门并通过 approval。
 - `reject_finding` 必须带作者理由；模型自由文本 verdict 不直接充当采用许可。未知 severity、
   找不到原文 quote、正文/候选漂移、缺独立审查或 approval 非 allowed-once 均 fail-closed。
+- 作者放弃候选时调用 `action=reject,target=candidate`，必须带理由和页面给出的
+  `expected_content_hash`。成功会在同一 Git 事务保存决定回执并删除 active pending；之后本章可再次生成或返修。
+  裁定: reject 不经 DSH approval——它删除的是未采用的 pending 候选(Git 历史可恢复), 且由作者
+  显式输入理由发起, 与 adopt(写 canonical 正文)不同级; 仍必经 hash CAS, 失配/漂移零删除。
 
 ## 写作台(§17.4, 半屏 D10)
 
@@ -50,5 +54,5 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
 
 ## 纪律
 
-- 候选正文只读；当前没有候选 discard/reject 终点或 Word 同步回执，不要声称已实现；
+- 候选正文只读；reject 是候选终点但不会训练或自动调整模型。当前没有 Word 同步回执，不要声称已实现；
 - 采用必过 approval; 非法 finding 引用拒绝。

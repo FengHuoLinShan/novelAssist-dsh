@@ -53,6 +53,7 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [selectedFindings, setSelectedFindings] = useState<string[]>([])
+  const [candidateRejectReason, setCandidateRejectReason] = useState('')
   const request = useRef(0)
 
   const refresh = useCallback(async (index = chapterIndex, diffFromCommit?: string) => {
@@ -64,6 +65,10 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
       setChapterIndex(value.chapters[0].index)
       return
     }
+    setEditing(false)
+    setMessage('')
+    setSelectedFindings([])
+    setCandidateRejectReason('')
     if (value.chapter) {
       const saved = readDraft(String(sessionId), value.chapter.index, value.chapter.content_hash)
       setEditor(saved ?? {
@@ -71,9 +76,8 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
         title: value.chapter.title ?? '',
         text: value.chapter.body,
       })
-      setEditing(false)
-      setMessage('')
-      setSelectedFindings([])
+    } else {
+      setEditor(null)
     }
   }, [chapterIndex, connection, sessionId])
 
@@ -158,6 +162,14 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
     )
   }
 
+  const rejectCandidate = (): void => {
+    if (!data?.candidate || candidateRejectReason.trim() === '') return
+    sendChapterAction(
+      `请调用 novelcraft_chapter_review，action=reject，target=candidate，chapter=${chapterIndex}，ref=${data.candidate.ref}，expected_content_hash=${data.candidate.content_hash}，reason=${JSON.stringify(candidateRejectReason.trim())}。`,
+      t('chapter.rejectRequested'),
+    )
+  }
+
   const chapters = data?.chapters ?? []
   const chapter = data?.chapter ?? null
   return (
@@ -180,11 +192,11 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
         </div>
       </header>
 
-      {data?.bound == null ? <div className={css.empty}>{t('chapter.unbound')}</div> : chapter == null || editor == null ? (
+      {data?.bound == null ? <div className={css.empty}>{t('chapter.unbound')}</div> : chapter == null && data?.candidate == null ? (
         <div className={css.empty}>{t('chapter.empty')}</div>
       ) : (
         <div className={css.chapterWorkspaceGrid}>
-          <section className={css.chapterEditorPane}>
+          {chapter && editor ? <section className={css.chapterEditorPane}>
             <div className={css.chapterEditorToolbar}>
               <input
                 aria-label={t('chapter.title')}
@@ -216,10 +228,10 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
                 {data.diff.truncated ? <div className={css.message}>{t('chapter.truncated')}</div> : null}
               </section>
             ) : null}
-          </section>
+          </section> : null}
 
           <aside className={css.chapterHistoryPane}>
-            <section>
+            {chapter ? <section>
               <div className={css.chapterReviewHeader}>
                 <h3 className={css.sectionTitle}>{t('chapter.review')}</h3>
                 <button type="button" className={css.tab} onClick={() => reviewTarget('current')}>{t('chapter.reviewCurrent')}</button>
@@ -247,7 +259,7 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
                   ) : null}
                 </div>
               )}
-            </section>
+            </section> : null}
 
             {data.candidate ? (
               <section className={css.chapterCandidate}>
@@ -269,6 +281,22 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
                     disabled={data.candidate.review?.verdict !== 'pass' || !data.candidate.review.fresh}
                     onClick={adoptCandidate}
                   >{t('chapter.adoptCandidate')}</button>
+                </div>
+                <div className={css.chapterWorkspaceActions}>
+                  <input
+                    aria-label={t('chapter.rejectReason')}
+                    className={css.chapterTitleInput}
+                    maxLength={1000}
+                    placeholder={t('chapter.rejectReason')}
+                    value={candidateRejectReason}
+                    onChange={(event) => setCandidateRejectReason(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className={css.tab}
+                    disabled={candidateRejectReason.trim() === ''}
+                    onClick={rejectCandidate}
+                  >{t('chapter.rejectCandidate')}</button>
                 </div>
               </section>
             ) : null}

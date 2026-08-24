@@ -146,6 +146,9 @@ export type NovelcraftKey =
   | 'chapter.candidate'
   | 'chapter.adoptCandidate'
   | 'chapter.adoptRequested'
+  | 'chapter.rejectReason'
+  | 'chapter.rejectCandidate'
+  | 'chapter.rejectRequested'
 
 export const zh: Record<NovelcraftKey, string> = {
   'pet.silent': '静默',
@@ -292,6 +295,9 @@ export const zh: Record<NovelcraftKey, string> = {
   'chapter.candidate': '待处理候选',
   'chapter.adoptCandidate': '审批采用',
   'chapter.adoptRequested': '采用请求已交给助手，仍需通过审批与新鲜度复核。',
+  'chapter.rejectReason': '拒绝理由（必填，不会用于自动训练）',
+  'chapter.rejectCandidate': '拒绝候选',
+  'chapter.rejectRequested': '拒绝决定已交给助手；成功后会释放本章待处理槽。',
 }
 
 export const en: Record<NovelcraftKey, string> = {
@@ -439,4 +445,7 @@ export const en: Record<NovelcraftKey, string> = {
   'chapter.candidate': 'Pending candidate',
   'chapter.adoptCandidate': 'Adopt with approval',
   'chapter.adoptRequested': 'The adoption request was sent to the assistant and still requires approval and freshness checks.',
+  'chapter.rejectReason': 'Rejection reason (required; not used for automatic training)',
+  'chapter.rejectCandidate': 'Reject candidate',
+  'chapter.rejectRequested': 'The rejection was sent to the assistant; success releases this chapter’s pending slot.',
 }

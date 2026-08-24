@@ -38,6 +38,9 @@ export async function generateNextChapter(
   // 覆盖保护: 目标候选已存在 → 先抛清楚冲突(fail-fast, 不调 LLM、不改旧文件、不新增 commit)。
   const next = chapterIndex + 1;
   const candidateFile = `${paths(root).chapters.pending}/${String(next).padStart(3, "0")}.md`;
+  if (existsSync(paths(root).chapters.chapterFile(next))) {
+    throw new StoreError("CONFLICT", `第 ${next} 章已存在, 不能生成“下一章”候选`);
+  }
   if (existsSync(candidateFile)) {
     throw new StoreError(
       "CONFLICT",

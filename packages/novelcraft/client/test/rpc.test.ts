@@ -2,7 +2,7 @@
 // 断言引设计文档 §9/§17 + wire 契约: watch/state 四态数据、inbox/list 卡片
 // (作者语言)、inbox/act 四动词回 assistant.act(adopt 指引给助手, UI 不写资产);
 // 未绑定 → capability 缺省, 不炸通道。
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
@@ -15,6 +15,7 @@ import {
   createNovelcraftHandlers,
   ENDPOINTS,
   RPC_CHANNEL,
+  type ChapterWorkspaceValue,
   type NovelcraftHostService,
 } from '../src/index.js';
 
@@ -851,6 +852,37 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
       sessionId: 'unknown', chapterIndex: 1, expected_content_hash: value.chapter.content_hash, text: 'x',
     })).ok).toBe(false);
     expect(readCurrentChapter(env.root, 1).body).toBe('第二稿\n');
+    env.cleanup();
+  });
+
+  it('ENDPOINTS.chapterWorkspace: 下一章 active pending 可从章节列表进入', async () => {
+    const env = setupDispatchApp();
+    const { contentHash, gitAdd, gitCommit } = await import('@novelcraft/store');
+    const { ingestChapter } = await import('@novelcraft/writing');
+    ingestChapter(env.root, { chapterIndex: 1, text: '当前章', source: 'test', title: '第一章' });
+    gitAdd(env.root, ['chapters/001.md']);
+    gitCommit(env.root, 'chapter baseline');
+    const body = '候选下一章\n';
+    // 与 generateNextChapter 落盘格式一致: frontmatter 以 '---\n' 结束后直接拼 body,
+    // 否则 parseFrontmatter 剥离后 body 会多前导空行/丢尾换行, content_hash 校验失败。
+    writeFileSync(path.join(env.root, 'chapters', 'pending', '002.md'), [
+      '---',
+      'chapter_index: 2',
+      'status: candidate',
+      `content_hash: ${contentHash(body)}`,
+      'source: writing_generate',
+      '---',
+      '',
+    ].join('\n') + body);
+    gitAdd(env.root, ['chapters/pending/002.md']);
+    gitCommit(env.root, 'generate candidate ch2');
+
+    const listed = await env.dispatch(ENDPOINTS.chapterWorkspace, { sessionId: 's1', chapterIndex: 0 });
+    expect(listed.ok && (listed.value as ChapterWorkspaceValue).chapters.map((chapter) => chapter.index)).toEqual([1, 2]);
+    const pending = await env.dispatch(ENDPOINTS.chapterWorkspace, { sessionId: 's1', chapterIndex: 2 });
+    expect(pending.ok).toBe(true);
+    expect((pending.value as ChapterWorkspaceValue).chapter).toBeNull();
+    expect((pending.value as ChapterWorkspaceValue).candidate?.body).toBe(body);
     env.cleanup();
   });
 

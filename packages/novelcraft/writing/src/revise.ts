@@ -10,17 +10,21 @@ import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import {
-  adopt,
+  assertNoInternalSymlink,
   contentHash,
+  executeCanonicalWrite,
   executePreparedAdopt,
   gitAdd,
   gitCommit,
+  gitHead,
   parseFrontmatter,
-  prepareAdopt,
+  prepareCanonicalWrite,
   readCurrentChapter,
   relOf,
   resolveAsset,
+  serializeFrontmatter,
   StoreError,
+  validateFrontmatterForWrite,
   type AdoptOptions,
   type AdoptResult,
   type PreparedAdopt,
@@ -235,6 +239,15 @@ export function prepareReviewedChapterCandidateAdopt(
   ref: string,
   opts: AdoptOptions = {},
 ): PreparedAdopt {
+  return prepareChapterCandidateAdopt(root, ref, opts, true);
+}
+
+function prepareChapterCandidateAdopt(
+  root: string,
+  ref: string,
+  opts: AdoptOptions,
+  requireReview: boolean,
+): PreparedAdopt {
   const asset = resolveAsset(root, "chapter_candidate", ref);
   const raw = readFileSync(asset.abs, "utf8");
   const parsed = parseFrontmatter(raw);
@@ -253,19 +266,128 @@ export function prepareReviewedChapterCandidateAdopt(
   if (opts.expectedContentHash !== undefined && opts.expectedContentHash !== actualHash) {
     throw new StoreError("CONFLICT", `章节候选 ${ref} content_hash CAS 失败`);
   }
-  assertRevisionBaseline(root, fm, asset.slug);
-  const review = latestCandidateReview(root, chapterIndex, asset.slug);
-  if (
-    review === undefined || review.verdict !== "pass" ||
-    review.target_content_hash !== actualHash || review.target_file_hash !== contentHash(raw)
-  ) {
-    throw new StoreError("VALIDATION_FAILED", `章节候选 ${ref} 缺少 fresh 独立审查 pass`);
+  let targetCurrent: string | null;
+  const targetRel = `chapters/${String(chapterIndex).padStart(3, "0")}.md`;
+  if (fm.source === "writing_revise") {
+    assertRevisionBaseline(root, fm, asset.slug);
+    const current = readCurrentChapter(root, chapterIndex);
+    targetCurrent = readFileSync(paths(root).chapters.chapterFile(chapterIndex), "utf8");
+    if (current.file !== targetRel) throw new StoreError("BAD_CANDIDATE", `章节候选 ${ref} 目标章不一致`);
+  } else if (fm.source === "writing_generate") {
+    if (existsSync(paths(root).chapters.chapterFile(chapterIndex))) {
+      throw new StoreError("CONFLICT", `第 ${chapterIndex} 章已存在, 拒绝采用旧续写候选`);
+    }
+    targetCurrent = null;
+  } else {
+    throw new StoreError("BAD_CANDIDATE", `章节候选 ${ref} source 不受支持`);
   }
-  return prepareAdopt(root, "chapter_candidate", asset.slug, { ...opts, expectedContentHash: actualHash });
+  // R9: 写前对落盘目标与源候选逐段 symlink 复检(resolve 后不得被换成 symlink,
+  // 与 store.prepareAdopt 同款防线; 执行器只兜底最终组件)。
+  assertNoInternalSymlink(root, paths(root).chapters.chapterFile(chapterIndex));
+  assertNoInternalSymlink(root, asset.abs);
+  if (requireReview) {
+    const review = latestCandidateReview(root, chapterIndex, asset.slug);
+    if (
+      review === undefined || review.verdict !== "pass" ||
+      review.target_content_hash !== actualHash || review.target_file_hash !== contentHash(raw)
+    ) {
+      throw new StoreError("VALIDATION_FAILED", `章节候选 ${ref} 缺少 fresh 独立审查 pass`);
+    }
+  }
+  const now = new Date().toISOString();
+  const draftFm: Record<string, unknown> = {
+    ...fm,
+    status: "draft",
+    content_hash: actualHash,
+    provenance: {
+      ...(fm.provenance && typeof fm.provenance === "object" && !Array.isArray(fm.provenance)
+        ? fm.provenance as Record<string, unknown>
+        : {}),
+      adopted_from_candidate_id: asset.slug,
+      adopted_at: now,
+      adopted_by: opts.adoptedBy ?? "author",
+    },
+  };
+  // 与 store.prepareAdopt 同款: 顶层历史字段不带入 draft(归 provenance, 防混淆)。
+  delete draftFm.adopted_from_candidate_id;
+  const draft = validateFrontmatterForWrite("chapter", draftFm, String(chapterIndex).padStart(3, "0"));
+  return Object.freeze({
+    write: prepareCanonicalWrite(root, [
+      { path: targetRel, current: targetCurrent, output: serializeFrontmatter(draft, parsed.body) },
+      { path: asset.rel, current: raw, output: undefined },
+    ], {
+      purpose: `adopt(chapter): ${asset.slug} -> ${targetRel}`,
+      expectedHead: gitHead(root),
+      ...(opts.tx ? { tx: opts.tx } : {}),
+    }),
+    result: Object.freeze({
+      kind: "chapter_candidate" as const,
+      ref: asset.slug,
+      fromStatus: "candidate",
+      toStatus: "draft",
+      targetRelPath: targetRel,
+    }),
+  });
 }
 
 export function executeReviewedChapterCandidateAdopt(prepared: PreparedAdopt): Promise<AdoptResult> {
   return executePreparedAdopt(prepared);
+}
+
+export interface ChapterCandidateRejectResult {
+  chapterIndex: number;
+  ref: string;
+  decision: "rejected";
+  reason: string;
+  commit: string;
+}
+
+/** Candidate rejection is one exact transaction: durable decision receipt + active pending deletion. */
+export async function rejectChapterCandidate(
+  root: string,
+  chapterIndex: number,
+  ref: string,
+  expectedContentHash: string,
+  reason: string,
+  now: Date = new Date(),
+): Promise<ChapterCandidateRejectResult> {
+  const why = reason.trim();
+  if (why === "" || why.length > 1000) {
+    throw new StoreError("VALIDATION_FAILED", "拒绝候选必须提供 1-1000 字理由");
+  }
+  const asset = resolveAsset(root, "chapter_candidate", ref);
+  const raw = readFileSync(asset.abs, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const fm = parsed.data as Record<string, unknown>;
+  if (fm.status !== "candidate" || Number(fm.chapter_index) !== chapterIndex) {
+    throw new StoreError("BAD_CANDIDATE", `候选 ${ref} 不是第 ${chapterIndex} 章 active candidate`);
+  }
+  const actualHash = contentHash(parsed.body);
+  if (fm.content_hash !== actualHash) {
+    throw new StoreError("BAD_CANDIDATE", `候选 ${ref} content_hash 与实际正文不一致`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(expectedContentHash) || expectedContentHash !== actualHash) {
+    throw new StoreError("CONFLICT", `候选 ${ref} 已变化, 拒绝决定未执行`);
+  }
+  const receipt = {
+    decision: "rejected" as const,
+    chapter_index: chapterIndex,
+    candidate_ref: asset.slug,
+    candidate_content_hash: actualHash,
+    reason: why,
+    decided_at: now.toISOString(),
+  };
+  const receiptFile = paths(root).assistant.reviewFile(
+    `candidate-decision-${String(chapterIndex).padStart(3, "0")}-${asset.slug}-${now.getTime()}`,
+  );
+  // R9: 删除目标与回执落盘路径写前逐段 symlink 复检(执行器只兜底最终组件)。
+  assertNoInternalSymlink(root, asset.abs);
+  assertNoInternalSymlink(root, receiptFile);
+  const result = await executeCanonicalWrite(root, [
+    { path: asset.rel, current: raw, output: undefined },
+    { path: relOf(root, receiptFile), current: null, output: JSON.stringify(receipt, null, 2) + "\n" },
+  ], { purpose: `reject chapter candidate ${chapterIndex}:${asset.slug}`, expectedHead: gitHead(root) });
+  return { chapterIndex, ref: asset.slug, decision: "rejected", reason: why, commit: result.commit };
 }
 
 /** 采用序号最小的候选(copy-on-adopt → draft + git commit, 脏工作区拒绝由 store 保证)。 */
@@ -277,9 +399,7 @@ export async function adoptChapterCandidate(root: string): Promise<{ ok: boolean
   if (files.length === 0) throw new Error("无候选可采用");
   files.sort();
   const ref = files[0].replace(/\.md$/, ""); // "003"
-  // P1: 修订候选在 store.adopt 前做基线校验(缺字段/失配 → fail-closed, 零写入零 commit)。
-  const { data: fm } = parseFrontmatter(readFileSync(`${pendingDir}/${files[0]}`, "utf8"));
-  assertRevisionBaseline(root, fm as Record<string, unknown>, ref);
-  await adopt(root, "chapter_candidate", ref);
+  // P1 基线校验由 prepareChapterCandidateAdopt 内部完成(revise 候选 fail-closed, 零写入零 commit)。
+  await executePreparedAdopt(prepareChapterCandidateAdopt(root, ref, {}, false));
   return { ok: true };
 }

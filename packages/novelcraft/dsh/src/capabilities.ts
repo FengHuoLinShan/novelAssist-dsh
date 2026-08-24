@@ -33,6 +33,7 @@ export interface NovelCraftProposeCapabilities {
   reviewChapter: Bound<'reviewChapter'>;
   reviseChapter: Bound<'reviseChapter'>;
   rejectChapterFinding: Bound<'rejectChapterFinding'>;
+  rejectChapterCandidate: Bound<'rejectChapterCandidate'>;
   scanHealth: Bound<'scanHealth'>;
   radarSweep: Bound<'radarSweep'>;
   refreshIndex: Bound<'refreshIndex'>;
@@ -88,6 +89,7 @@ export function createNovelCraftCapabilities(service: NovelCraftService): NovelC
       reviewChapter: bind(service, 'reviewChapter'),
       reviseChapter: bind(service, 'reviseChapter'),
       rejectChapterFinding: bind(service, 'rejectChapterFinding'),
+      rejectChapterCandidate: bind(service, 'rejectChapterCandidate'),
       scanHealth: bind(service, 'scanHealth'),
       radarSweep: bind(service, 'radarSweep'),
       refreshIndex: bind(service, 'refreshIndex'),

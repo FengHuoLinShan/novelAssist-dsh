@@ -8,9 +8,12 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import {
+  assertNoInternalSymlink,
   contentHash,
+  executeCanonicalWrite,
   gitAdd,
   gitCommit,
+  gitHead,
   parseFrontmatter,
   readCurrentChapter,
   relOf,
@@ -147,7 +150,9 @@ export async function reviewChapter(
   chapterIndex: number,
   now: Date = new Date(),
 ): Promise<ReviewResult> {
-  const { body, contentHash } = chapterBody(root, chapterIndex);
+  const chapterFile = paths(root).chapters.chapterFile(chapterIndex);
+  const frozenFileHash = contentHash(readFileSync(chapterFile, "utf8"));
+  const { body, contentHash: chapterContentHash } = chapterBody(root, chapterIndex);
   const r = await runStep(provider, { specRef: "semantic_review", input: body });
   if (!r.ok) return { ok: false, error: r.error };
 
@@ -162,16 +167,26 @@ export async function reviewChapter(
   const record: ReviewRecord = {
     chapter_index: chapterIndex,
     chapter_file: paths(root).chapters.chapterFile(chapterIndex),
-    content_hash: contentHash,
+    content_hash: chapterContentHash,
     reviewed_at: now.toISOString(),
     review_id: reviewId,
     findings,
     verdict: parsed.verdict,
   };
   const file = paths(root).assistant.reviewFile(`semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`);
-  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
-  gitAdd(root, [relOf(root, file)]);
-  gitCommit(root, `review chapter ${chapterIndex}: ${reviewId}`);
+  assertNoInternalSymlink(root, file); // R9: 回执落盘路径写前逐段 symlink 复检。
+  await executeCanonicalWrite(root, [{
+    path: relOf(root, file),
+    current: null,
+    output: JSON.stringify(record, null, 2) + "\n",
+  }], {
+    purpose: `review chapter ${chapterIndex}: ${reviewId}`,
+    validate: () => {
+      if (contentHash(readFileSync(chapterFile, "utf8")) !== frozenFileHash) {
+        throw new StoreError("CONFLICT", `第 ${chapterIndex} 章在审查期间发生变化, 审查结果未落盘`);
+      }
+    },
+  });
   return { ok: true, review: record };
 }
 
@@ -185,10 +200,6 @@ export async function reviewCurrentChapter(
   const frozen = readCurrentChapter(root, chapterIndex);
   const result = await runStep(provider, { specRef: "semantic_review", input: frozen.body });
   if (!result.ok) return { ok: false, error: result.error };
-  const current = readCurrentChapter(root, chapterIndex);
-  if (current.head !== frozen.head || current.contentHash !== frozen.contentHash) {
-    throw new StoreError("CONFLICT", `第 ${chapterIndex} 章在审查期间发生变化, 审查结果未落盘`);
-  }
   const parsed = result.result as { findings?: unknown[]; verdict?: string };
   const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
   const findings = rawFindings
@@ -218,9 +229,20 @@ export async function reviewCurrentChapter(
     unlocated_finding_ids: unlocated,
   };
   const file = paths(root).assistant.reviewFile(`semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`);
-  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
-  gitAdd(root, [relOf(root, file)]);
-  gitCommit(root, `review chapter ${chapterIndex}: ${reviewId}`);
+  assertNoInternalSymlink(root, file); // R9: 回执落盘路径写前逐段 symlink 复检。
+  await executeCanonicalWrite(root, [{
+    path: relOf(root, file),
+    current: null,
+    output: JSON.stringify(record, null, 2) + "\n",
+  }], {
+    purpose: `review chapter ${chapterIndex}: ${reviewId}`,
+    validate: () => {
+      const latest = readCurrentChapter(root, chapterIndex);
+      if (latest.contentHash !== frozen.contentHash) {
+        throw new StoreError("CONFLICT", `第 ${chapterIndex} 章在审查期间发生变化, 审查结果未落盘`);
+      }
+    },
+  });
   return { ok: true, review: record };
 }
 
@@ -268,10 +290,6 @@ export async function reviewChapterCandidate(
   const frozen = readChapterCandidate(root, chapterIndex, ref);
   const result = await runStep(provider, { specRef: "semantic_review", input: frozen.body });
   if (!result.ok) return { ok: false, error: result.error };
-  const current = readChapterCandidate(root, chapterIndex, ref);
-  if (current.fileHash !== frozen.fileHash) {
-    throw new StoreError("CONFLICT", `候选 ${ref} 在审查期间发生变化, 审查结果未落盘`);
-  }
   const parsed = result.result as { findings?: unknown[]; verdict?: string };
   const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
   const findings = rawFindings
@@ -303,9 +321,19 @@ export async function reviewChapterCandidate(
   const file = paths(root).assistant.reviewFile(
     `candidate-review-${String(chapterIndex).padStart(3, "0")}-${frozen.ref}-${reviewId}`,
   );
-  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
-  gitAdd(root, [relOf(root, file)]);
-  gitCommit(root, `review chapter candidate ${chapterIndex}:${frozen.ref}`);
+  assertNoInternalSymlink(root, file); // R9: 回执落盘路径写前逐段 symlink 复检。
+  await executeCanonicalWrite(root, [{
+    path: relOf(root, file),
+    current: null,
+    output: JSON.stringify(record, null, 2) + "\n",
+  }], {
+    purpose: `review chapter candidate ${chapterIndex}:${frozen.ref}`,
+    validate: () => {
+      if (readChapterCandidate(root, chapterIndex, ref).fileHash !== frozen.fileHash) {
+        throw new StoreError("CONFLICT", `候选 ${ref} 在审查期间发生变化, 审查结果未落盘`);
+      }
+    },
+  });
   return { ok: true, review: record };
 }
 
@@ -340,16 +368,18 @@ export function latestReview(root: string, chapterIndex: number): ReviewRecord |
   return JSON.parse(readFileSync(`${dir}/${files[files.length - 1]}`, "utf8")) as ReviewRecord;
 }
 
+function reviewRecordFile(root: string, chapterIndex: number, reviewId: string): string {
+  const dir = paths(root).assistant.reviews;
+  const target = `semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}.json`;
+  const found = readdirSync(dir, { withFileTypes: true })
+    .some((entry) => entry.isFile() && entry.name === target);
+  if (!found) throw new Error(`审查记录不存在: ${reviewId}`);
+  return `${dir}/${target}`;
+}
+
 /** 打回 finding(幂等标记; 旧接口, 按数组序号定位, N30 保留兼容)。 */
 export function rejectFinding(root: string, chapterIndex: number, reviewId: string, findingIndex: number): void {
-  const dir = paths(root).assistant.reviews;
-  const prefix = `semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`;
-  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
-  const files = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.startsWith(prefix) && e.name.endsWith(".json"))
-    .map((e) => e.name);
-  if (files.length === 0) throw new Error(`审查记录不存在: ${reviewId}`);
-  const file = `${dir}/${files[0]}`;
+  const file = reviewRecordFile(root, chapterIndex, reviewId);
   const record = JSON.parse(readFileSync(file, "utf8")) as ReviewRecord;
   if (findingIndex < 0 || findingIndex >= record.findings.length) {
     throw new Error(`finding 序号非法: ${findingIndex}`);
@@ -372,14 +402,7 @@ export function rejectFindingById(
   findingId: string,
   reason?: string,
 ): void {
-  const dir = paths(root).assistant.reviews;
-  const prefix = `semantic-review-${String(chapterIndex).padStart(3, "0")}-${reviewId}`;
-  // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
-  const files = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.startsWith(prefix) && e.name.endsWith(".json"))
-    .map((e) => e.name);
-  if (files.length === 0) throw new Error(`审查记录不存在: ${reviewId}`);
-  const file = `${dir}/${files[0]}`;
+  const file = reviewRecordFile(root, chapterIndex, reviewId);
   const record = JSON.parse(readFileSync(file, "utf8")) as ReviewRecord;
   if (!record.findings.some((f) => f.finding_id === findingId)) {
     throw new Error(`finding_id 不存在: ${findingId}`);
@@ -392,6 +415,43 @@ export function rejectFindingById(
   writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
   gitAdd(root, [relOf(root, file)]);
   gitCommit(root, `reject finding ${reviewId}:${findingId}`);
+}
+
+/** Public finding dismissal uses the canonical transaction so unrelated staged bytes can never join its commit. */
+export async function rejectFindingByIdTransactional(
+  root: string,
+  chapterIndex: number,
+  reviewId: string,
+  findingId: string,
+  reason: string,
+): Promise<void> {
+  const why = reason.trim();
+  if (why === "" || why.length > 1000) {
+    throw new StoreError("VALIDATION_FAILED", "打回 finding 必须提供 1-1000 字理由");
+  }
+  const file = reviewRecordFile(root, chapterIndex, reviewId);
+  assertNoInternalSymlink(root, file); // R9: 回执改写路径写前逐段 symlink 复检。
+  const current = readFileSync(file, "utf8");
+  const record = JSON.parse(current) as ReviewRecord;
+  if (!record.findings.some((finding) => finding.finding_id === findingId)) {
+    throw new Error(`finding_id 不存在: ${findingId}`);
+  }
+  record.rejected_findings = record.rejected_findings ?? {};
+  record.rejected_findings[findingId] = { at: new Date().toISOString(), reason: why };
+  await executeCanonicalWrite(root, [{
+    path: relOf(root, file),
+    current,
+    output: JSON.stringify(record, null, 2) + "\n",
+  }], {
+    purpose: `reject finding ${reviewId}:${findingId}`,
+    expectedHead: gitHead(root),
+    validate: () => {
+      const latest = readCurrentChapter(root, chapterIndex);
+      if (record.target_kind !== "current" || record.target_content_hash !== latest.contentHash) {
+        throw new StoreError("CONFLICT", `审查 ${reviewId} 已过期, finding 打回未执行`);
+      }
+    },
+  });
 }
 
 export { registerWritingSpecsOnce };

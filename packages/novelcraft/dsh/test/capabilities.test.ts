@@ -11,7 +11,7 @@ function fakeService(): NovelCraftService {
     'viewMapAtlas', 'inbox', 'ragSearch', 'chapterCurrent', 'chapterHistory', 'chapterDiff', 'chapterReview',
     'runStep', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
     'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'ingestTextFile',
-    'reviewChapter', 'reviseChapter', 'rejectChapterFinding', 'scanHealth',
+    'reviewChapter', 'reviseChapter', 'rejectChapterFinding', 'rejectChapterCandidate', 'scanHealth',
     'radarSweep', 'refreshIndex', 'ragSync', 'ragEmbed', 'applyAtlasAnnotationQueue', 'adoptGuarded',
     'worldCreateGuarded', 'worldUpdateGuarded', 'reviewMapAtlasGuarded', 'deepImport',
     'saveChapterGuarded', 'restoreChapterGuarded',

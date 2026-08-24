@@ -55,6 +55,16 @@ describe("generateNextChapter(选定方向 → 正文候选)", () => {
     expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false);
   });
 
+  it("目标下一章已存在 → provider 前 CONFLICT", async () => {
+    const root = makeRoot();
+    ingestChapter(root, { chapterIndex: 2, text: "作者正文", source: "paste" });
+    const provider = new MockProvider({ responses: [{ text: "不应消费" }] });
+    await expect(generateNextChapter(provider, root, 1, { proposalTitle: "t" }))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+    expect(provider.calls).toHaveLength(0);
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false);
+  });
+
   it("git 精确暂存候选文件(完整相对 POSIX pathspec, 绝不 -A); 无关用户改动保留", async () => {
     const root = makeRoot();
     gitAdd(root); gitCommit(root, "fixture init"); // 基线 commit: chapters/001.md 成为 tracked
@@ -116,8 +126,8 @@ describe("pending 候选覆盖保护(双向)", () => {
   });
   it("交叉: generate 先写 002 → applyRevision(第 2 章)目标已存在 → CONFLICT", async () => {
     const root = makeRoot();
-    ingestChapter(root, { chapterIndex: 2, text: "第二章正文。", source: "paste" });
     await generateNextChapter(new MockProvider({ responses: [{ text: "第二章正文候选" }] }), root, 1, { proposalTitle: "t" });
+    ingestChapter(root, { chapterIndex: 2, text: "第二章正文。", source: "paste" });
     await reviewChapter(new MockProvider({ responses: [{ text: JSON.stringify({ findings: [finding] }) }] }), root, 2);
     const file = join(root, "chapters", "pending", "002.md");
     const before = readFileSync(file, "utf8");

@@ -1,6 +1,6 @@
 // R3 审查/返修/采用行为契约(PLAN.md 步骤 2-4)
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,8 @@ import {
   latestReview,
   normalizeFinding,
   prepareReviewedChapterCandidateAdopt,
+  readChapterCandidate,
+  rejectChapterCandidate,
   rejectFinding,
   rejectFindingById,
   reviewChapter,
@@ -108,6 +110,7 @@ describe("public current/candidate review gate (§6.16)", () => {
     const result = await executeReviewedChapterCandidateAdopt(prepareReviewedChapterCandidateAdopt(root, "002"));
     expect(result.targetRelPath).toBe("chapters/002.md");
     expect(readFileSync(join(root, "chapters", "002.md"), "utf8")).toContain("第二章正文候选");
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false);
   });
 
   it("作者已打回的 finding 不得再进入公开返修", async () => {
@@ -120,6 +123,36 @@ describe("public current/candidate review gate (§6.16)", () => {
     const id = reviewed.review!.findings[0].finding_id;
     rejectFindingById(root, 1, reviewed.review!.review_id, id, "这里是有意伏笔");
     await expect(applyReviewedRevision(new MockProvider({ responses: [] }), root, 1, [id])).rejects.toThrow(/已被作者打回/);
+  });
+
+  it("审查回执遇到预 staged 内容 → STAGED_CONFLICT 且不卷入 commit", async () => {
+    const root = makeRoot();
+    gitAdd(root, ["chapters/001.md"]);
+    gitCommit(root, "chapter baseline");
+    writeFileSync(join(root, "notes.md"), "用户已暂存", "utf8");
+    gitAdd(root, ["notes.md"]);
+    await expect(reviewCurrentChapter(new MockProvider({ responses: [{
+      text: JSON.stringify({ findings: [] }),
+    }] }), root, 1)).rejects.toMatchObject({ code: "STAGED_CONFLICT" });
+    expect(latestReview(root, 1)).toBeUndefined();
+    expect(new Map(gitStatusEntries(root).map((entry) => [entry.path, entry.status])).get("notes.md")).toBe("A ");
+  });
+
+  it("审查期间的无关 commit 不使目标章节审查失效", async () => {
+    const root = makeRoot();
+    gitAdd(root, ["chapters/001.md"]);
+    gitCommit(root, "chapter baseline");
+    const provider: Provider = {
+      async complete() {
+        writeFileSync(join(root, "notes.md"), "与章节无关", "utf8");
+        gitAdd(root, ["notes.md"]);
+        gitCommit(root, "unrelated note");
+        return { text: JSON.stringify({ findings: [] }), usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const reviewed = await reviewCurrentChapter(provider, root, 1);
+    expect(reviewed.ok).toBe(true);
+    expect(reviewed.review?.target_content_hash).toBe(contentHashOf("第一章正文\n"));
   });
 });
 
@@ -168,10 +201,7 @@ describe("applyRevision / adoptChapterCandidate(步骤 3/4)", () => {
     expect(r.ok).toBe(true);
     const raw = readFileSync(join(root, "chapters", "001.md"), "utf8");
     expect(raw).toContain("修订后的正文");
-    // N23: 原候选转 deprecated 后仍保留 source(校验的是最终落盘 frontmatter)。
-    const dep = readFileSync(join(root, "chapters", "pending", "001.md"), "utf8");
-    expect(dep).toContain("status: deprecated");
-    expect(dep).toContain("source: writing_revise");
+    expect(existsSync(join(root, "chapters", "pending", "001.md"))).toBe(false);
   });
   it("无候选可采用时抛错", async () => {
     const root = makeRoot();
@@ -237,10 +267,7 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
     expect(r.ok).toBe(true);
     const raw = readFileSync(join(root, "chapters", "001.md"), "utf8");
     expect(raw).toContain("修订后的正文");
-    // 候选已处理(source 保留 writing_revise, N23 校验最终落盘 fm)。
-    const dep = readFileSync(join(root, "chapters", "pending", "001.md"), "utf8");
-    expect(dep).toContain("status: deprecated");
-    expect(dep).toContain("source: writing_revise");
+    expect(existsSync(join(root, "chapters", "pending", "001.md"))).toBe(false);
   });
 
   it("返修生成后正文被另改并 commit → 采用拒绝(CONFLICT), 候选/正文不变、无新 commit", async () => {
@@ -289,7 +316,7 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
     // 明确基线拒绝(fail-closed, 零写入零 commit)。
     writeFileSync(
       join(root, "chapters", "pending", "001.md"),
-      `---\nchapter_index: 1\nstatus: candidate\ncontent_hash: ${"0".repeat(64)}\nbase_chapter: 9\nbase_content_hash: ${"a".repeat(64)}\nsource: writing_revise\n---\n修订正文\n`,
+      `---\nchapter_index: 1\nstatus: candidate\ncontent_hash: ${contentHashOf("修订正文\n")}\nbase_chapter: 9\nbase_content_hash: ${"a".repeat(64)}\nsource: writing_revise\n---\n修订正文\n`,
     );
     gitAdd(root);
     gitCommit(root, "orphan-base candidate");
@@ -312,9 +339,10 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
     for (const text of ["正文", "正文\n", "正文\n\n"]) {
       const root = makeRootWithText(text);
       const frozen = contentHashOf(normalizeChapterText(text)); // 旧候选冻结值(存储字段)
+      const candidateHash = contentHashOf("修订正文\n");
       writeFileSync(
         join(root, "chapters", "pending", "001.md"),
-        `---\nchapter_index: 1\nstatus: candidate\ncontent_hash: ${"0".repeat(64)}\nbase_chapter: 1\nbase_content_hash: ${frozen}\nfinding_ids: [0]\nsource: writing_revise\n---\n修订正文\n`,
+        `---\nchapter_index: 1\nstatus: candidate\ncontent_hash: ${candidateHash}\nbase_chapter: 1\nbase_content_hash: ${frozen}\nfinding_ids: [0]\nsource: writing_revise\n---\n修订正文\n`,
       );
       gitAdd(root);
       gitCommit(root, "old-convention candidate");
@@ -332,7 +360,7 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
     const frozen = contentHashOf("正文");
     writeFileSync(
       join(root, "chapters", "pending", "001.md"),
-      `---\nchapter_index: 1\nstatus: candidate\ncontent_hash: ${"0".repeat(64)}\nbase_chapter: 1\nbase_content_hash: ${frozen}\nfinding_ids: [0]\nsource: writing_revise\n---\n修订正文\n`,
+      `---\nchapter_index: 1\nstatus: candidate\ncontent_hash: ${contentHashOf("修订正文\n")}\nbase_chapter: 1\nbase_content_hash: ${frozen}\nfinding_ids: [0]\nsource: writing_revise\n---\n修订正文\n`,
     );
     gitAdd(root);
     gitCommit(root, "candidate");
@@ -376,7 +404,7 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
     expect(gitLogSubjects(root).length).toBe(commitsBefore);
   });
 
-  it("普通 writing_generate 候选不强制 base hash: 正文另改后仍可采用", async () => {
+  it("writing_generate 冻结目标章不存在；前一章变化不影响采用", async () => {
     const root = makeRoot();
     await generateNextChapter(new MockProvider({ responses: [{ text: "第二章正文候选" }] }), root, 1, {
       proposalTitle: "雨夜对峙",
@@ -389,6 +417,21 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
     expect(r.ok).toBe(true);
     const raw = readFileSync(join(root, "chapters", "002.md"), "utf8");
     expect(raw).toContain("第二章正文候选");
+  });
+
+  it("writing_generate 候选等待期间目标章出现 → CONFLICT，候选保留", async () => {
+    const root = makeRoot();
+    await generateNextChapter(new MockProvider({ responses: [{ text: "第二章正文候选" }] }), root, 1, {
+      proposalTitle: "雨夜对峙",
+    });
+    const pending = join(root, "chapters", "pending", "002.md");
+    const before = readFileSync(pending, "utf8");
+    ingestChapter(root, { chapterIndex: 2, text: "作者已写第二章", source: "paste" });
+    gitAdd(root, ["chapters/002.md"]);
+    gitCommit(root, "author wrote chapter 2");
+    await expect(adoptChapterCandidate(root)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(readFileSync(pending, "utf8")).toBe(before);
+    expect(readFileSync(join(root, "chapters", "002.md"), "utf8")).toContain("作者已写第二章");
   });
   it("并发回归: LLM 等待期间目标被另一流程创建 → 写前 'wx' 独占创建拒绝, 旧字节不变无 commit", async () => {
     const root = makeRoot();
@@ -412,6 +455,42 @@ describe("adoptChapterCandidate 修订基线校验(P1)", () => {
   });
 });
 
+describe("candidate reject terminal (§6.16)", () => {
+  it("同一事务保存理由并删除 active pending；随后可重新生成", async () => {
+    const root = makeRoot();
+    await generateNextChapter(new MockProvider({ responses: [{ text: "不要的第二章" }] }), root, 1, { proposalTitle: "t" });
+    const snapshot = readChapterCandidate(root, 2, "002");
+    const beforeChapter = readFileSync(join(root, "chapters", "001.md"), "utf8");
+    const result = await rejectChapterCandidate(root, 2, "002", snapshot.contentHash, "方向不符合主角动机");
+    expect(result.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false);
+    expect(readFileSync(join(root, "chapters", "001.md"), "utf8")).toBe(beforeChapter);
+    const decision = readdirSync(join(root, ".assistant", "reviews"))
+      .find((name) => name.startsWith("candidate-decision-002-002-"));
+    expect(decision).toBeDefined();
+    expect(JSON.parse(readFileSync(join(root, ".assistant", "reviews", decision!), "utf8")))
+      .toMatchObject({ decision: "rejected", reason: "方向不符合主角动机" });
+    const regenerated = await generateNextChapter(
+      new MockProvider({ responses: [{ text: "新的第二章" }] }), root, 1, { proposalTitle: "t2" },
+    );
+    expect(regenerated.ok).toBe(true);
+  });
+
+  it("stale hash 或预 staged 内容均零删除", async () => {
+    const root = makeRoot();
+    await generateNextChapter(new MockProvider({ responses: [{ text: "第二章候选" }] }), root, 1, { proposalTitle: "t" });
+    const pending = join(root, "chapters", "pending", "002.md");
+    await expect(rejectChapterCandidate(root, 2, "002", "0".repeat(64), "不采用"))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+    writeFileSync(join(root, "notes.md"), "用户已暂存", "utf8");
+    gitAdd(root, ["notes.md"]);
+    const snapshot = readChapterCandidate(root, 2, "002");
+    await expect(rejectChapterCandidate(root, 2, "002", snapshot.contentHash, "不采用"))
+      .rejects.toMatchObject({ code: "STAGED_CONFLICT" });
+    expect(existsSync(pending)).toBe(true);
+  });
+});
+
 describe("rejectFinding(打回, 幂等标记)", () => {
   it("标记 rejected_findings; 非法序号拒绝", async () => {
     const root = makeRoot();
@@ -423,6 +502,18 @@ describe("rejectFinding(打回, 幂等标记)", () => {
     const latest = latestReview(root, 1)!;
     expect(latest.rejected_findings?.["0"]).toBeDefined();
     expect(() => rejectFinding(root, 1, r.review!.review_id, 9)).toThrow(/序号非法/);
+  });
+
+  it("reviewId 精确匹配: 短前缀 id(r1)不得误命中长 id(r1699…)回执", async () => {
+    const root = makeRoot();
+    const provider = new MockProvider({
+      responses: [{ text: JSON.stringify({ findings: [finding] }) }],
+    });
+    const r = await reviewChapter(provider, root, 1, new Date(1699000000000));
+    expect(r.review!.review_id).toBe("r1699000000000");
+    // 旧实现 startsWith(prefix) 会把 r1 误匹配到 r1699000000000 → 精确匹配后 fail-closed。
+    expect(() => rejectFindingById(root, 1, "r1", "finding_x")).toThrow(/审查记录不存在/);
+    expect(() => rejectFinding(root, 1, "r1", 0)).toThrow(/审查记录不存在/);
   });
 });
 

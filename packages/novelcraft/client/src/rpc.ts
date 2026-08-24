@@ -614,11 +614,34 @@ export function createNovelcraftHandlers(ctx: Context) {
         const chapters = rebuildIndex(binding.root).chapters
           .filter((chapter) => ['draft', 'published', 'canonical'].includes(chapter.status))
           .map((chapter) => ({ index: chapter.index, ...(chapter.title !== undefined ? { title: chapter.title } : {}) }));
+        const knownIndexes = new Set(chapters.map((chapter) => chapter.index));
+        const pendingDir = vaultPaths(binding.root).chapters.pending;
+        if (existsSync(pendingDir)) {
+          for (const file of readdirSync(pendingDir).sort()) {
+            const match = /^(\d{3})\.md$/.exec(file);
+            if (!match) continue;
+            const candidateIndex = Number(match[1]);
+            if (candidateIndex < 1 || knownIndexes.has(candidateIndex)) continue;
+            try {
+              readChapterCandidate(binding.root, candidateIndex, match[1]);
+              chapters.push({ index: candidateIndex });
+              knownIndexes.add(candidateIndex);
+            } catch {
+              // Malformed pending files are not valid workspace chapters.
+            }
+          }
+          chapters.sort((left, right) => left.index - right.index);
+        }
         if (index === 0) {
           return rpcOk({ bound: { book: binding.book, root: binding.root }, chapters, chapter: null, history: [], review: null, candidate: null, diff: null });
         }
-        const chapter = readCurrentChapter(binding.root, index);
-        const history = listChapterHistory(binding.root, index).map((entry) => ({
+        let chapter: ReturnType<typeof readCurrentChapter> | null = null;
+        try {
+          chapter = readCurrentChapter(binding.root, index);
+        } catch (error) {
+          if ((error as { code?: string }).code !== 'NOT_FOUND') throw error;
+        }
+        const history = chapter ? listChapterHistory(binding.root, index).map((entry) => ({
           commit: entry.commit,
           authored_at: entry.authoredAt,
           subject: entry.subject,
@@ -627,12 +650,12 @@ export function createNovelcraftHandlers(ctx: Context) {
           content_hash: entry.contentHash,
           declared_hash_valid: entry.declaredHashValid,
           byte_length: entry.byteLength,
-        }));
-        const diff = payload.diffFromCommit
+        })) : [];
+        const diff = chapter && payload.diffFromCommit
           ? diffChapterVersions(binding.root, index, payload.diffFromCommit, chapter.head)
           : null;
-        const currentReview = latestReview(binding.root, index);
-        const review = currentReview
+        const currentReview = chapter ? latestReview(binding.root, index) : null;
+        const review = currentReview && chapter
           ? chapterReviewCard(
               currentReview,
               currentReview.target_kind === 'current' && currentReview.target_content_hash === chapter.contentHash,
@@ -663,14 +686,14 @@ export function createNovelcraftHandlers(ctx: Context) {
         return rpcOk({
           bound: { book: binding.book, root: binding.root },
           chapters,
-          chapter: {
+          chapter: chapter ? {
             index: chapter.chapterIndex,
             ...(chapter.title !== undefined ? { title: chapter.title } : {}),
             status: chapter.status,
             body: chapter.body,
             content_hash: chapter.contentHash,
             head: chapter.head,
-          },
+          } : null,
           history,
           review,
           candidate,
