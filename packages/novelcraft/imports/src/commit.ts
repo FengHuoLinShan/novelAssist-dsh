@@ -10,6 +10,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { paths } from "@novelcraft/vault";
 import { gitAdd, gitCommit, parseFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
+import { executeCanonicalWrite, type TransactionOptions } from "@novelcraft/store";
 import type { SceneCandidate } from "./stages.js";
 import { assertImportWorkspaceClean } from "./workspace.js";
 
@@ -311,6 +312,39 @@ export function commitScenes(
     // gitAdd 传本批精确相对文件(不 -A 扫入无关改动)。
     gitAdd(root, relPaths);
     gitCommit(root, `deep-import scenes commit: +${result.created.length} scenes`);
+  }
+  return result;
+}
+
+/**
+ * N32 事务版 Scene 提交(加法导出; 深导编排的主路径): 同 R17 门禁 + 整批校验,
+ * 写入走 executeCanonicalWrite(创建写: current=null, output=整文件字节)——
+ * 整批单事务原子提交, 中途异常/崩溃零部分写入(durable intent 收敛回滚)。
+ * 同步版保留为兼容面。
+ */
+export async function commitScenesTx(
+  root: string,
+  candidates: SceneCandidate[],
+  opts: { workflowId: string; tx?: TransactionOptions },
+): Promise<CommitResult> {
+  // R17: 写前范围外脏工作区拒绝(imports 自身工件除外)。
+  assertImportWorkspaceClean(root);
+  const plan = planSceneCommit(root, candidates, opts);
+  const result: CommitResult = {
+    created: [...plan.created],
+    skipped: [...plan.skipped],
+    conflicts: [...plan.conflicts],
+    fallbacks: plan.fallbacks,
+  };
+  if (result.created.length > 0) {
+    await executeCanonicalWrite(
+      root,
+      plan.files.map((f) => ({ path: f.relativePath, current: null, output: f.bytes })),
+      {
+        purpose: `deep-import scenes commit: +${result.created.length} scenes`,
+        ...(opts.tx !== undefined ? { tx: opts.tx } : {}),
+      },
+    );
   }
   return result;
 }

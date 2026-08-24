@@ -22,9 +22,9 @@ import type { CheckpointState, ImportPlan } from "./plan.js";
 import { readCheckpoint, writeCheckpoint } from "./plan.js";
 import type { SceneCandidate } from "./stages.js";
 import { enrichSceneBatch, fuseSceneBatch, sliceChapterBatch } from "./stages.js";
-import { commitScenes } from "./commit.js";
+import { commitScenesTx } from "./commit.js";
 import { extractEntityBatch } from "./entities.js";
-import { applyAliasRelationChanges, planAliasRelationChanges, proposeAliasRelations } from "./alias-relation.js";
+import { applyAliasRelationChangesTx, planAliasRelationChanges, proposeAliasRelations } from "./alias-relation.js";
 import type { AliasRelationProposal } from "./alias-relation.js";
 import { analyzeStructure } from "./structure.js";
 import { commitImportState } from "./workspace.js";
@@ -196,230 +196,244 @@ export async function runDeepImport(
       : {}),
   });
 
-  // P5: 尽早把执行画像指纹/契约版本写入 checkpoint(覆盖中途崩溃的续跑面:
-  // 指纹出现在 planImport 写入的 checkpoint 之上, 后续 run 才能拒绝旧 run)。
-  // 保留既有 phase_results(同指纹续跑不丢进度)。
-  if (runtime.profileFingerprint !== undefined) {
-    const existing = readCheckpoint(root) ?? {};
-    writeCheckpoint(root, {
-      ...existing,
-      plan: existing.plan ?? plan,
-      profile_fingerprint: runtime.profileFingerprint,
-      ...(runtime.contractVersions !== undefined
-        ? { contract_versions: runtime.contractVersions }
-        : {}),
-    });
-  }
-
-  const result: DeepImportResult = {
-    workflow_id: workflowId,
-    input_fingerprint: fingerprint,
-    committed: [],
-    skipped: [],
-    conflicts: [],
-    adopted: 0,
-    rejected: false,
-    entities: { created: [], reused: [], uncertain: 0 },
-    aliases: { attached: 0, skipped: 0, relations: 0, uncertain: 0, approved: false },
-    structure: { threads: 0, arcs: 0, foreshadowing: 0, reveals: 0, low_confidence: 0 },
-    trace: sink,
-  };
-
-  const chapters = range(plan.start_chapter, plan.end_chapter);
-
-  // --- Phase 1a: slice(逐章切分; 按 1a 并发 50 分片) ---
-  const sliced: SceneCandidate[] = [];
-  for (const batch of chunk(chapters, policy.slicingBatchSize)) {
-    // 审查项 3: 全链共享同一工作流累计预算 tracker(runtime.budget), 超支在 provider 前 fail-closed。
-    const r = await sliceChapterBatch(provider, root, batch, { budget: runtime.budget });
-    sliced.push(...r.items);
-    emit(sink, {
-      type: "stage_candidates",
-      phase: "1a",
-      batch_size: batch.length,
-      count: r.items.length,
-      candidate_ids: r.items.map((c) => c.candidate_id),
-    });
-    for (const ch of r.failed_chapters) {
-      // R54: 1a 整章 fallback, 不部分采用
-      emit(sink, { type: "degradation", clause: DEGRADATION_CLAUSE.phase1aFallback, phase: "1a", detail: `第 ${ch} 章整章 fallback` });
+  // N32 异常路径 state commit(交接 §7 条目 11): 任何阶段异常时把最新
+  // phase_results 落 checkpoint 并精确 state commit 后重抛(调用方见原始失败);
+  // 收口尽力而为, 绝不掩盖原异常。各写面已事务化(commitScenesTx/
+  // applyAliasRelationChangesTx), 异常时 canonical 零残留, R17 门可过。
+  try {
+    // P5: 尽早把执行画像指纹/契约版本写入 checkpoint(覆盖中途崩溃的续跑面:
+    // 指纹出现在 planImport 写入的 checkpoint 之上, 后续 run 才能拒绝旧 run)。
+    // 保留既有 phase_results(同指纹续跑不丢进度)。
+    if (runtime.profileFingerprint !== undefined) {
+      const existing = readCheckpoint(root) ?? {};
+      writeCheckpoint(root, {
+        ...existing,
+        plan: existing.plan ?? plan,
+        profile_fingerprint: runtime.profileFingerprint,
+        ...(runtime.contractVersions !== undefined
+          ? { contract_versions: runtime.contractVersions }
+          : {}),
+      });
     }
-  }
-  phaseResults["1a"] = { candidates: sliced.length, fallback: sliced.filter((c) => c.fallback_required).length };
-  emitCheckpoint(sink, "1a", fingerprint);
 
-  // --- Phase 1b: enrich(补全; provider 失败空语义进复核) ---
-  const needsReviewBefore = new Map(sliced.map((s) => [s.candidate_id, s.needs_review]));
-  const enriched = await enrichSceneBatch(provider, sliced, { budget: runtime.budget });
-  emit(sink, {
-    type: "stage_candidates",
-    phase: "1b",
-    batch_size: enriched.length,
-    count: enriched.length,
-    candidate_ids: enriched.map((c) => c.candidate_id),
-  });
-  for (const sc of enriched) {
-    if (sc.needs_review && needsReviewBefore.get(sc.candidate_id) === false) {
-      // R52: 1b 空语义进复核
-      emit(sink, { type: "degradation", clause: DEGRADATION_CLAUSE.phase1bEmptySemantics, phase: "1b", detail: sc.review_reason });
-    }
-  }
-  phaseResults["1b"] = { scenes: enriched.length };
-  emitCheckpoint(sink, "1b", fingerprint);
+    const result: DeepImportResult = {
+      workflow_id: workflowId,
+      input_fingerprint: fingerprint,
+      committed: [],
+      skipped: [],
+      conflicts: [],
+      adopted: 0,
+      rejected: false,
+      entities: { created: [], reused: [], uncertain: 0 },
+      aliases: { attached: 0, skipped: 0, relations: 0, uncertain: 0, approved: false },
+      structure: { threads: 0, arcs: 0, foreshadowing: 0, reveals: 0, low_confidence: 0 },
+      trace: sink,
+    };
 
-  // --- Phase 1c: fuse(成对边界复核; 决策只记录, 不自动应用) ---
-  const pairs: Array<{ left: SceneCandidate; right: SceneCandidate }> = [];
-  for (let i = 0; i + 1 < enriched.length; i++) pairs.push({ left: enriched[i], right: enriched[i + 1] });
-  const fusion = await fuseSceneBatch(provider, pairs, { budget: runtime.budget });
-  phaseResults["1c"] = { decisions: fusion.length };
-  emitCheckpoint(sink, "1c", fingerprint);
+    const chapters = range(plan.start_chapter, plan.end_chapter);
 
-  // --- commit(adopt 经审批门, §9/§15) ---
-  const adoptItems = enriched.map((c) => c.candidate_id);
-  const decision = await runtime.approve(
-    "采用章节候选",
-    `导入第 ${plan.start_chapter}-${plan.end_chapter} 章的 ${adoptItems.length} 个 Scene`,
-    adoptItems,
-  );
-  emit(sink, { type: "approval", action: "commit_scenes", decision });
-
-  if (decision !== "allowed-once") {
-    // fail-closed: 拒绝/不可用 = 不 commit, 后续阶段无已提交 Scene 可消费
-    emit(sink, { type: "reject", action: "commit_scenes", decision });
-    result.rejected = true;
-    result.rejection_decision = decision;
-    emitCheckpoint(sink, "commit", fingerprint);
-    emit(sink, { type: "complete_import", workflow_id: workflowId, adopted: 0 });
-    writeCheckpoint(root, checkpointState(plan, phaseResults, runtime, fingerprint));
-    // rejected 闭环: checkpoint/complete trace 都写完后再精确 stage 工件并恰一次
-    // state commit(前置 R17 门禁: 范围外任何改动含预存 staged 一律 fail-closed,
-    // 不捕获其他文件; 均无变化不 commit), 防止深导后工作区永久脏。
-    commitImportState(root);
-    return result;
-  }
-
-  // 复核纪律(同 2b): adopt(commit_scenes) 只在 commitScenes 成功且实际创建
-  // created.length>0 后 emit, items=实际创建 Scene(而非全部候选)——全 skip/冲突
-  // 零创建 → 无 adopt; commitScenes 抛错(校验/R17 失败)→ 异常向上抛, 不留假 adopt。
-  const committed = commitScenes(root, enriched, { workflowId });
-  result.committed = committed.created;
-  result.skipped = committed.skipped;
-  result.conflicts = committed.conflicts;
-  result.adopted = committed.created.length;
-  if (committed.created.length > 0) {
-    emit(sink, { type: "adopt", action: "commit_scenes", items: committed.created });
-  }
-  phaseResults["commit"] = { created: committed.created.length, skipped: committed.skipped.length };
-  emitCheckpoint(sink, "commit", fingerprint);
-
-  // --- Phase 2a: entities(按 phase2 batch 12 分片) ---
-  for (const batch of chunk(result.committed, policy.phase2BatchSize)) {
-    const r = await extractEntityBatch(provider, root, batch, { workflowId, budget: runtime.budget });
-    result.entities.created.push(...r.created);
-    result.entities.reused.push(...r.reused);
-    result.entities.uncertain += r.uncertain;
-    emit(sink, {
-      type: "stage_candidates",
-      phase: "2a",
-      batch_size: batch.length,
-      count: r.created.length,
-      candidate_ids: r.created,
-    });
-  }
-  phaseResults["2a"] = result.entities;
-  emitCheckpoint(sink, "2a", fingerprint);
-
-  // --- Phase 2b: alias/relation(只读 propose → 汇总实际变更 → 独立审批 → apply) ---
-  // 复核纪律(「read-only propose → 汇总实际变更 → approval → apply」):
-  // - 审批 request 之前只调 provider 收集规范化建议(proposeAliasRelations 不写文件), 按 policy
-  //   aliasConcurrency 分片, 跨批聚合为 plan(planAliasRelationChanges: 内存算最终内容 + 全部校验
-  //   在首个 write 前 fail-closed); 摘要/条目列出目标 canonical 对象与增量 aliases/relations;
-  // - 最终实际 attached+relations=0(空建议/全 skip/全不确定)→ 不请求 2b 审批、不 emit adopt、
-  //   不 commit, 2b status=no_changes;
-  // - 有实际变更才请求独立审批(不复用 Scene 授权, 铁律 3); 拒绝/不可用 = 不 apply,
-  //   canonical 字节/commit 不变(provider 已运行的范围 LLM 成本已由 DSH authorize_deep_import 单独授权);
-  // - allowed-once 才 apply(写 + 恰一次 commit); adopt(alias_relation)在 apply 成功后 emit,
-  //   而非写前; 写/commit 异常不 emit adopt(异常向上抛, 调用方见 fail-closed)。
-  if (result.committed.length > 0) {
-    let uncertain2b = 0;
-    let skipped2b = 0;
-    const proposals: AliasRelationProposal[] = [];
-    for (const batch of chunk(result.committed, policy.aliasConcurrency)) {
-      const proposal = await proposeAliasRelations(provider, root, batch, { workflowId, budget: runtime.budget });
-      proposals.push(proposal);
-      uncertain2b += proposal.uncertain;
-      skipped2b += proposal.skipped_aliases;
+    // --- Phase 1a: slice(逐章切分; 按 1a 并发 50 分片) ---
+    const sliced: SceneCandidate[] = [];
+    for (const batch of chunk(chapters, policy.slicingBatchSize)) {
+      // 审查项 3: 全链共享同一工作流累计预算 tracker(runtime.budget), 超支在 provider 前 fail-closed。
+      const r = await sliceChapterBatch(provider, root, batch, { budget: runtime.budget });
+      sliced.push(...r.items);
       emit(sink, {
         type: "stage_candidates",
-        phase: "2b",
+        phase: "1a",
         batch_size: batch.length,
-        count: proposal.aliases.length + proposal.relations.length,
-        candidate_ids: [],
+        count: r.items.length,
+        candidate_ids: r.items.map((c) => c.candidate_id),
       });
-      if (proposal.uncertain > 0) {
-        // R53: 2b 只降级不丢对象
-        emit(sink, { type: "degradation", clause: DEGRADATION_CLAUSE.phase2bNoDrop, phase: "2b", detail: `${proposal.uncertain} 项进待复核` });
+      for (const ch of r.failed_chapters) {
+        // R54: 1a 整章 fallback, 不部分采用
+        emit(sink, { type: "degradation", clause: DEGRADATION_CLAUSE.phase1aFallback, phase: "1a", detail: `第 ${ch} 章整章 fallback` });
       }
     }
-    result.aliases.uncertain = uncertain2b;
-    result.aliases.skipped = skipped2b;
-    const plan = planAliasRelationChanges(root, proposals);
+    phaseResults["1a"] = { candidates: sliced.length, fallback: sliced.filter((c) => c.fallback_required).length };
+    emitCheckpoint(sink, "1a", fingerprint);
 
-    if (plan.empty) {
-      // 无实际变更: 不请求审批、不 emit adopt、不 commit(2b status=no_changes)。
-      result.aliases.approved = false;
-      phaseResults["2b"] = { ...result.aliases, status: "no_changes", skipped_all: true };
-      emitCheckpoint(sink, "2b", fingerprint);
-    } else {
-      const aliasDecision = await runtime.approve("别名/关系写入(2b)", plan.summary, plan.items);
-      emit(sink, { type: "approval", action: "alias_relation", decision: aliasDecision });
+    // --- Phase 1b: enrich(补全; provider 失败空语义进复核) ---
+    const needsReviewBefore = new Map(sliced.map((s) => [s.candidate_id, s.needs_review]));
+    const enriched = await enrichSceneBatch(provider, sliced, { budget: runtime.budget });
+    emit(sink, {
+      type: "stage_candidates",
+      phase: "1b",
+      batch_size: enriched.length,
+      count: enriched.length,
+      candidate_ids: enriched.map((c) => c.candidate_id),
+    });
+    for (const sc of enriched) {
+      if (sc.needs_review && needsReviewBefore.get(sc.candidate_id) === false) {
+        // R52: 1b 空语义进复核
+        emit(sink, { type: "degradation", clause: DEGRADATION_CLAUSE.phase1bEmptySemantics, phase: "1b", detail: sc.review_reason });
+      }
+    }
+    phaseResults["1b"] = { scenes: enriched.length };
+    emitCheckpoint(sink, "1b", fingerprint);
 
-      if (aliasDecision !== "allowed-once") {
-        // fail-closed: 拒绝/不可用 → 跳过 2b 写面, 不写 canonical, 不 commit;
-        // provider 已运行但 canonical 字节/commit 不变; Scene 已采用, 整体不判 rejected。
-        const aliasReject: "rejected" | "unavailable" = aliasDecision;
-        emit(sink, { type: "reject", action: "alias_relation", decision: aliasReject });
+    // --- Phase 1c: fuse(成对边界复核; 决策只记录, 不自动应用) ---
+    const pairs: Array<{ left: SceneCandidate; right: SceneCandidate }> = [];
+    for (let i = 0; i + 1 < enriched.length; i++) pairs.push({ left: enriched[i], right: enriched[i + 1] });
+    const fusion = await fuseSceneBatch(provider, pairs, { budget: runtime.budget });
+    phaseResults["1c"] = { decisions: fusion.length };
+    emitCheckpoint(sink, "1c", fingerprint);
+
+    // --- commit(adopt 经审批门, §9/§15) ---
+    const adoptItems = enriched.map((c) => c.candidate_id);
+    const decision = await runtime.approve(
+      "采用章节候选",
+      `导入第 ${plan.start_chapter}-${plan.end_chapter} 章的 ${adoptItems.length} 个 Scene`,
+      adoptItems,
+    );
+    emit(sink, { type: "approval", action: "commit_scenes", decision });
+
+    if (decision !== "allowed-once") {
+      // fail-closed: 拒绝/不可用 = 不 commit, 后续阶段无已提交 Scene 可消费
+      emit(sink, { type: "reject", action: "commit_scenes", decision });
+      result.rejected = true;
+      result.rejection_decision = decision;
+      emitCheckpoint(sink, "commit", fingerprint);
+      emit(sink, { type: "complete_import", workflow_id: workflowId, adopted: 0 });
+      writeCheckpoint(root, checkpointState(plan, phaseResults, runtime, fingerprint));
+      // rejected 闭环: checkpoint/complete trace 都写完后再精确 stage 工件并恰一次
+      // state commit(前置 R17 门禁: 范围外任何改动含预存 staged 一律 fail-closed,
+      // 不捕获其他文件; 均无变化不 commit), 防止深导后工作区永久脏。
+      commitImportState(root);
+      return result;
+    }
+
+    // 复核纪律(同 2b): adopt(commit_scenes) 只在 commitScenes 成功且实际创建
+    // created.length>0 后 emit, items=实际创建 Scene(而非全部候选)——全 skip/冲突
+    // 零创建 → 无 adopt; commitScenes 抛错(校验/R17 失败)→ 异常向上抛, 不留假 adopt。
+    const committed = await commitScenesTx(root, enriched, { workflowId });
+    result.committed = committed.created;
+    result.skipped = committed.skipped;
+    result.conflicts = committed.conflicts;
+    result.adopted = committed.created.length;
+    if (committed.created.length > 0) {
+      emit(sink, { type: "adopt", action: "commit_scenes", items: committed.created });
+    }
+    phaseResults["commit"] = { created: committed.created.length, skipped: committed.skipped.length };
+    emitCheckpoint(sink, "commit", fingerprint);
+
+    // --- Phase 2a: entities(按 phase2 batch 12 分片) ---
+    for (const batch of chunk(result.committed, policy.phase2BatchSize)) {
+      const r = await extractEntityBatch(provider, root, batch, { workflowId, budget: runtime.budget });
+      result.entities.created.push(...r.created);
+      result.entities.reused.push(...r.reused);
+      result.entities.uncertain += r.uncertain;
+      emit(sink, {
+        type: "stage_candidates",
+        phase: "2a",
+        batch_size: batch.length,
+        count: r.created.length,
+        candidate_ids: r.created,
+      });
+    }
+    phaseResults["2a"] = result.entities;
+    emitCheckpoint(sink, "2a", fingerprint);
+
+    // --- Phase 2b: alias/relation(只读 propose → 汇总实际变更 → 独立审批 → apply) ---
+    // 复核纪律(「read-only propose → 汇总实际变更 → approval → apply」):
+    // - 审批 request 之前只调 provider 收集规范化建议(proposeAliasRelations 不写文件), 按 policy
+    //   aliasConcurrency 分片, 跨批聚合为 plan(planAliasRelationChanges: 内存算最终内容 + 全部校验
+    //   在首个 write 前 fail-closed); 摘要/条目列出目标 canonical 对象与增量 aliases/relations;
+    // - 最终实际 attached+relations=0(空建议/全 skip/全不确定)→ 不请求 2b 审批、不 emit adopt、
+    //   不 commit, 2b status=no_changes;
+    // - 有实际变更才请求独立审批(不复用 Scene 授权, 铁律 3); 拒绝/不可用 = 不 apply,
+    //   canonical 字节/commit 不变(provider 已运行的范围 LLM 成本已由 DSH authorize_deep_import 单独授权);
+    // - allowed-once 才 apply(写 + 恰一次 commit); adopt(alias_relation)在 apply 成功后 emit,
+    //   而非写前; 写/commit 异常不 emit adopt(异常向上抛, 调用方见 fail-closed)。
+    if (result.committed.length > 0) {
+      let uncertain2b = 0;
+      let skipped2b = 0;
+      const proposals: AliasRelationProposal[] = [];
+      for (const batch of chunk(result.committed, policy.aliasConcurrency)) {
+        const proposal = await proposeAliasRelations(provider, root, batch, { workflowId, budget: runtime.budget });
+        proposals.push(proposal);
+        uncertain2b += proposal.uncertain;
+        skipped2b += proposal.skipped_aliases;
+        emit(sink, {
+          type: "stage_candidates",
+          phase: "2b",
+          batch_size: batch.length,
+          count: proposal.aliases.length + proposal.relations.length,
+          candidate_ids: [],
+        });
+        if (proposal.uncertain > 0) {
+          // R53: 2b 只降级不丢对象
+          emit(sink, { type: "degradation", clause: DEGRADATION_CLAUSE.phase2bNoDrop, phase: "2b", detail: `${proposal.uncertain} 项进待复核` });
+        }
+      }
+      result.aliases.uncertain = uncertain2b;
+      result.aliases.skipped = skipped2b;
+      const plan = planAliasRelationChanges(root, proposals);
+
+      if (plan.empty) {
+        // 无实际变更: 不请求审批、不 emit adopt、不 commit(2b status=no_changes)。
         result.aliases.approved = false;
-        result.aliases.decision = aliasReject;
-        phaseResults["2b"] = { ...result.aliases, status: aliasReject, skipped_all: true };
+        phaseResults["2b"] = { ...result.aliases, status: "no_changes", skipped_all: true };
         emitCheckpoint(sink, "2b", fingerprint);
       } else {
-        // allowed-once: apply(写 + 恰一次 commit)成功后才 emit adopt; 写/commit 异常不 emit。
-        const applied = applyAliasRelationChanges(root, plan);
-        result.aliases.approved = true;
-        result.aliases.decision = aliasDecision;
-        result.aliases.attached = applied.aliases_attached;
-        result.aliases.relations = applied.relations_written;
-        emit(sink, { type: "adopt", action: "alias_relation", items: plan.touched });
-        phaseResults["2b"] = { ...result.aliases, status: "done" };
-        emitCheckpoint(sink, "2b", fingerprint);
+        const aliasDecision = await runtime.approve("别名/关系写入(2b)", plan.summary, plan.items);
+        emit(sink, { type: "approval", action: "alias_relation", decision: aliasDecision });
+
+        if (aliasDecision !== "allowed-once") {
+          // fail-closed: 拒绝/不可用 → 跳过 2b 写面, 不写 canonical, 不 commit;
+          // provider 已运行但 canonical 字节/commit 不变; Scene 已采用, 整体不判 rejected。
+          const aliasReject: "rejected" | "unavailable" = aliasDecision;
+          emit(sink, { type: "reject", action: "alias_relation", decision: aliasReject });
+          result.aliases.approved = false;
+          result.aliases.decision = aliasReject;
+          phaseResults["2b"] = { ...result.aliases, status: aliasReject, skipped_all: true };
+          emitCheckpoint(sink, "2b", fingerprint);
+        } else {
+          // allowed-once: apply(写 + 恰一次 commit)成功后才 emit adopt; 写/commit 异常不 emit。
+          const applied = await applyAliasRelationChangesTx(root, plan);
+          result.aliases.approved = true;
+          result.aliases.decision = aliasDecision;
+          result.aliases.attached = applied.aliases_attached;
+          result.aliases.relations = applied.relations_written;
+          emit(sink, { type: "adopt", action: "alias_relation", items: plan.touched });
+          phaseResults["2b"] = { ...result.aliases, status: "done" };
+          emitCheckpoint(sink, "2b", fingerprint);
+        }
       }
+    } else {
+      // 无本批提交 Scene → 无 2b 写面, 无需审批; 阶段明确标 skipped
+      result.aliases.approved = false;
+      phaseResults["2b"] = { ...result.aliases, status: "skipped", skipped_all: true };
+      emitCheckpoint(sink, "2b", fingerprint);
     }
-  } else {
-    // 无本批提交 Scene → 无 2b 写面, 无需审批; 阶段明确标 skipped
-    result.aliases.approved = false;
-    phaseResults["2b"] = { ...result.aliases, status: "skipped", skipped_all: true };
-    emitCheckpoint(sink, "2b", fingerprint);
+
+    // --- Phase 3: structure(≥0.96 自动落 draft 待采用(N31), 低置信只计数; canonical 升格走 novelcraft_store_adopt 审批门) ---
+    const struct = await analyzeStructure(provider, root, { workflowId, budget: runtime.budget });
+    result.structure.threads = struct.threads.length;
+    result.structure.arcs = struct.arcs.length;
+    result.structure.foreshadowing = struct.foreshadowing.length;
+    result.structure.reveals = struct.reveals.length;
+    result.structure.low_confidence = struct.low_confidence;
+    phaseResults["3"] = struct;
+    emitCheckpoint(sink, "3", fingerprint);
+
+    // 阶段结果 + 授权快照落 checkpoint(续跑幂等, R42/R43; 含执行画像指纹, P5)
+    writeCheckpoint(root, checkpointState(plan, phaseResults, runtime, fingerprint));
+
+    emit(sink, { type: "complete_import", workflow_id: workflowId, adopted: result.adopted });
+    // complete 闭环: checkpoint/complete trace 都写完后再精确 stage 工件并恰一次
+    // state commit(前置 R17 门禁: 范围外任何改动含预存 staged 一律 fail-closed,
+    // 不捕获其他文件; 均无变化不 commit), 防止深导后工作区永久脏
+    // (否则后续 store adopt 等全局洁净检查被 .assistant/checkpoint.json + trace 卡死)。
+    commitImportState(root);
+    return result;
+  } catch (err) {
+    try {
+      writeCheckpoint(root, checkpointState(plan, phaseResults, runtime, fingerprint));
+      commitImportState(root);
+    } catch {
+      // 状态收口尽力而为; 原异常优先。
+    }
+    throw err;
   }
-
-  // --- Phase 3: structure(≥0.96 自动落 draft 待采用(N31), 低置信只计数; canonical 升格走 novelcraft_store_adopt 审批门) ---
-  const struct = await analyzeStructure(provider, root, { workflowId, budget: runtime.budget });
-  result.structure.threads = struct.threads.length;
-  result.structure.arcs = struct.arcs.length;
-  result.structure.foreshadowing = struct.foreshadowing.length;
-  result.structure.reveals = struct.reveals.length;
-  result.structure.low_confidence = struct.low_confidence;
-  phaseResults["3"] = struct;
-  emitCheckpoint(sink, "3", fingerprint);
-
-  // 阶段结果 + 授权快照落 checkpoint(续跑幂等, R42/R43; 含执行画像指纹, P5)
-  writeCheckpoint(root, checkpointState(plan, phaseResults, runtime, fingerprint));
-
-  emit(sink, { type: "complete_import", workflow_id: workflowId, adopted: result.adopted });
-  // complete 闭环: checkpoint/complete trace 都写完后再精确 stage 工件并恰一次
-  // state commit(前置 R17 门禁: 范围外任何改动含预存 staged 一律 fail-closed,
-  // 不捕获其他文件; 均无变化不 commit), 防止深导后工作区永久脏
-  // (否则后续 store adopt 等全局洁净检查被 .assistant/checkpoint.json + trace 卡死)。
-  commitImportState(root);
-  return result;
 }

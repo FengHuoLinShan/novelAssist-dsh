@@ -131,9 +131,10 @@
   distribution 全绿后推送。
 - [x] 实证记录两处 cordis rc.8 行为: 嵌套 ctx.plugin 子插件构造器抛错被静默吞掉(默认组装
   因此保持同步注册); inject 缺服务 = 插件等待不启动(非报错)。
-- [ ] H: N32 全局 git transaction 收口(素材入库/planImport checkpoint/aliasRelation 批内
-  部分失败)——交接文档 §7 条目 11, 复用 store `executeCanonicalWrite/executeTransaction`
-  事务缝。
+- [x] H: N32 全局 git transaction 收口(2026-08-25): commitScenesTx/applyAliasRelationChangesTx
+  (executeCanonicalWrite 单事务原子 + faults 注入契约测试)、素材入库同步补偿回滚 +
+  material intake 精确自动 commit、深导异常路径 state commit(checkpoint 事务化因 §8
+  planSource bootstrap 限制主动放弃, 见交接 §7 条目 11)。
 
 ## 约定(继承 specs/README.md 与设计文档 §15)
 

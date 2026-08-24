@@ -3,12 +3,13 @@
 // 依据: specs/assets/imports.md §41(ImportRecord)/§95(ImportedChapter);
 // adjudications N13(content_hash 纯 64 位 hex); D9a(任何来源统一转纯文本, 本模块只接收纯文本)。
 // 确定性、零 LLM、零 DSH 依赖。
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { relative } from "node:path";
 import { paths, readAsset, slugify, writeAsset } from "@novelcraft/vault";
-import { validateImportFile } from "@novelcraft/store";
+import { gitAdd, gitCommit, validateImportFile } from "@novelcraft/store";
 import { chapterBodyText, contentHashOf, ingestChapter, normalizeChapterText } from "./ingest.js";
-import { appendImportLog, readImportLog } from "./import-log.js";
+import { appendImportLog, importLogPath, readImportLog } from "./import-log.js";
 
 // ============================================================================
 // 确定性章节切分
@@ -165,72 +166,106 @@ export function importTextChapters(root: string, opts: ImportTextOptions): Impor
     };
   }
 
-  // 5. importId + 原文停靠 imports/<slug>.md(正文 = 归一后全文; imports.md §95 原文停靠)。
+  // 5-7 批量原子收口(N32 同步面, 交接 §7 条目 11):
+  // - 首写前逐文件快照原字节; 任何中途异常 → 恢复快照(新建删除/覆写还原)后重抛,
+  //   零部分写入残留(补偿回滚; 进程级崩溃的 durable 原子由 imports 侧 Tx 变体承接);
+  // - 全部成功后按精确 pathspec 单 commit(「素材先提交」—— commitScenes 的 R17
+  //   DIRTY_WORKSPACE 门自此满足, 深导可直接续跑)。
   const importId = `imp-${Date.now()}`;
   const slug = slugify(base.replace(/\.[^.]*$/, ""));
   const importFile = p.imports.importFile(`${slug}.md`);
   const importedAt = new Date().toISOString();
-  const fmLines = [
-    "---",
-    `import_record_id: ${importId}`,
-    `file_name: ${yamlString(base)}`,
-    `file_type: ${ext.slice(1)}`,
-    `file_size: ${fileSize}`,
-    `total_chapters: ${split.chapters.length}`,
-    `imported_at: "${importedAt}"`,
-    `source: ${yamlString(opts.source)}`,
-    "---",
-    "",
-  ];
-  writeAsset(root, importFile, fmLines.join("\n") + normalized + "\n");
+  const touched: Array<{ abs: string; original: string | null }> = [];
+  const recordTouched = (abs: string): void => {
+    if (!touched.some((t) => t.abs === abs)) {
+      touched.push({ abs, original: existsSync(abs) ? readFileSync(abs, "utf8") : null });
+    }
+  };
 
-  // 6. 章节落库: 起始 index = startChapter ?? 现有最大 index + 1(无则 1); 逐章冲突保护。
-  const startChapter = opts.startChapter ?? maxChapterIndex(root) + 1;
-  const chaptersReport: NonNullable<ImportReport["chapters"]> = [];
-  const conflicts: number[] = [];
   let imported = 0;
   let skipped = 0;
-  for (const ch of split.chapters) {
-    const chapterIndex = startChapter + ch.index - 1;
-    const target = p.chapters.chapterFile(chapterIndex);
-    const contentHash = contentHashOf(chapterBodyText(ch.text));
+  const conflicts: number[] = [];
+  const chaptersReport: NonNullable<ImportReport["chapters"]> = [];
+  try {
+    // 5. 原文停靠 imports/<slug>.md(正文 = 归一后全文; imports.md §95 原文停靠)。
+    const fmLines = [
+      "---",
+      `import_record_id: ${importId}`,
+      `file_name: ${yamlString(base)}`,
+      `file_type: ${ext.slice(1)}`,
+      `file_size: ${fileSize}`,
+      `total_chapters: ${split.chapters.length}`,
+      `imported_at: "${importedAt}"`,
+      `source: ${yamlString(opts.source)}`,
+      "---",
+      "",
+    ];
+    recordTouched(importFile);
+    writeAsset(root, importFile, fmLines.join("\n") + normalized + "\n");
 
-    // 冲突判定: 目标已存在且内容 hash 不同(含无法读到 hash 的手写文件)→ !force 时跳过。
-    const existingRaw = existsSync(target) ? readAsset(root, target) : null;
-    if (existingRaw !== null) {
-      const m = existingRaw.match(/^content_hash:\s*([0-9a-f]{64})/m);
-      const sameHash = m !== null && m[1] === contentHash;
-      if (!sameHash && !opts.force) {
-        conflicts.push(chapterIndex);
-        skipped += 1;
-        chaptersReport.push({ index: chapterIndex, title: ch.title, contentHash, skipped: true });
-        continue;
+    // 6. 章节落库: 起始 index = startChapter ?? 现有最大 index + 1(无则 1); 逐章冲突保护。
+    const startChapter = opts.startChapter ?? maxChapterIndex(root) + 1;
+    for (const ch of split.chapters) {
+      const chapterIndex = startChapter + ch.index - 1;
+      const target = p.chapters.chapterFile(chapterIndex);
+      const contentHash = contentHashOf(chapterBodyText(ch.text));
+
+      // 冲突判定: 目标已存在且内容 hash 不同(含无法读到 hash 的手写文件)→ !force 时跳过。
+      const existingRaw = existsSync(target) ? readAsset(root, target) : null;
+      if (existingRaw !== null) {
+        const m = existingRaw.match(/^content_hash:\s*([0-9a-f]{64})/m);
+        const sameHash = m !== null && m[1] === contentHash;
+        if (!sameHash && !opts.force) {
+          conflicts.push(chapterIndex);
+          skipped += 1;
+          chaptersReport.push({ index: chapterIndex, title: ch.title, contentHash, skipped: true });
+          continue;
+        }
       }
+
+      // 同 hash → ingestChapter 自然幂等跳过; 不同 hash + force → 覆盖写入。
+      recordTouched(target);
+      const r = ingestChapter(root, {
+        chapterIndex,
+        text: ch.text,
+        source: `import:${base}`,
+        title: ch.title || undefined,
+      });
+      if (r.skipped) skipped += 1;
+      else imported += 1;
+      chaptersReport.push({ index: chapterIndex, title: ch.title, contentHash, skipped: r.skipped });
     }
 
-    // 同 hash → ingestChapter 自然幂等跳过; 不同 hash + force → 覆盖写入。
-    const r = ingestChapter(root, {
-      chapterIndex,
-      text: ch.text,
-      source: `import:${base}`,
-      title: ch.title || undefined,
+    // 7. 追加 import-log.jsonl(imports.md §41 ImportRecord 字段; 有 conflicts 且无 force 时仍 done)。
+    recordTouched(importLogPath(root));
+    appendImportLog(root, {
+      id: importId,
+      novel_id: path.basename(root),
+      file_name: base,
+      file_type: ext.slice(1),
+      file_size: fileSize,
+      total_chapters: split.chapters.length,
+      imported_chapters: imported,
+      status: "done",
     });
-    if (r.skipped) skipped += 1;
-    else imported += 1;
-    chaptersReport.push({ index: chapterIndex, title: ch.title, contentHash, skipped: r.skipped });
+  } catch (err) {
+    // 补偿回滚: 恢复每个首写前快照(新建 → 删除; 覆写 → 还原), 零部分残留后重抛。
+    for (const t of touched) {
+      try {
+        if (t.original === null) rmSync(t.abs, { force: true });
+        else writeFileSync(t.abs, t.original, "utf8");
+      } catch {
+        // 单文件恢复失败不掩盖原异常(极端 fs 故障; 文件真相可由 git/重导修复)。
+      }
+    }
+    throw err;
   }
 
-  // 7. 追加 import-log.jsonl(imports.md §41 ImportRecord 字段; 有 conflicts 且无 force 时仍 done)。
-  appendImportLog(root, {
-    id: importId,
-    novel_id: path.basename(root),
-    file_name: base,
-    file_type: ext.slice(1),
-    file_size: fileSize,
-    total_chapters: split.chapters.length,
-    imported_chapters: imported,
-    status: "done",
-  });
+  // 素材先提交: 精确 pathspec 单 commit(绝不 -A 卷入并发用户编辑)。
+  if (touched.length > 0) {
+    gitAdd(root, touched.map((t) => relative(root, t.abs).split("\\").join("/")));
+    gitCommit(root, `material intake: ${base} (${imported} chapters)`);
+  }
 
   // 8. 完整报告。
   return {

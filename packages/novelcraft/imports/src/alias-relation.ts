@@ -19,6 +19,7 @@ import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider, WorkflowBudget } from "@novelcraft/llm-step";
 import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, StoreError, validateFrontmatter } from "@novelcraft/store";
+import { executeCanonicalWrite, type TransactionOptions } from "@novelcraft/store";
 import { registerImportSpecs } from "./specs-imports.js";
 import { listCanonicalObjects } from "./entities.js";
 import { readChapterText } from "./stages.js";
@@ -508,6 +509,61 @@ export function applyAliasRelationChanges(root: string, plan: AliasRelationPlan)
     relations_written: plan.relations_written,
     touched: plan.touched,
     commit,
+  };
+}
+
+/**
+ * N32 事务版 apply(加法导出; 深导编排的主路径): 同三重写前校验, 写入走
+ * @novelcraft/store `executeCanonicalWrite`(kind=canonical)—— 多对象 writeSet
+ * 单事务原子提交, 批内中途异常/崩溃零部分写入残留(durable intent 收敛回滚),
+ * 关闭交接 §7 条目 11 登记的「批内部分失败残留」。同步版保留为兼容面。
+ */
+export async function applyAliasRelationChangesTx(
+  root: string,
+  plan: AliasRelationPlan,
+  tx?: TransactionOptions,
+): Promise<AliasRelationApplied> {
+  if (plan.files.length === 0) {
+    return { aliases_attached: 0, relations_written: 0, touched: [], commit: null };
+  }
+  // 与同步版一致的三重写前门禁(R17 clean + touched 字节 CAS + 非 touched 目标复查);
+  // 事务 preflight 会再按 writeSet expected 复核字节(双保险, 审批窗口竞争 fail-closed)。
+  assertImportWorkspaceClean(root);
+  for (const f of plan.files) {
+    const file = paths(root).world.objectFile(f.slug);
+    const current = existsSync(file) ? readFileSync(file, "utf8") : null;
+    if (current !== f.original) {
+      throw new StoreError("CONFLICT", `2b 目标 ${f.slug} 在计划与 approval 之间被外部改动, 拒绝写入(fail-closed)`, [f.slug]);
+    }
+  }
+  for (const t of plan.targets) {
+    const file = paths(root).world.objectFile(t.slug);
+    if (!existsSync(file) || !lstatSync(file).isFile()) {
+      throw new StoreError("CONFLICT", `2b 关系目标 ${t.slug} 在批准期间消失, 拒绝写入(fail-closed, 防 dangling relation)`, [t.slug]);
+    }
+    const { data: fm } = parseFrontmatter(readFileSync(file, "utf8"));
+    const status = String(fm.status ?? "");
+    if (status !== "canonical") {
+      throw new StoreError(
+        "CONFLICT",
+        `2b 关系目标 ${t.slug} 在批准期间移出 canonical(status=${status}, 计划时=${t.status}), 拒绝写入(fail-closed, 防 dangling relation)`,
+        [t.slug],
+      );
+    }
+  }
+  const applied = await executeCanonicalWrite(
+    root,
+    plan.files.map((f) => ({ path: f.relativePath, current: f.original, output: f.next })),
+    {
+      purpose: `deep-import alias/relation: ${plan.aliases_attached} aliases, ${plan.relations_written} relations`,
+      ...(tx !== undefined ? { tx } : {}),
+    },
+  );
+  return {
+    aliases_attached: plan.aliases_attached,
+    relations_written: plan.relations_written,
+    touched: plan.touched,
+    commit: applied.commit,
   };
 }
 

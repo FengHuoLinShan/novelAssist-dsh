@@ -505,10 +505,12 @@ describe("runDeepImport · 2b 独立审批(只读 propose → 汇总实际变更
     const bFm = parseFrontmatter(readFileSync(join(root, "world", "objects", "obj-b.md"), "utf8")).data;
     expect(bFm.relations).toEqual([{ target: "obj-a", type: "associate", status: "candidate" }]);
     // 恰一次 2b commit + 恰一次深导 state commit(Scene adopt + 2b + state = 比 seed 多 3 次
-    // commit, 且 alias/relation 恰好 1 次); 完成后工作区洁净
+    // commit)。N32 事务化后 Scene/2b 写面走 executeCanonicalWrite: commit 消息为
+    // 机器戳 vault-tx vtx:{txid} (canonical)(purpose 不进 subject), 断言改为
+    // 恰好 2 个 canonical 事务提交 + state commit 收尾; 完成后工作区洁净
     const log = gitLog(root);
     expect(log.length).toBe(commitsBefore + 3);
-    expect(log.filter((m) => m.includes("alias/relation"))).toHaveLength(1);
+    expect(log.filter((m) => m.includes("vault-tx") && m.includes("(canonical)"))).toHaveLength(2);
     expect(log[0]).toContain("deep-import state"); // state commit 在 complete 闭环最后
     expect(gitStatus(root)).toEqual([]);
 
@@ -520,15 +522,18 @@ describe("runDeepImport · 2b 独立审批(只读 propose → 汇总实际变更
     assertCheckpointAfterPhase(recorder, ["2b"]);
 
     // 复核(adopt 时序): adopt(alias_relation) 必须在其 commit 之后 emit ——
-    // approval(alias_relation) 记录时 HEAD 还是 Scene commit(主题无 alias/relation);
-    // adopt(alias_relation) 记录时 HEAD 已是 alias/relation commit。apply 的 commit
+    // N32 事务化后 commit 主题为机器戳 vault-tx vtx:{txid} (canonical):
+    // approval(alias_relation) 记录时 HEAD 还是 Scene 事务提交(主题不含本 2b 的
+    // txid); adopt(alias_relation) 记录时 HEAD 已是 2b 事务提交。apply 的事务 commit
     // 严格夹在 approval 与 adopt 之间, 证明 adopt 不在写前发出。
     const aliasApprovalSnap = snapshots.find((s) => s.event.type === "approval" && s.event.action === "alias_relation");
     const aliasAdoptSnap = snapshots.find((s) => s.event.type === "adopt" && s.event.action === "alias_relation");
     expect(aliasApprovalSnap).toBeDefined();
     expect(aliasAdoptSnap).toBeDefined();
-    expect(aliasApprovalSnap!.subject).not.toContain("alias/relation");
-    expect(aliasAdoptSnap!.subject).toContain("alias/relation");
+    const adoptTxid = /vtx:([0-9a-z-]+)/.exec(aliasAdoptSnap!.subject)?.[1];
+    expect(adoptTxid).toBeDefined();
+    expect(aliasAdoptSnap!.subject).toContain("(canonical)");
+    expect(aliasApprovalSnap!.subject).not.toContain(adoptTxid!); // approval 时 2b 事务尚未提交
   });
 
   it("2b 空建议 → 无第二审批/adopt/commit; 2b 标 no_changes(不请求 approval)", async () => {

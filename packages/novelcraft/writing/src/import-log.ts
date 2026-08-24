@@ -19,6 +19,11 @@ export interface ImportLogRecord {
 
 const LOG_NAME = "import-log.jsonl";
 
+/** 导入日志文件绝对路径(guard 限定; 素材入库批量原子收口用)。 */
+export function importLogPath(root: string): string {
+  return guardPath(root, path.join(paths(root).imports.dir, LOG_NAME));
+}
+
 /** 读导入日志; 文件不存在 → []。坏行(JSON 解析失败或形状不符)跳过容忍。 */
 export function readImportLog(root: string): ImportLogRecord[] {
   const logPath = guardPath(root, path.join(paths(root).imports.dir, LOG_NAME));
