@@ -52,7 +52,7 @@
  *    自报的 tree/digest), 再以重算值构造预期 commit OID; 重复 trailers 拒绝(而非 Map
  *    覆盖, interpret-trailers 解析到重复 key 即不认)。
  * ⑪ 私有 index 隔离: 事务私有 index 启动时同时检查其 `.lock`(无法证明归属 →
- *    INDEX_LOCKED); finally 以 (dev,ino) 守卫只删除本调用创建的私有 index, 绝不删除
+ *    INDEX_LOCKED); finally 以 (dev,ino,size,sha256) 守卫只删除本调用创建的私有 index, 绝不删除
  *    并发者替换后的文件。
  *
  * fail-closed(N32/ADR-0021 §6 失败关闭):
@@ -287,21 +287,22 @@ function realpathOrNull(p: string): string | null {
   }
 }
 
-function statOrNull(p: string): { dev: number; ino: number } | null {
+function statOrNull(p: string): { dev: number; ino: number; size: number; sha256: string } | null {
   try {
     const st = fs.statSync(p);
-    return { dev: st.dev, ino: st.ino };
+    return { dev: st.dev, ino: st.ino, size: st.size, sha256: sha256Hex(fs.readFileSync(p)) };
   } catch {
     return null;
   }
 }
 
 function indexIdentityChanged(
-  expected: { dev: number; ino: number } | null,
-  current: { dev: number; ino: number } | null,
+  expected: { dev: number; ino: number; size: number; sha256: string } | null,
+  current: { dev: number; ino: number; size: number; sha256: string } | null,
 ): boolean {
   return expected !== null && current !== null &&
-    (current.dev !== expected.dev || current.ino !== expected.ino);
+    (current.dev !== expected.dev || current.ino !== expected.ino ||
+      current.size !== expected.size || current.sha256 !== expected.sha256);
 }
 
 // ============================================================================
@@ -931,7 +932,7 @@ type CommitHook = () => void | Promise<void>;
  *      index staged/lock、目标工作树期望状态(计划输出字节/删除缺席)、symbolic HEAD 未切换;
  *   7) `update-ref <ref> <commit> <baseHead>` 三参 CAS(外部先推进 → REF_CAS_FAILED, 不 force;
  *      紧邻锁/CAS/hook 拒绝 → REF_CAS_FAILED, 加固⑦)。
- * 返回后私有 index 已清理(finally 以 (dev,ino) 守卫, 不删并发者替换的文件, 加固⑪);
+ * 返回后私有 index 已清理(finally 以 (dev,ino,size,sha256) 守卫, 不删并发者替换的文件, 加固⑪);
  * 共享 index 不受本函数触碰(由上层用 buildHeadIndexBytes 安装)。
  *
  * 实现(生成器 + 双 runner, N32 复审 P1): 同步变体 commitTransaction 保持旧语义(钩子
@@ -985,11 +986,11 @@ function* commitTransactionSteps(p: CommitTxnParams): Generator<CommitHook | und
     throw new GitTransactionError('INDEX_LOCKED', `事务私有 index 的 .lock 已存在(无法证明归属), fail-closed: ${privateIndex}.lock`);
   }
   const envIdx: Record<string, string> = { GIT_INDEX_FILE: privateIndex };
-  // 本调用创建/使用的私有 index 的 (dev,ino): finally 只删除属于本调用的文件(加固⑪)。
+  // 本调用创建/使用的私有 index 的 (dev,ino,size,sha256): finally 只删除属于本调用的文件(加固⑪)。
   // git 每次写 index 都经 <file>.lock + rename 替换(新 inode), 因此每次本进程的 index
   // 变更后都刷新记录; finally 比对时若 inode 不同(且非本进程最近一次变更所产生), 说明
   // 文件已被并发者替换 → 不删除(隔离)。
-  let ourIndexStat: { dev: number; ino: number } | null = null;
+  let ourIndexStat: { dev: number; ino: number; size: number; sha256: string } | null = null;
   const refreshIndexStat = (): void => {
     ourIndexStat = statOrNull(privateIndex);
   };

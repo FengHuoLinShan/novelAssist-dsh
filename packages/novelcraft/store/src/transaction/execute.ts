@@ -476,17 +476,22 @@ function removePrivateIndexResidue(ctx: RepoContext, txid: string): void {
   }
 }
 
-function statOrNull(p: string): { dev: number; ino: number } | null {
+function statOrNull(p: string): { dev: number; ino: number; size: number; sha256: string } | null {
   try {
     const st = fs.statSync(p);
-    return { dev: st.dev, ino: st.ino };
+    return { dev: st.dev, ino: st.ino, size: st.size, sha256: sha256Hex(fs.readFileSync(p)) };
   } catch {
     return null;
   }
 }
 
-function indexIdentityChanged(expected: { dev: number; ino: number } | null, current: { dev: number; ino: number } | null): boolean {
-  return expected !== null && current !== null && (current.dev !== expected.dev || current.ino !== expected.ino);
+function indexIdentityChanged(
+  expected: { dev: number; ino: number; size: number; sha256: string } | null,
+  current: { dev: number; ino: number; size: number; sha256: string } | null,
+): boolean {
+  return expected !== null && current !== null &&
+    (current.dev !== expected.dev || current.ino !== expected.ino ||
+      current.size !== expected.size || current.sha256 !== expected.sha256);
 }
 
 function assertNoGitCriticalSections(ctx: RepoContext, fullRef: string): void {
@@ -531,7 +536,7 @@ export interface DerivedPlan {
  * —— 复用其 buildEnv/pinArgs/resolveRepoContext/assertSafeRepoState/isOid, 支持
  * sha1+sha256 object format; 本函数会写 ODB(hash-object -w)+ 建私有 index, 因此
  * **只允许在 intent READY 之后调用**; intent 前用 derivePlanIdentityPure 纯字节推导)。
- * 私有 index 文件在函数结束后清理(finally 以 (dev,ino) 守卫, 不删并发者替换的文件);
+ * 私有 index 文件在函数结束后清理(finally 以 (dev,ino,size,sha256) 守卫, 不删并发者替换的文件);
  * 崩溃残留(未及清理)由恢复收敛按 txid 清理。
  */
 export function derivePlanIdentity(
@@ -553,7 +558,7 @@ export function derivePlanIdentity(
   if (fs.existsSync(`${idx}.lock`)) {
     throw new TransactionError('UNKNOWN_GIT_LOCK', `事务私有 index 的 .lock 已存在(无法证明归属), fail-closed: ${idx}.lock`);
   }
-  let ourIndexStat: { dev: number; ino: number } | null = null;
+  let ourIndexStat: { dev: number; ino: number; size: number; sha256: string } | null = null;
   const refreshIndexStat = (): void => {
     ourIndexStat = statOrNull(idx);
   };
