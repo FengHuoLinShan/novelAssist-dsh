@@ -1,4 +1,7 @@
 // N35 / ADR-0024 — misuse-resistant NovelCraftService capability surface.
+// 数据驱动声明表: 每个能力只落笔一次(方法名即能力名), 命名空间类型与冻结对象
+// 均由表推导 —— 重命名/加能力改一处, 不再接口+工厂双写漂移。
+// adoptGuarded 因能力名≠方法名(storeAdopt→adoptGuarded 等)使用 [能力, 方法] 对表。
 import type { NovelCraftService } from './service.js';
 
 type MethodName = {
@@ -6,52 +9,71 @@ type MethodName = {
 }[keyof NovelCraftService];
 type Bound<K extends MethodName> = NovelCraftService[K] extends (...args: infer A) => infer R ? (...args: A) => R : never;
 
-export interface NovelCraftReadCapabilities {
-  viewMapAtlas: Bound<'viewMapAtlas'>;
-  inbox: Bound<'inbox'>;
-  ragSearch: Bound<'ragSearch'>;
-  chapterCurrent: Bound<'chapterCurrent'>;
-  chapterHistory: Bound<'chapterHistory'>;
-  chapterDiff: Bound<'chapterDiff'>;
-  chapterReview: Bound<'chapterReview'>;
-}
+/** 自名能力表(能力名 = service 方法名): read/propose 两层。 */
+const READ_METHODS = [
+  'viewMapAtlas',
+  'inbox',
+  'ragSearch',
+  'chapterCurrent',
+  'chapterHistory',
+  'chapterDiff',
+  'chapterReview',
+] as const satisfies readonly MethodName[];
+
+const PROPOSE_METHODS = [
+  'runStep',
+  'actOnSignal',
+  'planMapAtlas',
+  'importAtlasImage',
+  'updateAtlasPrompt',
+  'createAtlasUploadNode',
+  'proposeNextChapter',
+  'generateNextChapter',
+  'ingestTextFile',
+  'reviewChapter',
+  'reviseChapter',
+  'rejectChapterFinding',
+  'rejectChapterCandidate',
+  'scanHealth',
+  'radarSweep',
+  'refreshIndex',
+  'ragSync',
+  'ragEmbed',
+] as const satisfies readonly MethodName[];
+
+/** 审批门控能力表: [能力名, service 方法名](adoptGuarded 族)。 */
+const ADOPT_PAIRS = [
+  ['storeAdopt', 'adoptGuarded'],
+  ['worldCreate', 'worldCreateGuarded'],
+  ['worldUpdate', 'worldUpdateGuarded'],
+  ['reviewMapAtlas', 'reviewMapAtlasGuarded'],
+  ['deepImport', 'deepImport'],
+  ['saveChapter', 'saveChapterGuarded'],
+  ['restoreChapter', 'restoreChapterGuarded'],
+] as const satisfies ReadonlyArray<readonly [string, MethodName]>;
+
+/** 自名方法列表 → 命名空间类型(键 = 方法名)。 */
+type NamespaceOf<Methods extends readonly MethodName[]> = {
+  [M in Methods[number]]: Bound<M>;
+};
+
+/** [能力, 方法] 对表 → 命名空间类型(键 = 能力名, 值 = 对应方法签名)。 */
+type NamespaceOfPairs<Pairs extends ReadonlyArray<readonly [string, MethodName]>> = {
+  [E in Pairs[number] as E[0]]: Bound<E[1]>;
+};
+
+export type NovelCraftReadCapabilities = NamespaceOf<typeof READ_METHODS>;
 
 export interface NovelCraftAuthorEditCapabilities {
   /** ADR-0020 exception: fixed annotations field + queue provenance + content-hash CAS; no ApprovalGate. */
   annotations: Bound<'applyAtlasAnnotationQueue'>;
 }
 
-export interface NovelCraftProposeCapabilities {
-  runStep: Bound<'runStep'>;
-  actOnSignal: Bound<'actOnSignal'>;
-  planMapAtlas: Bound<'planMapAtlas'>;
-  importAtlasImage: Bound<'importAtlasImage'>;
-  updateAtlasPrompt: Bound<'updateAtlasPrompt'>;
-  createAtlasUploadNode: Bound<'createAtlasUploadNode'>;
-  proposeNextChapter: Bound<'proposeNextChapter'>;
-  generateNextChapter: Bound<'generateNextChapter'>;
-  ingestTextFile: Bound<'ingestTextFile'>;
-  reviewChapter: Bound<'reviewChapter'>;
-  reviseChapter: Bound<'reviseChapter'>;
-  rejectChapterFinding: Bound<'rejectChapterFinding'>;
-  rejectChapterCandidate: Bound<'rejectChapterCandidate'>;
-  scanHealth: Bound<'scanHealth'>;
-  radarSweep: Bound<'radarSweep'>;
-  refreshIndex: Bound<'refreshIndex'>;
-  ragSync: Bound<'ragSync'>;
-  ragEmbed: Bound<'ragEmbed'>;
+export type NovelCraftProposeCapabilities = NamespaceOf<typeof PROPOSE_METHODS> & {
   authorEdit: NovelCraftAuthorEditCapabilities;
-}
+};
 
-export interface NovelCraftAdoptGuardedCapabilities {
-  storeAdopt: Bound<'adoptGuarded'>;
-  worldCreate: Bound<'worldCreateGuarded'>;
-  worldUpdate: Bound<'worldUpdateGuarded'>;
-  reviewMapAtlas: Bound<'reviewMapAtlasGuarded'>;
-  deepImport: Bound<'deepImport'>;
-  saveChapter: Bound<'saveChapterGuarded'>;
-  restoreChapter: Bound<'restoreChapterGuarded'>;
-}
+export type NovelCraftAdoptGuardedCapabilities = NamespaceOfPairs<typeof ADOPT_PAIRS>;
 
 export interface NovelCraftCapabilities {
   read: NovelCraftReadCapabilities;
@@ -65,49 +87,39 @@ function bind<K extends MethodName>(service: NovelCraftService, key: K): Bound<K
   return method.bind(service) as Bound<K>;
 }
 
+function bindSelf<Methods extends readonly MethodName[]>(
+  service: NovelCraftService,
+  methods: Methods,
+): NamespaceOf<Methods> {
+  const out: Record<string, unknown> = {};
+  // 宽化到非泛型列表再迭代(泛型元素作索引会被推断成 unique symbol)。
+  for (const method of methods as readonly MethodName[]) {
+    out[method as string] = bind(service, method);
+  }
+  return Object.freeze(out) as NamespaceOf<Methods>;
+}
+
+function bindPairs<Pairs extends ReadonlyArray<readonly [string, MethodName]>>(
+  service: NovelCraftService,
+  pairs: Pairs,
+): NamespaceOfPairs<Pairs> {
+  const out: Record<string, unknown> = {};
+  // 宽化到非泛型对表再迭代: 泛型元组解构会把键侧推断成 unique symbol。
+  for (const pair of pairs as ReadonlyArray<readonly [string, MethodName]>) {
+    out[pair[0]] = bind(service, pair[1]);
+  }
+  return Object.freeze(out) as NamespaceOfPairs<Pairs>;
+}
+
 /** Build once in the service constructor; frozen namespaces prevent runtime replacement/route confusion. */
 export function createNovelCraftCapabilities(service: NovelCraftService): NovelCraftCapabilities {
-  const authorEdit = Object.freeze({ annotations: bind(service, 'applyAtlasAnnotationQueue') });
   const capabilities: NovelCraftCapabilities = {
-    read: Object.freeze({
-      viewMapAtlas: bind(service, 'viewMapAtlas'),
-      inbox: bind(service, 'inbox'),
-      ragSearch: bind(service, 'ragSearch'),
-      chapterCurrent: bind(service, 'chapterCurrent'),
-      chapterHistory: bind(service, 'chapterHistory'),
-      chapterDiff: bind(service, 'chapterDiff'),
-      chapterReview: bind(service, 'chapterReview'),
-    }),
+    read: bindSelf(service, READ_METHODS),
     propose: Object.freeze({
-      runStep: bind(service, 'runStep'),
-      actOnSignal: bind(service, 'actOnSignal'),
-      planMapAtlas: bind(service, 'planMapAtlas'),
-      importAtlasImage: bind(service, 'importAtlasImage'),
-      updateAtlasPrompt: bind(service, 'updateAtlasPrompt'),
-      createAtlasUploadNode: bind(service, 'createAtlasUploadNode'),
-      proposeNextChapter: bind(service, 'proposeNextChapter'),
-      generateNextChapter: bind(service, 'generateNextChapter'),
-      ingestTextFile: bind(service, 'ingestTextFile'),
-      reviewChapter: bind(service, 'reviewChapter'),
-      reviseChapter: bind(service, 'reviseChapter'),
-      rejectChapterFinding: bind(service, 'rejectChapterFinding'),
-      rejectChapterCandidate: bind(service, 'rejectChapterCandidate'),
-      scanHealth: bind(service, 'scanHealth'),
-      radarSweep: bind(service, 'radarSweep'),
-      refreshIndex: bind(service, 'refreshIndex'),
-      ragSync: bind(service, 'ragSync'),
-      ragEmbed: bind(service, 'ragEmbed'),
-      authorEdit,
+      ...bindSelf(service, PROPOSE_METHODS),
+      authorEdit: Object.freeze({ annotations: bind(service, 'applyAtlasAnnotationQueue') }),
     }),
-    adoptGuarded: Object.freeze({
-      storeAdopt: bind(service, 'adoptGuarded'),
-      worldCreate: bind(service, 'worldCreateGuarded'),
-      worldUpdate: bind(service, 'worldUpdateGuarded'),
-      reviewMapAtlas: bind(service, 'reviewMapAtlasGuarded'),
-      deepImport: bind(service, 'deepImport'),
-      saveChapter: bind(service, 'saveChapterGuarded'),
-      restoreChapter: bind(service, 'restoreChapterGuarded'),
-    }),
+    adoptGuarded: bindPairs(service, ADOPT_PAIRS),
   };
   return Object.freeze(capabilities);
 }
