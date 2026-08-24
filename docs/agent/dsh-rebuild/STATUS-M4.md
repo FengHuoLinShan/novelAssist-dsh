@@ -123,6 +123,18 @@
 - [x] ADR-0021–0025 已实现并完成验证，关联 `docs/agent/reviews/full-codebase-review.md` §4。
 - [x] 按依赖顺序完成 ADR-0021 → ADR-0023 ExecutionProfile 基础 seam → ADR-0022 → ADR-0024 → ADR-0023 session/watch 生命周期 → ADR-0025；全仓 `build`、`typecheck`、`npm test`、静态/分发/audit gates 与独立复审均通过。
 
+## 「一切皆插件」架构优化(2026-08-25)
+
+- [x] A–G 七阶段完成(工具层包装器/afterMutation 副作用唯一入口/核心包 UI 读面加法导出/
+  service 瘦身/capabilities 数据驱动/包内工具组插件 + config.tools 开关/client 经
+  service.ui 走 seam 去核心包运行时依赖); 每阶段独立 commit + 全仓 build/test/typecheck/
+  distribution 全绿后推送。
+- [x] 实证记录两处 cordis rc.8 行为: 嵌套 ctx.plugin 子插件构造器抛错被静默吞掉(默认组装
+  因此保持同步注册); inject 缺服务 = 插件等待不启动(非报错)。
+- [ ] H: N32 全局 git transaction 收口(素材入库/planImport checkpoint/aliasRelation 批内
+  部分失败)——交接文档 §7 条目 11, 复用 store `executeCanonicalWrite/executeTransaction`
+  事务缝。
+
 ## 约定(继承 specs/README.md 与设计文档 §15)
 
 - 行为契约 + trace contract + vitest mock seam; 核心包零 DSH 依赖, DSH 接触面

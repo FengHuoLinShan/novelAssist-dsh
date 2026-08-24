@@ -30,6 +30,13 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | trace contract(C, §15) | ✅ `@novelcraft/trace`(trace/assert/mock)+ `imports` 的 `runDeepImport` 编排 seam | 见 docs/agent/dsh-rebuild/trace-contract-验收.md |
 | 发布 | 📋 preset 已平移 + starter 已备 | starter/README.md |
 
+## 核心包 UI 读面加法导出(2026-08-25)
+
+- `world`: `consumeAtlasAnnotationQueue` / `atlasAnnotationQueueStatus`(标注队列单一实现; R9 + CAS + 事务)。
+- `store`: `chapterHistoryCardView`(单章历史线卡唯一映射)。
+- `writing`: `reviewSummaries` / `latestProposalForChapter` / `pendingChapterRefs`(三段 .assistant 扫描收敛)。
+- `llm-step`: `LLM_ERROR_CODES` / `llmErrorCode`(错误码映射唯一事实源)。
+
 ## DSH 挂载阶段 seam 契约
 
 以下契约在挂载阶段(A)已由 **`@novelcraft/dsh`** 实现(核心包接口未回头改动),
@@ -44,4 +51,4 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | 会话/工作区绑定 | 每书一个 DSH session 绑定一个 vault 根(D17); 子代理 prompt 注入书名/路径(§14) | `@novelcraft/dsh` vault 绑定 |
 | 存储索引 | `rebuildIndex` 产物 → novelcraft domain KV(可选持久化); 文件仍为唯一真相(§22.2) | `@novelcraft/dsh` storage 缓存 |
 | 工具面 | `ctx.tools`: 21 个领域工具；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功输出 required + closed；scope/approval/store/LLM 失败映射 rc.8 `HarnessError/isError`。adopt 类动作审批门控，deep_import 六阶段带 trace，tools 服务缺失时静默跳过。 | `@novelcraft/dsh` tools |
-| client UI | client-modules 注入: 宠物/收件箱/写作台读 `.assistant/signals/*.json` 与 reviews(§17); 动作回调走核心包的确定性函数 | client 包(B 阶段) |
+| client UI | client-modules 注入: 宠物/收件箱/写作台经 loopback RPC 读 `ctx.novelcraft.ui`(view 只读聚合/stage 收据暂存/records 决定记录); client 零核心包运行时依赖(type-only 例外) | client 包(B 阶段) + `@novelcraft/dsh` client-face |
