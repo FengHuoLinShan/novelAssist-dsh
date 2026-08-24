@@ -33,6 +33,10 @@ plugins:
 `read/propose/adoptGuarded` capability + 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
 `deepImport`(runDeepImport 挂载: DshProvider + ApprovalGate + ImportTraceSink)。
 
+工具注册入口仍为 `src/tools.ts`；章节工作流与地图册定义分别位于
+`src/tools/writing.ts`、`src/tools/map-atlas.ts`，共用的错误映射和 workspace 隔离位于
+`src/tools/shared.ts`。注册名称、顺序和公开导入路径不变。
+
 ## 工程约定
 
 1. 所有 DSH 服务读取走 `svc(ctx, name)`(ctx.get): cordis 的 inject 门禁按 fiber 生效,

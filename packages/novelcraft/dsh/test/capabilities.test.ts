@@ -1,5 +1,5 @@
 // N35 / ADR-0024 service capability boundary; annotations remain ADR-0020 author-edit exception.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import * as publicApi from '../src/index.js';
 import { createNovelCraftCapabilities, NovelCraftService } from '../src/index.js';
@@ -63,7 +63,13 @@ describe('createNovelCraftCapabilities', () => {
   });
 
   it('生产 tools 只经 capability namespaces 调用 domain 方法(N35)', () => {
-    const source = readFileSync(new URL('../src/tools.ts', import.meta.url), 'utf8');
+    const toolsDir = new URL('../src/tools/', import.meta.url);
+    const source = [
+      readFileSync(new URL('../src/tools.ts', import.meta.url), 'utf8'),
+      ...readdirSync(toolsDir)
+        .filter((file) => file.endsWith('.ts'))
+        .map((file) => readFileSync(new URL(file, toolsDir), 'utf8')),
+    ].join('\n');
     const direct = [...source.matchAll(/service\.(?!js\b|capabilities\.|vaults\.)[A-Za-z_$][\w$]*/g)].map((match) => match[0]);
     expect(direct).toEqual([]);
   });

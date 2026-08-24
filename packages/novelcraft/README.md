@@ -43,5 +43,5 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | 长任务/守望 | 雷达调度 → DSH `ctx.jobs`(每雷达一轮 = 一个 job)+ 可选 interval(D6 默认关); goal 归 DSH 会话级 goal | `@novelcraft/dsh` 雷达调度 |
 | 会话/工作区绑定 | 每书一个 DSH session 绑定一个 vault 根(D17); 子代理 prompt 注入书名/路径(§14) | `@novelcraft/dsh` vault 绑定 |
 | 存储索引 | `rebuildIndex` 产物 → novelcraft domain KV(可选持久化); 文件仍为唯一真相(§22.2) | `@novelcraft/dsh` storage 缓存 |
-| 工具面 | `ctx.tools`: 19 个领域工具；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功输出 required + closed；scope/approval/store/LLM 失败映射 rc.8 `HarnessError/isError`。adopt 类动作审批门控，deep_import 六阶段带 trace，tools 服务缺失时静默跳过。 | `@novelcraft/dsh` tools |
+| 工具面 | `ctx.tools`: 21 个领域工具；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功输出 required + closed；scope/approval/store/LLM 失败映射 rc.8 `HarnessError/isError`。adopt 类动作审批门控，deep_import 六阶段带 trace，tools 服务缺失时静默跳过。 | `@novelcraft/dsh` tools |
 | client UI | client-modules 注入: 宠物/收件箱/写作台读 `.assistant/signals/*.json` 与 reviews(§17); 动作回调走核心包的确定性函数 | client 包(B 阶段) |
