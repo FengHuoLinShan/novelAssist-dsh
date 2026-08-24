@@ -11,6 +11,7 @@ import { paths } from '@novelcraft/vault';
 import {
   applyAtlasAnnotationOps,
   applyAtlasAnnotationOpsTx,
+  consumeAtlasAnnotationQueue,
   writeAtlasNode,
   writeAtlasPage,
   readAtlasTree,
@@ -20,12 +21,15 @@ import type { AtlasNode, AtlasPage } from '@novelcraft/world';
 import { NovelCraftService } from '../src/index.js';
 import { makeContext, type FakeApprovalConfig, type HarnessServices } from './helpers.js';
 
-// N35: 包装 world 两个标注写入口为可断言 spy(真实现透传), 证明 DSH queue 只调用
-// async transactional API(applyAtlasAnnotationOpsTx), 绝不走旧 sync 写面。
+// N35: 包装 world 标注写入口与队列消费入口为可断言 spy(真实现透传)。
+// 队列消费已下沉 world.consumeAtlasAnnotationQueue(单一实现, 内部只走
+// applyAtlasAnnotationOpsTx 事务面 —— 由 world 包自有测试守护);
+// DSH 侧断言: 队列消费必须经该单一实现委托, 旧 sync 写面零调用。
 vi.mock('@novelcraft/world', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@novelcraft/world')>();
   return {
     ...actual,
+    consumeAtlasAnnotationQueue: vi.fn(actual.consumeAtlasAnnotationQueue),
     applyAtlasAnnotationOpsTx: vi.fn(actual.applyAtlasAnnotationOpsTx),
     applyAtlasAnnotationOps: vi.fn(actual.applyAtlasAnnotationOps),
   };
@@ -446,7 +450,7 @@ describe('map-atlas 工具面(Phase 5)', () => {
     env.cleanup();
   });
 
-  it('annotation 队列只调用 transactional API(N35/ADR-0021): 消费走 applyAtlasAnnotationOpsTx, 旧 sync 写面零调用', async () => {
+  it('annotation 队列消费委托 world 单一实现(N35/ADR-0021): consumeAtlasAnnotationQueue + 旧 sync 写面零调用', async () => {
     const env = await setup();
     writeAtlasNode(env.root, node('n1'));
     writeAtlasPage(env.root, page('pg1')); // content_hash = h-pg1
@@ -460,11 +464,11 @@ describe('map-atlas 工具面(Phase 5)', () => {
     const r = await env.service.applyAtlasAnnotationQueue(env.root);
     expect(r).toMatchObject({ files: 1, applied: 1, failed: 0 });
     expect(existsSync(path.join(queueDir, 'q.json'))).toBe(false); // 成功即清
-    // 只调用 transactional API(ADR-0021 写面; 任何首写前产出 output bytes 并
-    // executeTransaction); CAS 基线原样传递(业务 content_hash, 非整文件 sha256)。
-    expect(vi.mocked(applyAtlasAnnotationOpsTx)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(applyAtlasAnnotationOpsTx).mock.calls[0][1]).toBe('pg1');
-    expect(vi.mocked(applyAtlasAnnotationOpsTx).mock.calls[0][3]).toEqual({ expectedContentHash: 'h-pg1' });
+    // DSH 侧只经 world 单一实现消费(其内部只走 applyAtlasAnnotationOpsTx 事务面,
+    // 由 world/test/map-atlas-annotation-queue.test.ts 行为契约守护);
+    // 旧 sync 兼容面在 DSH 全链零调用。
+    expect(vi.mocked(consumeAtlasAnnotationQueue)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(consumeAtlasAnnotationQueue).mock.calls[0][0]).toBe(env.root);
     expect(vi.mocked(applyAtlasAnnotationOps)).not.toHaveBeenCalled(); // sync 兼容面零调用
     env.cleanup();
   });

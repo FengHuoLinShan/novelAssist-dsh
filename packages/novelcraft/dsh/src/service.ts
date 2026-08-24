@@ -3,18 +3,16 @@
 // 并把核心包 facade 命名空间挂在此处(供 client module、skills、子代理组合消费)。
 // 依据: 设计文档 §22.3(插件族, 经 DSH seam 互连)、seam 契约(packages/novelcraft/README.md)。
 import { createHash } from 'node:crypto';
-import { existsSync as existsSyncLocal, readdirSync as readdirSyncLocal, readFileSync, rmSync as rmFileSync } from 'node:fs';
-import path from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
 import * as imports from '@novelcraft/imports';
 import * as llmStep from '@novelcraft/llm-step';
 import * as rag from '@novelcraft/rag';
 import * as store from '@novelcraft/store';
-import { ensureVaultGitignore, paths as pathsFor } from '@novelcraft/vault';
+import { ensureVaultGitignore } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
-import { ApprovalGate, GateDeniedError } from './approval/gate.js';
+import { ApprovalGate } from './approval/gate.js';
 import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './capabilities.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
@@ -25,6 +23,7 @@ import { DshProvider } from './llm/provider.js';
 import { ContentPresetRegistry, mergeStepOverrides, withAbortSignal, withResolvedDefaults } from './llm/preset.js';
 import { resolveExecutionProfile, requireTrustedExecutionProfile, type ExecutionProfile } from './llm/execution-profile.js';
 import type { ResolveExecutionProfileOptions } from './llm/execution-profile.js';
+import { planMapAtlasRun, reviewMapAtlasDecision } from './map-atlas-face.js';
 import { optionalBgeLoader } from './optional-bge.js';
 import { NovelcraftCache } from './storage/domain.js';
 import { registerNovelcraftTools } from './tools.js';
@@ -366,32 +365,7 @@ export class NovelCraftService extends Service {
     profile?: ExecutionProfile,
     agent?: import('@deepseek-ai/dsh-agent').Agent,
   ): Promise<world.AtlasWorkflowResult> {
-    const resolved =
-      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
-    const provider = await this.contentProviderFor(root, signal, resolved);
-    const toApprovalDecision = (decision: string): import('@novelcraft/trace').ApprovalDecision =>
-      decision === 'allowed-once' ? 'allowed-once' : decision === 'unavailable' ? 'unavailable' : 'rejected';
-    return world.runAtlasWorkflow(root, opts, {
-      provider,
-      profileFingerprint: llmStep.fingerprintExecutionProfile(resolved),
-      contractVersions: resolved.contractVersions ?? {},
-      ...(resolved.workflowBudget !== undefined
-        ? { budget: llmStep.createWorkflowBudget(resolved.workflowBudget) }
-        : {}),
-      approve: async (action, summary, items) => {
-        if (agent === undefined) return 'unavailable';
-        return toApprovalDecision(await this.approval.request(agent, { action, summary, items, ...(signal ? { signal } : {}) }));
-      },
-      reauthorizeRemaining: async ({ workflowId, batches, estimate }) => {
-        if (agent === undefined) return 'unavailable';
-        return toApprovalDecision(await this.approval.request(agent, {
-          action: 'authorize_map_atlas_resume',
-          summary: `恢复地图册 ${workflowId}: ${estimate}`,
-          items: batches.map((batch) => `阶段 ${batch.phase}(${batch.batchId})`),
-          ...(signal ? { signal } : {}),
-        }));
-      },
-    });
+    return planMapAtlasRun(this, root, opts, signal, profile, agent);
   }
 
   /** 便捷: 地图册只读视图(tree + 指定/最近 run; 只读直通不过审批)。 */
@@ -416,61 +390,14 @@ export class NovelCraftService extends Service {
    * 一次, rejected/cancelled/unavailable 一律拒绝, fail-closed; N35: archive 是 canonical
    * 资产状态迁移, 工具无旁路); reject 为候选面操作(候选 → rejected 终态, 非 canonical), 直执行。
    */
-  async reviewMapAtlasGuarded(
+  reviewMapAtlasGuarded(
     agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
     root: string,
     target: { pageRef?: string; nodeRef?: string },
     action: 'adopt' | 'adopt_placeholder' | 'reject' | 'archive' | 'restore',
     opts: { confirmConflicts?: boolean; expectedContentHash?: string; note?: string } = {},
   ): Promise<{ ok: true; detail: string }> {
-    const approve: world.AtlasApprove = async (a, summary, items) => {
-      const decision = await this.approval.request(agent, { action: a, summary, items });
-      if (decision !== 'allowed-once') {
-        throw new GateDeniedError(decision, `未获批准, 已放弃「${a}」(决策: ${decision})`);
-      }
-      return 'allowed-once';
-    };
-    switch (action) {
-      case 'adopt': {
-        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'adopt 需要 page_ref');
-        const r = await world.adoptAtlasPage(root, target.pageRef, {
-          confirmConflicts: opts.confirmConflicts,
-          expectedContentHash: opts.expectedContentHash,
-          note: opts.note,
-        }, approve);
-        return { ok: true, detail: `已采用地图页 ${r.page.id}(连带节点 ${r.adoptedNodeIds.join('/') || '无'})` };
-      }
-      case 'adopt_placeholder': {
-        if (!target.nodeRef) throw new store.StoreError('VALIDATION_FAILED', 'adopt_placeholder 需要 node_ref');
-        const r = await world.adoptAtlasPlaceholder(root, target.nodeRef, approve);
-        return { ok: true, detail: `已采用空页占位节点 ${r.adoptedNodeIds.join('/')}` };
-      }
-      case 'reject': {
-        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'reject 需要 page_ref');
-        const page = await world.rejectAtlasPage(root, target.pageRef, { note: opts.note, expectedContentHash: opts.expectedContentHash });
-        return { ok: true, detail: `已驳回地图页 ${page.id}(终态 rejected)` };
-      }
-      case 'archive': {
-        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'archive 需要 page_ref');
-        // N35: archive(adopted → deprecated)是 canonical 资产状态迁移, 必须 ApprovalGate
-        // allowed-once, 工具无旁路。审批前读快照 hash 作强制 CAS 基线(审批后写前重验,
-        // 与 adopt/restore 同 R17/CAS 语义: 审批期间被改/已 commit 的页一律 CONFLICT 零写)。
-        const adopted = world.readAtlasTree(root).pages.find((p) => p.id === target.pageRef);
-        if (!adopted) throw new store.StoreError('NOT_FOUND', `已采用页不存在: ${target.pageRef}`);
-        const preHash = adopted.content_hash;
-        const decision = await approve('map_atlas.archive_page', `归档地图页 ${adopted.title}(${target.pageRef})`, [target.pageRef]);
-        if (decision !== 'allowed-once') {
-          throw new store.StoreError('VALIDATION_FAILED', `archive 审批未通过(${decision}), fail-closed 零写`);
-        }
-        const page = await world.archiveAtlasPage(root, target.pageRef, { expectedContentHash: preHash });
-        return { ok: true, detail: `已归档地图页 ${page.id}(deprecated, 可 restore)` };
-      }
-      case 'restore': {
-        if (!target.pageRef) throw new store.StoreError('VALIDATION_FAILED', 'restore 需要 page_ref');
-        const r = await world.restoreAtlasPage(root, target.pageRef, approve, { expectedContentHash: opts.expectedContentHash });
-        return { ok: true, detail: `已恢复地图页 ${r.page.id}(祖先链补齐 ${r.adoptedNodeIds.join('/') || '无'})` };
-      }
-    }
+    return reviewMapAtlasDecision(this.approval, agent, root, target, action, opts);
   }
 
   /** 便捷: 改 prompt_only 候选页 prompt(候选面, 不过审批)。 */
@@ -511,60 +438,12 @@ export class NovelCraftService extends Service {
   }
 
   /**
-   * 便捷: 消费标注队列(N35 唯一受控结构化入口; 计划 Phase 5 工具 5):
-   * 读 .assistant/atlas/annotation-queue/*.json, 载荷 schema 固定(封闭 provenance):
-   *   { page_ref: string, base_content_hash: string, ops: 严格 discriminated union[] }
-   * - base_content_hash 必填(N35): 缺失/非字符串 → 拒绝(零写, 队列文件保留待修);
-   * - 未知顶层字段 → 拒绝(固定 provenance, 不猜测); 未知 op/未知字段/缺字段由 world 层
-   *   严格校验拒绝(绝不把拼写错误当 delete); CAS 失配(stale)→ CONFLICT 零写;
-   * - 本队列只调用 world 层 **async transactional API**(applyAtlasAnnotationOpsTx,
-   *   N35/ADR-0021): 任何首写前产出完整 output bytes 并 executeTransaction, 不直接
-   *   writeFileSync/gitAdd/gitCommit; 内容 CAS/预存 staged/崩溃 → 执行器零写收敛;
-   * - 单文件失败不阻塞其余(错误汇总返回); 成功后删除队列文件。
+   * 便捷: 消费标注队列(N35 唯一受控结构化入口; 实现已下沉 @novelcraft/world
+   * consumeAtlasAnnotationQueue: 封闭三键 schema + CAS 必填 + 事务零写 + 单文件容错)。
    * 标注 = 作者内容编辑, 不过审批; 工具不得直接传 ops 绕过本队列(CAS 必填)。
    */
   async applyAtlasAnnotationQueue(root: string): Promise<{ files: number; applied: number; failed: number; errors: string[] }> {
-    const dir = pathsFor(root).assistant.atlas.annotationQueue;
-    if (!existsSyncLocal(dir)) return { files: 0, applied: 0, failed: 0, errors: [] };
-    // R9(目录枚举扫描): 只接收 .json 普通文件; symlink(含指向 vault 外)与伪装成
-    // .json 的目录一律忽略, 不跟随。abs 由安全 annotationQueue dir 拼接, 读取的
-    // 只能是目录内普通文件——外部 JSON 不被应用、不被删除。
-    const files = readdirSyncLocal(dir, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith('.json'))
-      .map((e) => e.name)
-      .sort();
-    let applied = 0;
-    let failed = 0;
-    const errors: string[] = [];
-    for (const file of files) {
-      const abs = path.join(dir, file);
-      try {
-        const payload = JSON.parse(readFileSync(abs, 'utf8')) as Record<string, unknown>;
-        // 固定 provenance 封闭 schema: 只认 page_ref/base_content_hash/ops 三键(不猜测)。
-        for (const key of Object.keys(payload)) {
-          if (key !== 'page_ref' && key !== 'base_content_hash' && key !== 'ops') {
-            throw new Error(`队列文件含未知字段 ${key}(固定 schema: page_ref/base_content_hash/ops)`);
-          }
-        }
-        const pageRef = payload.page_ref;
-        const baseHash = payload.base_content_hash;
-        const ops = payload.ops;
-        if (typeof pageRef !== 'string' || pageRef.length === 0) throw new Error('队列文件缺 page_ref');
-        if (typeof baseHash !== 'string' || baseHash.length === 0) {
-          throw new Error('队列文件缺 base_content_hash(CAS 必填, N35; 缺失拒绝零写)');
-        }
-        if (!Array.isArray(ops) || ops.length === 0) throw new Error('队列文件缺 ops[]');
-        const r = await world.applyAtlasAnnotationOpsTx(root, pageRef, ops as world.AtlasAnnotationOp[], {
-          expectedContentHash: baseHash, // CAS: 防 stale 覆盖(N35; 必填, 失配 CONFLICT 零写)
-        });
-        applied += r.applied;
-        rmFileSync(abs); // 成功后清队列(计划: 应用后清队列)。
-      } catch (err) {
-        failed += 1;
-        errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    return { files: files.length, applied, failed, errors };
+    return world.consumeAtlasAnnotationQueue(root);
   }
 
   /** 便捷: 重建派生索引并把结果写入 domain 缓存(文件仍是唯一真相)。 */

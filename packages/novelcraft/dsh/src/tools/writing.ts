@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
+import { chapterHistoryCardView } from '@novelcraft/store';
 import * as writing from '@novelcraft/writing';
 import type { NovelCraftService } from '../service.js';
 import { novelcraftToolFactory } from './define.js';
@@ -287,16 +288,12 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           };
         }
         if (args.action === 'history') {
-          const history = run.service.capabilities.read.chapterHistory(run.root, args.chapter).map((entry) => ({
-            commit: entry.commit,
-            authored_at: entry.authoredAt,
-            subject: entry.subject,
-            status: entry.status,
-            title: entry.title ?? '',
-            content_hash: entry.contentHash,
-            declared_hash_valid: entry.declaredHashValid,
-            byte_length: entry.byteLength,
-          }));
+          // 映射走 store.chapterHistoryCardView 唯一事实源; 工具展示层补 title 空串回退。
+          const history = run.service.capabilities.read.chapterHistory(run.root, args.chapter)
+            .map((entry) => {
+              const card = chapterHistoryCardView(entry);
+              return { ...card, title: card.title ?? '' };
+            });
           return {
             ...blank,
             history,
