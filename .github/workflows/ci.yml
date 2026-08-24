@@ -7,15 +7,11 @@ on:
 jobs:
   default-profile:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22.19.0, 24.x]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24.11.0
           cache: npm
       - name: Install default profile without optional dependencies
         run: npm ci --omit=optional
@@ -91,7 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.x
+          node-version: 24.11.0
           cache: npm
       - name: Install explicit BGE profile
         run: npm ci --include=optional
@@ -106,6 +102,6 @@ jobs:
           npm run build -w @novelcraft/rag
           npm run build -w @novelcraft/rag-bge
       - name: Test explicit BGE profile
-        run: npm test -w @novelcraft/rag -w @novelcraft/rag-bge
+        run: npm test -w @novelcraft/rag-bge
       - name: Enforce registered BGE audit baseline
         run: node scripts/check-audit-baseline.mjs --profile=bge

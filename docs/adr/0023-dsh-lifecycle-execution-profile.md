@@ -1,6 +1,7 @@
 # ADR-0023 — DSH 生命周期与执行画像(session/vault 生命周期 + Node 托管调度 + ExecutionProfile)
 
-- **状态**: Accepted(2026-08-15, 用户确认裁定 N34); **implemented and verified**
+- **状态**: Accepted(2026-08-15, 用户确认裁定 N34); **implemented and verified**;
+  Node 版本条款于 2026-08-24 被 N37 **部分取代**
 - **日期**: 2026-08-15
 - **取代/补充**: 补充 ADR-0017 §2(会话↔工作区绑定 D17、RadarScheduler 经 ctx.schedule/
   ctx.jobs)与 ADR-0016(内容手受控、llm-step 编排纪律)的生命周期与配置语义。**不取代**
@@ -75,8 +76,9 @@
 
 ### 7. Node engines 跟随 DSH
 
-- 包 `engines` 声明与 DSH 对齐: **`^22.19.0 || >=24.0.0`**; CI 矩阵覆盖 **22.19 / 24**
-  两档(安装、测试、typecheck 全链验证)。
+- **N37 补充裁定(当前约束)**: 包 `engines` 统一为 **`>=24.11.0`**；默认与 BGE CI
+  均固定 **Node 24.11.0**，不再维护 Node 22 矩阵。此变更只取代本节版本口径。
+- **原 N34 记录(已部分取代)**: `^22.19.0 || >=24.0.0`，CI 覆盖 22.19 / 24。
 
 ## 失败关闭与边界
 
@@ -106,14 +108,15 @@
   计数与补建、RadarScheduler 持久化(状态真相落 vault 文件, domain KV 只作缓存)/防重入/
   补跑一轮/最后 session disposed 取消 radar jobs)、assistant(雷达调度状态字段)、
   llm-step(profile 继承 seam, 对齐 N20)。
-- 工程: 各包 `package.json` engines 声明 `^22.19.0 || >=24.0.0`; CI 矩阵加 22.19/24。
+- 工程: 当前各包 `package.json` engines 声明 `>=24.11.0`，CI 固定 Node 24.11.0
+  (N37；原 N34 的 22.19/24 matrix 实施记录保留为历史)。
 - 验证要求: vitest 行为契约, 断言注释引 N34——覆盖 cwd 不存在不创建、HMR 补建、引用
   计数只认服务端真实 session 事件(断线/刷新不增减计数)、最后 session disposed 停 timer
   并请求取消 radar jobs(显式长 job 不取消)、调度状态真相落 vault 文件(domain KV 被清
   可重建)、防重入拒绝、补跑至多一轮、profile 解析失败 fail-closed、override 优先;
   生命周期集成测试用真实 Cordis Context + 假 jobs/approval 驱动; 完成标准 `npm test`
   全绿 + `npm run typecheck` 零错误。
-- 文档: N34 已录入 `specs/adjudications.md` 第八批; `docs/adr/README.md` 索引已更新。
+- 文档: N34 已录入第八批；Node 版本补充裁定 N37 已录入第九批并在 ADR 索引标记部分取代。
 
 ## 实施期开放项
 

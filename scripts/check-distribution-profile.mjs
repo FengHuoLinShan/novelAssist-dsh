@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Static N34/N36 distribution contract for the source-only monorepo. */
+/** Static N34/N36/N37 distribution contract for the source-only monorepo. */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +7,7 @@ import ts from 'typescript'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packagesRoot = join(root, 'packages', 'novelcraft')
-const expectedEngine = '^22.19.0 || >=24.0.0'
+const expectedEngine = '>=24.11.0'
 const failures = []
 const workspaceNames = []
 const corePackageNames = [
@@ -205,7 +205,7 @@ const skillEntries = readdirSync(join(presetRoot, 'skills'), { withFileTypes: tr
   .filter((entry) => entry.isDirectory() && existsSync(join(presetRoot, 'skills', entry.name, 'SKILL.md')))
 if (skillEntries.length !== 9) failures.push(`@novelcraft/preset must ship exactly 9 Skill bundles, found ${skillEntries.length}`)
 
-// N36: default CI 只验证 optional 缺失与文本链降级，不构建/测试 BGE capability；
+// N36/N37: default CI 只验证 optional 缺失与文本链降级，不构建/测试 BGE capability；
 // 显式 bge-profile 才 include optional 并执行 rag-bge tests/audit。
 const DEFAULT_WORKSPACES = 'vault trace store llm-step rag memory outline writing imports world context assistant dsh client'
 function validateCiProfiles(text) {
@@ -213,7 +213,9 @@ function validateCiProfiles(text) {
   const pieces = text.split('\n  bge-profile:')
   if (pieces.length !== 2) return ['CI must contain exactly one bge-profile job']
   const [defaultCi, bgeCi] = pieces
-  if (!/node:\s*\[22\.19\.0,\s*24\.x\]/.test(defaultCi)) out.push('default CI must cover Node 22.19.0 and 24.x')
+  if (!/node-version:\s*24\.11\.0/.test(defaultCi) || /\bmatrix\b/.test(defaultCi)) {
+    out.push('default CI must run exactly once on Node 24.11.0')
+  }
   if (!/npm ci --omit=optional/.test(defaultCi)) out.push('default CI must install with --omit=optional')
   if (!/@huggingface\/transformers/.test(defaultCi) || !/await import\('@novelcraft\/rag-bge'\)/.test(defaultCi)) {
     out.push('default CI must assert optional runtime chain and adapter are unavailable')
@@ -229,12 +231,14 @@ function validateCiProfiles(text) {
     out.push('default CI must not run rag-bge or root test/typecheck')
   }
   if (!/npm test -w @novelcraft\/preset/.test(defaultCi)) out.push('default CI must test the source-only preset/Skill profile')
-  if (!/node-version:\s*24\.x/.test(bgeCi)) out.push('bge-profile must run on Node 24.x')
+  if (!/node-version:\s*24\.11\.0/.test(bgeCi)) out.push('bge-profile must run on Node 24.11.0')
   if (!/npm ci --include=optional/.test(bgeCi)) out.push('bge-profile must install optional dependencies')
   if (!/npm run build -w @novelcraft\/rag\b/.test(bgeCi) || !/npm run build -w @novelcraft\/rag-bge\b/.test(bgeCi)) {
     out.push('bge-profile must build rag and rag-bge')
   }
-  if (!/npm test -w @novelcraft\/rag -w @novelcraft\/rag-bge/.test(bgeCi)) out.push('bge-profile must test rag and rag-bge')
+  if (!/npm test -w @novelcraft\/rag-bge(?:\s|$)/.test(bgeCi) || /npm test -w @novelcraft\/rag(?:\s|$)/.test(bgeCi)) {
+    out.push('bge-profile must test only rag-bge; default CI already tests rag')
+  }
   if (!/check-audit-baseline\.mjs --profile=bge/.test(bgeCi)) out.push('bge-profile must enforce the BGE audit baseline')
   return out
 }
@@ -242,7 +246,7 @@ function validateCiProfiles(text) {
 const ciText = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8')
 failures.push(...validateCiProfiles(ciText))
 const ciMutations = [
-  ['node matrix', 'node: [22.19.0, 24.x]', 'node: [20.x]'],
+  ['default Node', 'node-version: 24.11.0', 'node-version: 22.19.0'],
   ['default install', 'npm ci --omit=optional', 'npm install'],
   ['default loops', DEFAULT_WORKSPACES, `${DEFAULT_WORKSPACES} rag-bge`],
   ['preset test', 'npm test -w @novelcraft/preset', 'echo skip-preset-test'],
@@ -250,6 +254,7 @@ const ciMutations = [
   ['absence probe', "await import('@novelcraft/rag-bge')", "await import('@novelcraft/rag')"],
   ['BGE install', 'npm ci --include=optional', 'npm ci --omit=optional'],
   ['BGE build', 'npm run build -w @novelcraft/rag-bge', 'echo skip-rag-bge-build'],
+  ['BGE test', 'npm test -w @novelcraft/rag-bge', 'npm test -w @novelcraft/rag'],
   ['BGE audit', 'node scripts/check-audit-baseline.mjs --profile=bge', 'echo skip-bge-audit'],
 ]
 for (const [name, from, to] of ciMutations) {

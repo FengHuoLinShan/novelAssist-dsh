@@ -2,7 +2,7 @@
   "name": "@novelcraft/dsh",
   "version": "0.0.1",
   "private": true,
-  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "engines": { "node": ">=24.11.0" },
   "description": "NovelCraft M4 mounting layer: Cordis service plugin adapting the 13 pure core packages to DSH rc.8 seams (llm/approval/storage-domain/jobs/credentials/client-modules)",
   "type": "module",
   "main": "dist/index.js",

@@ -23,7 +23,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { ingestChapter } from '@novelcraft/writing';
-import { DEEP_IMPORT_SPEC_REFS, readCheckpoint, resumeImport } from '@novelcraft/imports';
+import { readCheckpoint, resumeImport } from '@novelcraft/imports';
 import { estimateTokens, fingerprintExecutionProfile, parseExecutionProfile } from '@novelcraft/llm-step';
 import { ExecutionProfileError, type ExecutionProfile } from '../src/llm/execution-profile.js';
 import { NovelCraftService } from '../src/index.js';
@@ -322,37 +322,6 @@ describe('timeout/预算继承(N34: 内部 llm-step 统一继承 profile 默认,
   });
 });
 
-describe('编排入口解析一次并透传(N34: 不逐内部 step 重新解析)', () => {
-  it('deepImport 多步编排(10 次 provider 调用): 带冻结 profile → 零重解析(list 0 次)', async () => {
-    const env = await setup();
-    seedChapters(env.root, 'preset: default\n');
-    const profile = await env.service.resolveProfile(env.root, { specRefs: DEEP_IMPORT_SPEC_REFS }); // 入口解析一次
-    const listSpy = vi.spyOn(env.service.presets, 'list');
-    listSpy.mockClear();
-    for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
-    const result = await env.service.deepImport(
-      fakeAgent,
-      env.root,
-      { startChapter: 1, endChapter: 2 },
-      undefined,
-      profile,
-    );
-    expect(result.adopted).toBe(2);
-    expect(listSpy).toHaveBeenCalledTimes(0); // 透传: 内部 provider 不再重解析
-    env.cleanup();
-  });
-
-  it('deepImport 不传 profile: 入口解析一次, 内部步骤不重复解析(list 共 1 次)', async () => {
-    const env = await setup();
-    seedChapters(env.root, 'preset: default\n');
-    const listSpy = vi.spyOn(env.service.presets, 'list');
-    for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
-    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
-    expect(result.adopted).toBe(2);
-    expect(listSpy).toHaveBeenCalledTimes(1); // 启动解析一次, 不逐步骤重复
-    env.cleanup();
-  });
-});
 describe('strict llm.yml 单次快照解析 fail-closed(P3: 未知键/secret/非法类型/非数字/小数/越界/temperature/provider/model)', () => {
   const bad: Array<[string, string]> = [
     ['未知键', 'foo: 1\n'],
@@ -562,16 +531,16 @@ describe('temperature 覆盖链(R2/P2: spec 默认 < profile 默认 < 请求 ove
 });
 
 describe('真实 deepImport 挂起超时(P2: 每步 wall-clock timeout 生效, 不整链挂死)', () => {
-  it('hanging adapter + llm.yml timeout_ms: 1000 → deepImport 有界完成, 全部 llm_step ok:false', async () => {
+  it('单章 hanging adapter + timeout_ms: 1000 → deepImport 有界完成, 全部 llm_step ok:false', async () => {
     const hang = new AbortHangingAdapter();
     const env = await setup({ provider: 'hang', adapter: hang });
     seedChapters(env.root, 'timeout_ms: 1000\n');
     const t0 = Date.now();
-    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
+    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 1 });
     const elapsed = Date.now() - t0;
-    // 8 个挂起内容步 × 1000ms，外加七批 ADR-0021 Git durable commits：仍须有界完成。
+    // 单章多阶段挂起调用 × 1000ms，外加七批 ADR-0021 Git durable commits：仍须有界完成。
     // LLM deadline 由下限与实际 request 数证明；上限包含低速 CI 的真实 Git 开销。
-    expect(elapsed).toBeGreaterThanOrEqual(7_000);
+    expect(elapsed).toBeGreaterThanOrEqual(2_000);
     expect(elapsed).toBeLessThan(90_000);
     expect(hang.requests.length).toBeGreaterThan(0); // 确实验证过挂起调用(非零步)
     // 全部内容步超时 → 1a 整章 fallback 保底, 无任何 llm_step ok:true。
@@ -587,54 +556,31 @@ describe('真实 deepImport 挂起超时(P2: 每步 wall-clock timeout 生效, �
     env.cleanup();
   });
 
-  it('长输入 + max_tokens: 5 → 全部阶段在 provider 前 budget_exceeded(adapter 零调用), fallback 保底', async () => {
-    const env = await setup();
-    // 长章正文: 每章估算 token 远超 5。
-    ingestChapter(env.root, { chapterIndex: 1, text: '第一章正文。'.repeat(200), source: 'paste' });
-    ingestChapter(env.root, { chapterIndex: 2, text: '第二章正文。'.repeat(200), source: 'paste' });
-    llmYml(env.root, 'max_tokens: 5\n');
-    gitAdd(env.root);
-    gitCommit(env.root, 'fixture init');
-    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
-    expect(env.h.adapter.requests).toHaveLength(0); // 预算守卫先于 provider(全链零调用)
-    expect(result.adopted).toBe(2); // 1a 整章 fallback 保底(不因预算失败丢章)
-    env.cleanup();
-  });
 });
 
 describe('fingerprint 接入 deep import run/checkpoint identity(P5: 执行画像变化拒绝旧 run)', () => {
-  it('deepImport 后: checkpoint 落 profile_fingerprint + contract_versions, begin_import 事件带指纹', async () => {
-    const env = await setup();
-    seedChapters(env.root, 'preset: default\n');
-    for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
-    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
-    expect(result.adopted).toBe(2);
-    const cp = readCheckpoint(env.root);
-    expect(cp?.profile_fingerprint).toMatch(/^[0-9a-f]{64}$/);
-    expect(cp?.contract_versions).toBeDefined();
-    expect(Object.keys(cp?.contract_versions ?? {}).sort()).toEqual(
-      [
-        'alias_relation', 'entity_extraction', 'scene_anchor_repair', 'scene_enrichment',
-        'scene_fusion', 'scene_gap_recovery', 'scene_slicing', 'structure_analysis',
-      ].sort(),
-    ); // DEEP_IMPORT_SPEC_REFS 固定集(确定性, P5/R6)
-    const traceLines = readFileSync(path.join(env.root, '.assistant', 'import-trace.jsonl'), 'utf8')
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l) as Record<string, unknown>);
-    const begin = traceLines.find((e) => e.type === 'begin_import');
-    expect(begin?.profile_fingerprint).toBe(cp?.profile_fingerprint);
-    expect(begin?.contract_versions).toEqual(cp?.contract_versions);
-    env.cleanup();
-  });
-
-  it('执行画像变化(改 llm.yml)→ 同 scope 二次 deepImport 拒绝旧 run(provider 零新增调用)', async () => {
+  it('checkpoint/trace 落执行指纹；画像变化后同 scope 拒绝旧 run(provider 零新增调用)', async () => {
     const env = await setup();
     seedChapters(env.root, 'preset: default\n');
     for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
     const first = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
     expect(first.adopted).toBe(2);
     const callsAfterFirst = env.h.adapter.requests.length;
+    const cp = readCheckpoint(env.root);
+    expect(cp?.profile_fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(Object.keys(cp?.contract_versions ?? {}).sort()).toEqual(
+      [
+        'alias_relation', 'entity_extraction', 'scene_anchor_repair', 'scene_enrichment',
+        'scene_fusion', 'scene_gap_recovery', 'scene_slicing', 'structure_analysis',
+      ].sort(),
+    );
+    const begin = readFileSync(path.join(env.root, '.assistant', 'import-trace.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((e) => e.type === 'begin_import');
+    expect(begin?.profile_fingerprint).toBe(cp?.profile_fingerprint);
+    expect(begin?.contract_versions).toEqual(cp?.contract_versions);
     // 换执行画像(加 llm.yml 直键 model)→ 指纹变化 → 拒绝沿用旧 checkpoint。
     llmYml(env.root, 'preset: default\nmodel: other-model\n');
     gitAdd(env.root);

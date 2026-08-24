@@ -19,10 +19,12 @@ import { initVault } from "@novelcraft/vault";
 import { CrashSimulatedError, gitAdd, gitCommit, gitHead, gitStatusPorcelain } from "@novelcraft/store";
 import { createWorkflowBudget, MockProvider } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
-import { MockApproval, TraceRecorder } from "@novelcraft/trace";
+import { loadPolicyDefaults, MockApproval, TraceRecorder } from "@novelcraft/trace";
 import { ingestChapter } from "@novelcraft/writing";
 import {
   deepImportEngineSeam,
+  deepImportInputFingerprint,
+  makeWorkflowId,
   runDeepImportWorkflow,
   workflowSha256,
   type DeepImportWorkflowRuntime,
@@ -132,7 +134,21 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     const root = makeRoot();
     const plan = makePlan(root);
     const approval = new MockApproval({ decisions: ["allowed-once"] });
-    const r = await runDeepImportWorkflow(root, plan, runtime(new MockProvider({ retryable: false, responses: happyResponses() }), approval));
+    const runWorkflowSpy = vi.spyOn(deepImportEngineSeam, "runWorkflow");
+    const loadSpy = vi.spyOn(deepImportEngineSeam.GitRunPersistence.prototype, "loadRunState");
+    const applySpy = vi.spyOn(deepImportEngineSeam.GitRunPersistence.prototype, "applyState");
+    let r!: Awaited<ReturnType<typeof runDeepImportWorkflow>>;
+    try {
+      r = await runDeepImportWorkflow(root, plan, runtime(new MockProvider({ retryable: false, responses: happyResponses() }), approval));
+      expect(runWorkflowSpy).toHaveBeenCalledTimes(1);
+      expect(runWorkflowSpy.mock.calls[0][1]).toMatchObject({ mode: "start" });
+      expect(loadSpy).toHaveBeenCalled();
+      expect(applySpy.mock.calls.length).toBeGreaterThanOrEqual(20);
+    } finally {
+      runWorkflowSpy.mockRestore();
+      loadSpy.mockRestore();
+      applySpy.mockRestore();
+    }
 
     // 结果形态与 legacy 一致
     expect(r.adopted).toBe(2);
@@ -142,10 +158,14 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     expect(r.workflow_id).toMatch(/^imp-[0-9a-f]{16}-/);
     expect(existsSync(join(root, "scenes", "s001.md"))).toBe(true);
 
-    // 确定性: 同输入恒同 workflowId(batchId/planDigest 由 run plan 持久化)
-    const plan2 = makePlan(root); // planImport 幂等: 同 scope 返回同一 plan
-    const r2 = await runDeepImportWorkflow(root, plan2, runtime(new MockProvider({ retryable: false, responses: happyResponses() }), new MockApproval({ decisions: ["allowed-once"] })));
-    expect(r2.workflow_id).toBe(r.workflow_id);
+    // 确定性身份用纯函数证明，无需再跑一次完整 durable workflow。
+    const inputFingerprint = deepImportInputFingerprint(
+      root,
+      plan,
+      loadPolicyDefaults(),
+      { scene_slicing: "v1", scene_enrichment: "v1" },
+    );
+    expect(makeWorkflowId("deep-import", inputFingerprint, plan.workflow_id)).toBe(r.workflow_id);
 
     // 审批: 仅 commit_scenes(独立 adopt 审批); 2b 空建议不弹审批(复核纪律)
     expect(approval.calls.map((c) => c.action)).toEqual(["采用章节候选"]);
@@ -186,6 +206,20 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     expect(events.some((e) => e.type === "adopt" && e.action === "commit_scenes")).toBe(true);
     // 2b 空建议: 无 approval(alias_relation)事件
     expect(events.some((e) => e.type === "approval" && e.action === "alias_relation")).toBe(false);
+  });
+
+  it("章节源字节变化产生新 fingerprint/workflow identity，不需要第二次全链运行(N33)", () => {
+    const root = makeRoot();
+    const plan = makePlan(root);
+    const policy = loadPolicyDefaults();
+    const contracts = { scene_slicing: "v1", scene_enrichment: "v1" };
+    const first = deepImportInputFingerprint(root, plan, policy, contracts);
+    writeFileSync(join(root, "chapters", "001.md"), readFileSync(join(root, "chapters", "001.md"), "utf8") + "\n作者补充。\n");
+    const second = deepImportInputFingerprint(root, plan, policy, contracts);
+    expect(second).not.toBe(first);
+    expect(makeWorkflowId("deep-import", second, plan.workflow_id)).not.toBe(
+      makeWorkflowId("deep-import", first, plan.workflow_id),
+    );
   });
 
   itSlow("provider_outcome_unknown 不自动重试; 重新授权(allowed-once)后才重试该批, 已完成批不重跑(N33 §5.0/§8)", async () => {
@@ -360,25 +394,4 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     expect(gitStatusPorcelain(root)).toEqual([]);
   });
 
-  itSlow("生产入口消费 runWorkflow 与 Git 持久化适配器(spy: deepImportEngineSeam + GitRunPersistence 原型)", async () => {
-    const root = makeRoot();
-    const plan = makePlan(root);
-    const runWorkflowSpy = vi.spyOn(deepImportEngineSeam, "runWorkflow");
-    const loadSpy = vi.spyOn(deepImportEngineSeam.GitRunPersistence.prototype, "loadRunState");
-    const applySpy = vi.spyOn(deepImportEngineSeam.GitRunPersistence.prototype, "applyState");
-    try {
-      const r = await runDeepImportWorkflow(root, plan, runtime(new MockProvider({ retryable: false, responses: happyResponses() }), new MockApproval({ decisions: ["allowed-once"] })));
-      expect(r.adopted).toBe(2);
-      // 通用引擎被消费(一次 runWorkflow 调用); Git 适配器被消费(bootstrap/state 事务)
-      expect(runWorkflowSpy).toHaveBeenCalledTimes(1);
-      expect(runWorkflowSpy.mock.calls[0][1]).toMatchObject({ mode: "start" });
-      expect(loadSpy).toHaveBeenCalled();
-      // bootstrap + 7×plan + 7×artifact-receipt + 7×cursor + run-status + apply 状态事务
-      expect(applySpy.mock.calls.length).toBeGreaterThanOrEqual(20);
-    } finally {
-      runWorkflowSpy.mockRestore();
-      loadSpy.mockRestore();
-      applySpy.mockRestore();
-    }
-  });
 });

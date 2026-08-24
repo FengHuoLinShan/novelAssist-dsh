@@ -2,7 +2,7 @@
   "name": "@novelcraft/llm-step",
   "version": "0.0.1",
   "private": true,
-  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "engines": { "node": ">=24.11.0" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

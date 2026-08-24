@@ -104,3 +104,9 @@
 | N34 | DSH session/watch 生命周期与 ExecutionProfile | `session/created` 仅按绝对 cwd 自动绑定已有 vault，绝不自动建书；插件加载/HMR 扫描 live sessions 补建，`session/disposed` 按 vault 引用计数，最后一个活跃 session 离开后停 timer。守望由 Node 托管、与浏览器刷新/断线无关；按活跃 vault 启停，持久记录 `last_completed_at/next_due_at/config_fingerprint`，过期最多补跑一次，每 vault/radar 防重入且每 radar 一 job；不承诺 Node 停止时 24/7 运行。编排启动时解析不可变 ExecutionProfile，所有内部 llm-step 统一继承 timeout 等默认值，请求级 override 优先。Node engines 对齐 DSH：`^22.19.0 || >=24.0.0`，CI 至少覆盖 22.19/24。依据: ADR-0023 + Review lifecycle P2。 |
 | N35 | NovelCraftService capability API 安全默认 | 公开服务面收敛为 `capabilities.read/propose/adoptGuarded`；raw adopt/merge/write orchestration 移入 internal 且不从主 exports 导出；旧 `facades` 只可作为 deprecated 的安全别名过渡，不得继续暴露 raw 写旁路。保留 ADR-0020 的地图 annotation 作者编辑通道作为 `propose.authorEdit.annotations` 封闭例外：不过 ApprovalGate，但只能改固定 `annotations` 字段，强制 `base_content_hash` CAS、受控队列/精确结构化来源与 ADR-0021 事务，不得扩大为 raw canonical writer。该边界用于防止正常插件误绕 approval，不宣称能隔离同进程恶意代码；直接 import 核心包的进程级权限治理不在本 capability API 的安全承诺内。核心包继续零 DSH runtime import，采用类写入仍由 `@novelcraft/dsh` ApprovalGate fail-closed。依据: ADR-0024 + ADR-0020 + N31 + Review facades P2。 |
 | N36 | M4 源码分发、Node 与可选 BGE 安装策略 | M4 近期仅作 monorepo/DSH 插件源码分发，不发布 npm 包、不承诺公共 semver；各 workspace 标记 `private: true`，仓库本身可保持 PUBLIC，二者不冲突。保留源码与本地构建产物；Node 基线同 N34。`@novelcraft/rag-bge`/Transformers 链保持 monorepo 内 optional adapter，默认安装 profile 省略 optional，显式 BGE profile 才 include optional 并单独 test/audit；运行时 embedding 默认 off、缺包逐层降级。已知 4 个无上游修复 high 持续登记，不使用破坏性 override，也不拆出独立仓库。依据: ADR-0025 + N21/N22 + Review 发布 P2/P3。 |
+
+## 第九批(测试/回归流程压缩, 2026-08-24 用户确认)
+
+| # | 裁定 | 决定 |
+|---|---|---|
+| N37 | Node 24 单版本运行时与 CI | 本仓库只支持 Node `>=24.11.0`；默认 profile 与显式 BGE profile 的 CI 均固定 Node `24.11.0`，不再维护 Node 22 兼容矩阵。默认 profile 已覆盖 `@novelcraft/rag`，BGE profile 只追加 `@novelcraft/rag-bge` 能力测试与 BGE audit，避免重复 gate。**本裁定仅取代 N34/N36 的 Node 版本与 CI matrix 条款**；session/watch、ExecutionProfile、源码分发、optional BGE、audit baseline 等其余约束继续有效。 |

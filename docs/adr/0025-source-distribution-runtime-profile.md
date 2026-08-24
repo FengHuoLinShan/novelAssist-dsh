@@ -1,6 +1,7 @@
 # ADR-0025 — 源码分发与运行时画像(monorepo/DSH 插件源码分发, 不 npm 发布)
 
-- **状态**: Accepted(2026-08-15, 用户确认裁定 N36); **implemented and verified**
+- **状态**: Accepted(2026-08-15, 用户确认裁定 N36); **implemented and verified**;
+  Node 版本条款于 2026-08-24 被 N37 **部分取代**
 - **日期**: 2026-08-15
 - **取代/补充**: 补充 ADR-0017(独立 fork 仓库形态)的分发方式与 ADR-0023(N34, Node
   engines/CI)的发布侧约束; 对齐 N21/N22(可选包与嵌入模型策略)。**不取代**任何现有 ADR。
@@ -47,8 +48,9 @@ ADR-0017 定了「独立 fork 仓库」形态, 但分发/发布方式未裁定�
 
 ### 5. Node 运行时与 CI 同 N34
 
-- Node engines 声明 **`^22.19.0 || >=24.0.0`**, CI 矩阵覆盖 **22.19 / 24**(对齐
-  ADR-0023 §7)。
+- **N37 补充裁定(当前约束)**: Node engines 声明 **`>=24.11.0`**，默认与 BGE CI
+  均固定 **Node 24.11.0**。此变更只取代 N34/N36 的 Node 版本与 matrix 条款。
+- **原 N36 记录(已部分取代)**: `^22.19.0 || >=24.0.0`，CI 覆盖 22.19 / 24。
 
 ### 6. 可选依赖策略: 默认 omit optional, 显式 BGE profile 单独验证
 
@@ -96,17 +98,17 @@ ADR-0017 定了「独立 fork 仓库」形态, 但分发/发布方式未裁定�
 
 ## 影响
 
-- 工程: workspace `package.json` 补 `private: true` 与 engines `^22.19.0 || >=24.0.0`
-  (对齐 N34); CI 默认 profile `omit=optional` + 显式 BGE profile 单独 test/audit job
+- 工程: workspace `package.json` 保持 `private: true`，engines 当前为 `>=24.11.0`
+  (N37)；CI 默认 profile `omit=optional` + 显式 BGE profile 单独 test/audit job
   (BGE 测试必须通过); audit 采集并与基线比较(4 high / 0 critical, 禁止新增
   high/critical); 风险清单登记既知 4 high。
 - 文档: 安装说明区分默认 profile 与 BGE profile; 声明「PUBLIC 为当前允许事实(可见性
   不在本 ADR 强制范围)、workspace private、不发布、不承担公共 semver」。
-- 验证要求: CI 两档 Node(22.19/24)全链通过; 默认安装断言不含可选包; BGE profile 单独
+- 验证要求: CI 固定 Node 24.11.0；默认安装断言不含可选包；BGE profile 单独
   test **必须通过**、audit 与基线比较(4 high / 0 critical, 新增 high/critical 即失败);
   缺包降级行为有 vitest 契约(断言注释引 N36, 引用 N21/N22 降级语义);
   完成标准 `npm test` 全绿 + `npm run typecheck` 零错误。
-- 文档: N36 已录入 `specs/adjudications.md` 第八批; `docs/adr/README.md` 索引已更新。
+- 文档: N36 已录入第八批；Node 版本补充裁定 N37 已录入第九批并在 ADR 索引标记部分取代。
 
 ## 实施期开放项
 

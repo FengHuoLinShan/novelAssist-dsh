@@ -10,13 +10,14 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { paths } from '@novelcraft/vault';
 import { estimateTokens, loadSpec } from '@novelcraft/llm-step';
-import { DEEP_IMPORT_SPEC_REFS } from '@novelcraft/imports';
-import { gitAdd, gitCommit } from '@novelcraft/store';
+import * as imports from '@novelcraft/imports';
+import type { RunStateTransaction } from '@novelcraft/imports';
+import { CrashSimulatedError, gitAdd, gitCommit } from '@novelcraft/store';
 import { ingestChapter } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { DeepImportDeniedError, ImportTraceSink, importTraceFile } from '../src/internal.js';
@@ -161,20 +162,56 @@ function gitShow(root: string, rel: string): string {
 }
 
 describe('deepImport(DSH 挂载)', () => {
-  it('全链: 范围授权放行 → DshProvider + ApprovalGate + ImportTraceSink; 三次独立授权不复用(R40/§9/2b)', async () => {
+  it('公开工具全链: tool→service→provider + 三次独立授权/信号 + durable seam/trace 闭环(R40/N33)', async () => {
     const env = await setup('allowed-once', ['allowed-once']);
     // 2b 需有可写 canonical 目标 + 非空建议才会请求独立审批(复核纪律: 先只读 propose,
     // 有实际变更才审批); 空建议时不再发起第二次审批。
+    writeFileSync(paths(env.root).assistant.llm, 'preset: default\n', 'utf8');
     seedCanonicalObjects(env.root);
     for (const r of richResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
+    const tool = env.tools.find((x) => x.name === 'novelcraft_deep_import');
+    expect(tool).toBeDefined();
+    const controller = new AbortController();
+    const profileSpy = vi.spyOn(env.service.presets, 'list');
+    const engineSpy = vi.spyOn(imports.deepImportEngineSeam, 'runWorkflow');
+    const applySpy = vi.spyOn(imports.deepImportEngineSeam.GitRunPersistence.prototype, 'applyState');
+    const loadSpy = vi.spyOn(imports.deepImportEngineSeam.GitRunPersistence.prototype, 'loadRunState');
+    const hasRunSpy = vi.spyOn(imports.deepImportEngineSeam.GitRunPersistence.prototype, 'hasRun');
+    let out!: {
+      ok: boolean;
+      workflow_id: string;
+      adopted: number;
+      committed: number;
+      rejected: boolean;
+      trace_file: string;
+      message: string;
+    };
+    try {
+      out = (await tool!.execute(
+        { root: env.root, start_chapter: 1, end_chapter: 2 },
+        { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: controller.signal },
+      )) as typeof out;
+      expect(engineSpy).toHaveBeenCalledTimes(1);
+      expect(engineSpy.mock.calls[0][1]).toMatchObject({ mode: 'start' });
+      expect(hasRunSpy).toHaveBeenCalled();
+      expect(loadSpy).toHaveBeenCalled();
+      expect(applySpy.mock.calls.length).toBeGreaterThanOrEqual(20);
+      expect(profileSpy).toHaveBeenCalledTimes(1); // profile 只在工具编排入口解析一次
+    } finally {
+      profileSpy.mockRestore();
+      engineSpy.mockRestore();
+      applySpy.mockRestore();
+      loadSpy.mockRestore();
+      hasRunSpy.mockRestore();
+    }
 
-    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
-    expect(result.adopted).toBe(2);
-    expect(result.committed).toHaveLength(2);
-    expect(result.aliases.approved).toBe(true); // 2b 独立审批放行后执行写面
-    expect(result.aliases.attached).toBe(1); // 跨批去重: 红衣女子 → obj-a 只计一次
-    expect(result.aliases.relations).toBe(1); // obj-b associate obj-a 只计一次
+    expect(out).toMatchObject({ ok: true, adopted: 2, committed: 2, rejected: false });
+    expect(out.workflow_id).toMatch(/^imp-[0-9a-f]{16}-/);
+    expect(out.trace_file).toBe(importTraceFile(env.root));
+    expect(out.message).toContain('采用 2 个 Scene');
+    expect(env.h.adapter.requests).toHaveLength(10);
     expect(existsSync(path.join(env.root, 'scenes', 's001.md'))).toBe(true);
+    expect(gitShow(env.root, 'world/objects/obj-a.md')).toContain('红衣女子');
 
     // 三次独立授权, 互不复用: 范围授权先于 planImport; Scene adopt 另行审批; 2b 别名写入另行审批。
     const reqs = env.h.approval.requests;
@@ -192,6 +229,7 @@ describe('deepImport(DSH 挂载)', () => {
     expect(reqs[2].reason).toContain('obj-b'); // 目标对象
     expect(reqs[2].reason).toContain('associate'); // 实际关系类型
     expect(reqs[2].reason).toContain('2 项变更'); // items 每对象一条
+    for (const req of reqs) expect(req.signal).toBe(controller.signal);
 
     // trace 事件按序落盘(§15)
     const events = readTraceEvents(env.root);
@@ -201,11 +239,18 @@ describe('deepImport(DSH 挂载)', () => {
     expect(types).toContain('adopt');
     expect(types[types.length - 1]).toBe('complete_import');
 
-    // 深导完成 = 工作区洁净: checkpoint + import-trace.jsonl 由 runDeepImport 末段
-    // 精确 stage 并恰一次 state commit(进 git 历史), 不再残留 ??/M 卡住后续 store adopt
-    expect(gitStatus(env.root)).toEqual([]);
+    // durable 深导状态全部进 git；工具返回后的 radar hook 只留下可重建 signals 派生读面。
+    expect(gitStatus(env.root)).toEqual(['?? .assistant/signals/']);
     expect(gitHeadHas(env.root, '.assistant/checkpoint.json')).toBe(true);
     expect(gitHeadHas(env.root, '.assistant/import-trace.jsonl')).toBe(true);
+    const runNs = `.assistant/import-runs/${out.workflow_id}`;
+    expect(gitHeadHas(env.root, `${runNs}/run-plan.json`)).toBe(true);
+    const manifest = JSON.parse(gitShow(env.root, `${runNs}/manifest.json`));
+    expect(manifest.status).toBe('completed');
+    expect((Object.values(manifest.batches) as Array<{ state: string }>).every((b) => b.state === 'completed')).toBe(true);
+    const firstBatch = Object.values(manifest.batches)[0] as { artifactPath: string; receiptPath: string; resultHash: string };
+    expect(gitHeadHas(env.root, firstBatch.artifactPath)).toBe(true);
+    expect(JSON.parse(gitShow(env.root, firstBatch.receiptPath)).resultHash).toBe(firstBatch.resultHash);
     // HEAD 中的 trace 全文 = 事件流(complete_import 是最后一条), checkpoint 含授权快照
     const headEvents = gitShow(env.root, '.assistant/import-trace.jsonl')
       .trim()
@@ -265,14 +310,15 @@ describe('deepImport(DSH 挂载)', () => {
     env.cleanup();
   });
 
-  it('Scene adopt 审批拒绝(范围已放行)→ 无 adopt 无 commit(fail-closed, §9)', async () => {
+  it('公开工具: Scene adopt 审批拒绝 → 宿主失败通道; canonical 零写但 state/trace 洁净闭环(§9)', async () => {
     const env = await setup('rejected', ['allowed-once', 'rejected']); // 范围放行, adopt 拒绝
     for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
-
-    const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
-    expect(result.rejected).toBe(true);
-    expect(result.committed).toHaveLength(0);
-    expect(result.aliases.approved).toBe(false); // adopt 未放行 → 无 Scene 可消费, 2b 不执行写面
+    const tool = env.tools.find((x) => x.name === 'novelcraft_deep_import');
+    expect(tool).toBeDefined();
+    await expect(tool!.execute(
+      { root: env.root, start_chapter: 1, end_chapter: 2 },
+      { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
+    )).rejects.toMatchObject({ code: 'APPROVAL_REJECTED' });
     expect(existsSync(path.join(env.root, 'scenes', 's001.md'))).toBe(false);
 
     const events = readTraceEvents(env.root);
@@ -289,24 +335,6 @@ describe('deepImport(DSH 挂载)', () => {
       .map((l) => JSON.parse(l));
     expect(headEvents.map((e: { type: string }) => e.type)).toContain('reject');
     expect(headEvents[headEvents.length - 1].type).toBe('complete_import');
-    env.cleanup();
-  });
-
-  it('工具 novelcraft_deep_import: 同步执行并返回摘要', async () => {
-    const env = await setup('allowed-once', ['allowed-once']);
-    for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
-    const t = env.tools.find((x) => x.name === 'novelcraft_deep_import');
-    expect(t).toBeDefined();
-
-    const out = (await t!.execute(
-      { root: env.root, start_chapter: 1, end_chapter: 2 },
-      { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    )) as { ok: boolean; adopted: number; committed: number; rejected: boolean; trace_file: string };
-    expect(out.ok).toBe(true);
-    expect(out.adopted).toBe(2);
-    expect(out.committed).toBe(2);
-    expect(out.rejected).toBe(false);
-    expect(out.trace_file).toBe(importTraceFile(env.root));
     env.cleanup();
   });
 
@@ -327,28 +355,6 @@ describe('deepImport(DSH 挂载)', () => {
     env.cleanup();
   });
 
-  it('deepImport(agent, root, opts, signal): 取消信号贯通到全部三次审批请求(范围授权 + Scene adopt + 2b; approve 回调同携 signal)', async () => {
-    const env = await setup('allowed-once', ['allowed-once']);
-    seedCanonicalObjects(env.root); // 2b 非空建议才会发起第三次审批
-    for (const r of richResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
-    const controller = new AbortController();
-
-    const result = await env.service.deepImport(
-      fakeAgent,
-      env.root,
-      { startChapter: 1, endChapter: 2 },
-      controller.signal,
-    );
-    expect(result.adopted).toBe(2);
-
-    // 范围授权(deepImport 直调)与 runtime.approve 回调(Scene adopt / 2b 别名写入)
-    // 每次审批等待都携带同一个工具取消信号 —— 后续审批等待也可取消。
-    const reqs = env.h.approval.requests;
-    expect(reqs).toHaveLength(3);
-    for (const req of reqs) expect(req.signal).toBe(controller.signal);
-    env.cleanup();
-  });
-
   it('profile.workflowBudget → 全链共享累计 tracker: 预算只够首个内容步, 后续步骤 provider 前 fail-closed(审查项 3)', async () => {
     const env = await setup('allowed-once', ['allowed-once']);
     // 预算恰好够 1 次 scene_slicing(估算输入 + 输出上限; spec budgetTokens=8192):
@@ -358,7 +364,7 @@ describe('deepImport(DSH 挂载)', () => {
     writeFileSync(paths(env.root).assistant.llm, `workflow_budget: ${perCall}\n`, 'utf8');
     gitAdd(env.root, ['.assistant/llm.yml']);
     gitCommit(env.root, 'test: configure workflow budget');
-    const profile = await env.service.resolveProfile(env.root, { specRefs: DEEP_IMPORT_SPEC_REFS });
+    const profile = await env.service.resolveProfile(env.root, { specRefs: imports.DEEP_IMPORT_SPEC_REFS });
     for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
     const result = await env.service.deepImport(
       fakeAgent,
@@ -372,12 +378,48 @@ describe('deepImport(DSH 挂载)', () => {
     env.cleanup();
   });
 
-  it('profile 未设 workflowBudget → 不建 tracker, 全链照常(行为不变, 审查项 3 加法)', async () => {
-    const env = await setup('allowed-once', ['allowed-once']);
+  it('provider_outcome_unknown 重试前必须经 ApprovalGate 重新授权(authorize_deep_import_resume, N33 §5.0/§8)', async () => {
+    const env = await setup();
     for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
+    const Original = imports.deepImportEngineSeam.GitRunPersistence;
+    class Crash2aPlan extends Original {
+      private lastPhase = '';
+      constructor(root: string) {
+        super(root, {
+          transactionOptions: {
+            gates: async (phase: string) => {
+              if (this.lastPhase === '2a' && phase === 'intent-ready') throw new CrashSimulatedError('crash-2a-plan');
+            },
+          },
+        });
+      }
+      override async applyState(tx: RunStateTransaction) {
+        this.lastPhase = (tx as { plan?: { phase?: string } }).plan?.phase ?? '';
+        return super.applyState(tx);
+      }
+    }
+    imports.deepImportEngineSeam.GitRunPersistence = Crash2aPlan as unknown as typeof Original;
+    try {
+      await expect(env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 })).rejects.toThrow(/crash-2a-plan/);
+    } finally {
+      imports.deepImportEngineSeam.GitRunPersistence = Original;
+    }
+    expect(env.h.adapter.requests).toHaveLength(5);
+
+    env.h.adapter.enqueue(...happyResponses().slice(5).map((r) => ({ deltas: [JSON.stringify(r)] })));
     const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });
     expect(result.adopted).toBe(2);
-    expect(env.h.adapter.requests).toHaveLength(10); // 全链 10 个内容步照常
+    expect(env.h.adapter.requests).toHaveLength(10);
+    const resumeReqs = env.h.approval.requests.filter((r) => r.reason.includes('authorize_deep_import_resume'));
+    expect(resumeReqs).toHaveLength(1);
+    expect(resumeReqs[0].reason).toContain('结果未知');
+    expect(resumeReqs[0].reason).toContain('2a');
+    expect(env.h.approval.requests.map((r) =>
+      r.reason.includes('authorize_deep_import_resume') ? 'resume-auth'
+        : r.reason.includes('authorize_deep_import') ? 'scope-auth'
+        : r.reason.includes('采用章节候选') ? 'commit' : 'other',
+    )).toEqual(['scope-auth', 'commit', 'resume-auth']);
+    expect(JSON.parse(gitShow(env.root, `.assistant/import-runs/${result.workflow_id}/manifest.json`)).status).toBe('completed');
     env.cleanup();
   });
 });

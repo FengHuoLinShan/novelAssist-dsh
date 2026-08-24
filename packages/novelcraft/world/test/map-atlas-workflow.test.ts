@@ -43,27 +43,21 @@ const runtime = (
 });
 
 describe("runAtlasWorkflow durable driver(N33)", () => {
-  it("artifact→receipt→cursor 完成；projection/state 与 pending canonical 写均干净", async () => {
-    const root = rootFixture();
-    const provider = new MockProvider({ responses: [{ text: spatial }, { text: plan }] });
-    const result = await runAtlasWorkflow(root, { run_kind: "initial", runId: "atlas-e2e" }, runtime(provider));
-    expect(result.outcome).toBe("completed");
-    expect(result.run.status).toBe("review_ready");
-    expect(provider.calls).toHaveLength(2);
-    const runRoot = join(root, ".assistant", "atlas", "runs", result.workflowId);
-    expect(existsSync(join(runRoot, "manifest.json"))).toBe(true);
-    expect(existsSync(join(root, ".assistant", "atlas", "runs", `${result.workflowId}.json`))).toBe(true);
-    const manifest = JSON.parse(readFileSync(join(runRoot, "manifest.json"), "utf8"));
-    expect(manifest.status).toBe("completed");
-    expect(Object.values(manifest.batches).every((batch: any) => batch.state === "completed")).toBe(true);
-    expect(readAtlasTree(root).pendingNodes.map((node) => node.id).sort()).toEqual(["n-city", "root-cover"]);
-    expect(gitStatusEntries(root)).toEqual([]);
-  }, 90_000);
-
-  it("同输入复用 completed immutable run，不重调 provider；force 创建新 identity且旧 run不变", async () => {
+  it("完成 artifact→receipt→cursor 后复用 immutable run；force 创建新 identity且旧 run不变", async () => {
     const root = rootFixture();
     const firstProvider = new MockProvider({ responses: [{ text: spatial }, { text: plan }] });
     const first = await runAtlasWorkflow(root, { run_kind: "initial", runId: "atlas-repeat" }, runtime(firstProvider));
+    expect(first.outcome).toBe("completed");
+    expect(first.run.status).toBe("review_ready");
+    expect(firstProvider.calls).toHaveLength(2);
+    const runRoot = join(root, ".assistant", "atlas", "runs", first.workflowId);
+    expect(existsSync(join(runRoot, "manifest.json"))).toBe(true);
+    expect(existsSync(join(root, ".assistant", "atlas", "runs", `${first.workflowId}.json`))).toBe(true);
+    const firstManifest = JSON.parse(readFileSync(join(runRoot, "manifest.json"), "utf8"));
+    expect(firstManifest.status).toBe("completed");
+    expect(Object.values(firstManifest.batches).every((batch: any) => batch.state === "completed")).toBe(true);
+    expect(readAtlasTree(root).pendingNodes.map((node) => node.id).sort()).toEqual(["n-city", "root-cover"]);
+    expect(gitStatusEntries(root)).toEqual([]);
     const oldManifest = readFileSync(join(root, ".assistant", "atlas", "runs", first.workflowId, "manifest.json"));
     // latest projection 是可变派生读面；篡改 source_manifest 不得改变 identity/resume 基线。
     const projectionFile = join(root, ".assistant", "atlas", "runs", `${first.workflowId}.json`);
