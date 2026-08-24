@@ -853,7 +853,7 @@ async function aggregateRun(ctx: DriverContext, run: RunEngineResult): Promise<A
 
   // === trace 事件: adopt/reject 从终局 apply 记录发出(崩溃中断的 run 在聚合时补齐;
   //     已完成批不重放 provider/审批 —— 事件只是记录) ===
-  for (const [applyId, record] of Object.entries(manifest.applies)) {
+  for (const record of Object.values(manifest.applies)) {
     const phase = ctx.phaseByBatch[record.batchId];
     const action = phase === "commit" ? "commit_scenes" : "alias_relation";
     if (record.state === "applied") {

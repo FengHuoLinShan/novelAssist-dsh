@@ -1,6 +1,7 @@
 // assistant 核心 · 信号(R6 纯 TS 部分)。
 // 依据: 设计文档 §8(统一信号模型) + adjudications N1(6 键健康词汇表)。
 // 信号持久化 = .assistant/signals/{id}.json(vault paths); 文件即状态。
+import { createHash } from "node:crypto";
 
 export type RadarKind = "ingest" | "dedup" | "suggest" | "plot" | "risk" | "writing";
 export type Severity = "hint" | "note" | "risk" | "conflict";
@@ -32,6 +33,10 @@ export interface Signal {
   decided_at?: string;
   /** 打回理由(校准原料) */
   reject_reason?: string;
+  /** 同一业务问题的稳定身份；64 位 sha256，旧文件可缺省并在再次命中时惰性补齐。 */
+  logical_key?: string;
+  /** 当前可变观察载荷的 sha256；作者决定只绑定生成决定时的 observation。 */
+  observation_hash?: string;
 }
 
 export const SIGNAL_STATUSES: SignalStatus[] = ["open", "accepted", "rejected", "deferred", "resolved"];
@@ -56,6 +61,44 @@ export interface CreateSignalInput {
   target?: SignalTarget;
   expires_when_draft_changes?: boolean;
   id?: string;
+  logical_key?: string;
+  observation_hash?: string;
+}
+
+/** 长度前缀避免分隔符碰撞；调用方只传确定性业务身份字段。 */
+export function signalLogicalKey(...parts: readonly (string | number | boolean | null | undefined)[]): string {
+  const encoded = parts.map((part) => {
+    const value = part === undefined ? "undefined" : part === null ? "null" : String(part);
+    return `${value.length}:${value}`;
+  }).join("|");
+  return createHash("sha256").update(encoded).digest("hex");
+}
+
+/** 文件名只使用规则前缀 + 完整 hash，不截断原始身份字段。 */
+export function signalIdFromKey(prefix: string, logicalKey: string): string {
+  if (!/^[a-z][a-z0-9-]*-$/.test(prefix)) throw new Error(`signal id prefix 非法: ${prefix}`);
+  if (!/^[0-9a-f]{64}$/.test(logicalKey)) throw new Error("logical_key 必须是 64 位 sha256");
+  return `${prefix}${logicalKey}`;
+}
+
+/** observation 只覆盖会改变作者判断的字段，不含 id/status/时间/决定。 */
+export function signalObservationHash(input: CreateSignalInput | Signal): string {
+  return createHash("sha256").update(JSON.stringify([
+    input.radar,
+    input.severity,
+    input.title,
+    input.evidence,
+    input.proposed_action,
+    input.reversibility,
+    input.confidence ?? null,
+    input.expires_when_draft_changes ?? false,
+    input.target === undefined ? null : [
+      input.target.novel ?? null,
+      input.target.chapter_index ?? null,
+      input.target.scene_slug ?? null,
+      input.target.content_hash ?? null,
+    ],
+  ])).digest("hex");
 }
 
 /** 校验并创建信号(状态 open)。非法字段抛错。 */
@@ -66,6 +109,12 @@ export function createSignal(input: CreateSignalInput, now: Date = new Date()): 
   if (input.evidence.length === 0) throw new Error("evidence 至少一条");
   if (input.confidence !== undefined && (input.confidence < 0 || input.confidence > 1)) {
     throw new Error("confidence 必须在 [0,1]");
+  }
+  if (input.logical_key !== undefined && !/^[0-9a-f]{64}$/.test(input.logical_key)) {
+    throw new Error("logical_key 必须是 64 位 sha256");
+  }
+  if (input.observation_hash !== undefined && !/^[0-9a-f]{64}$/.test(input.observation_hash)) {
+    throw new Error("observation_hash 必须是 64 位 sha256");
   }
   return {
     id: input.id ?? `sig-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -80,6 +129,8 @@ export function createSignal(input: CreateSignalInput, now: Date = new Date()): 
     expires_when_draft_changes: input.expires_when_draft_changes ?? false,
     target: input.target,
     status: "open",
+    logical_key: input.logical_key,
+    observation_hash: input.observation_hash ?? signalObservationHash(input),
   };
 }
 

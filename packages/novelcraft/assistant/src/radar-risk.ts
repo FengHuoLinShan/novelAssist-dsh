@@ -5,15 +5,21 @@
 //   2. 章断档: 章 index 序列 1..max 缺号 → note;
 //   3. 悬空关系: index.relations 的 target 不在 (objects ∪ scenes ∪ structure) slug 集 → risk。
 // 对账: 全部经 reconcileRadarSignals(§11 静默纪律 + 双向对账; 条件消失自动结算)。
-import { rebuildIndex, storyMap } from "@novelcraft/store";
+import { rebuildIndex, storyMap, type StoryMap, type VaultIndex } from "@novelcraft/store";
 import { reconcileRadarSignals, type RadarReconcileResult } from "./radar-utils.js";
-import type { CreateSignalInput } from "./signals.js";
+import { signalIdFromKey, signalLogicalKey, type CreateSignalInput } from "./signals.js";
 
 /** 风险雷达全扫: 伏笔超期 + 章断档 + 悬空关系 → 收件箱(幂等, 双向对账)。 */
 export function scanRiskRadar(root: string, now?: Date): RadarReconcileResult {
+  return reconcileRadarSignals(root, "risk-", collectRiskRadarHits(root), now);
+}
+
+export function collectRiskRadarHits(
+  root: string,
+  data: { map: StoryMap; index: VaultIndex } = { map: storyMap(root), index: rebuildIndex(root) },
+): CreateSignalInput[] {
   const hits: CreateSignalInput[] = [];
-  const map = storyMap(root);
-  const index = rebuildIndex(root);
+  const { map, index } = data;
   const maxChapter = map.chapters.reduce((m, c) => Math.max(m, c.index), 0);
 
   // 1. 伏笔超期(§7 风险雷达): 计划回收点已过且未被 reveals_foreshadowing 边回收。
@@ -27,6 +33,7 @@ export function scanRiskRadar(root: string, now?: Date): RadarReconcileResult {
     if (p >= maxChapter) continue; // 计划点未到(或全书未写), 不超期。
     hits.push({
       id: `risk-foreshadow-overdue-${f.slug}`,
+      logical_key: signalLogicalKey("risk", "foreshadow_overdue", f.slug),
       radar: "risk",
       severity: "risk",
       title: `『${f.name}』伏笔计划第 ${p} 章回收, 目前已写到第 ${maxChapter} 章`,
@@ -42,6 +49,7 @@ export function scanRiskRadar(root: string, now?: Date): RadarReconcileResult {
     if (present.has(n)) continue;
     hits.push({
       id: `risk-chapter-gap-${n}`,
+      logical_key: signalLogicalKey("risk", "chapter_gap", n),
       radar: "risk",
       severity: "note",
       title: `第 ${n} 章缺失(章序号断档)`,
@@ -59,9 +67,10 @@ export function scanRiskRadar(root: string, now?: Date): RadarReconcileResult {
   ]);
   for (const e of index.relations) {
     if (known.has(e.target)) continue;
-    const id = `risk-dangling-${e.source}-${e.target}`.slice(0, 48); // 截断 48 字。
+    const logicalKey = signalLogicalKey("risk", "dangling_relation", e.source, e.target, e.type || "?");
     hits.push({
-      id,
+      id: signalIdFromKey("risk-dangling-", logicalKey),
+      logical_key: logicalKey,
       radar: "risk",
       severity: "risk",
       title: `关系边悬空: ${e.source} → ${e.target}`,
@@ -71,5 +80,5 @@ export function scanRiskRadar(root: string, now?: Date): RadarReconcileResult {
     });
   }
 
-  return reconcileRadarSignals(root, "risk-", hits, now);
+  return hits;
 }

@@ -146,7 +146,6 @@ export function applyDedup(
   }
   const pending = listPending(root);
   const bySlug = new Map(pending.map((c) => [c.slug, c]));
-  const merged = 0;
   const log: string[] = [];
   // gitAdd 精确 pathspec 收集: 本操作实际写入的 vault 相对文件; 绝不 -A(避免捕获
   // 并发无关/预存 staged 用户改动, R17 范围语义)。git add <path> 对已删除路径同样

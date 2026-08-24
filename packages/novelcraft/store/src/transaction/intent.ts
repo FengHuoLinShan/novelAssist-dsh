@@ -823,7 +823,6 @@ function nsDirChecked(root: string): string | undefined {
 
 /** 校验单个 blob 目录(snapshots/outputs): 目录类型 + symlink + 名称全集 + 大小。 */
 function scanBlobDir(
-  root: string,
   txDir: string,
   subdir: 'snapshots' | 'outputs',
   count: number,
@@ -942,8 +941,8 @@ export function readIntent(vaultRoot: string, txid: string, opts?: IntentLimits)
   }
   const record = validateIntentRecord(parsed, { vaultRoot: root, expectedTxid: txid });
 
-  const snapshots = scanBlobDir(root, txDir, 'snapshots', record.targets.length, limits.maxBlobBytes);
-  const outputs = scanBlobDir(root, txDir, 'outputs', record.targets.length, limits.maxBlobBytes);
+  const snapshots = scanBlobDir(txDir, 'snapshots', record.targets.length, limits.maxBlobBytes);
+  const outputs = scanBlobDir(txDir, 'outputs', record.targets.length, limits.maxBlobBytes);
   const totalBytes =
     snapshots.reduce((s, e) => s + e.size, 0) + outputs.reduce((s, e) => s + e.size, 0);
   return { txid, dir: txDir, record, snapshots, outputs, totalBytes };

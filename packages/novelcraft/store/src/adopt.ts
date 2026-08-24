@@ -4,7 +4,7 @@ import { StoreError } from './errors.js';
 import { contentHash, normalizeContentHash } from './hash.js';
 import { resolveAsset, resolveWithin, assertNoInternalSymlink, slugFromFilename } from './paths.js';
 import { parseFrontmatter, serializeFrontmatter, canTransition, validateFrontmatterForWrite } from './frontmatter.js';
-import { readText, listFilesRecursive } from './fs.js';
+import { readText } from './fs.js';
 import {
   executeCanonicalWrite,
   executePreparedCanonicalWrite,
@@ -56,16 +56,6 @@ function asObject(v: unknown): Record<string, unknown> {
 
 function pad3(n: number): string {
   return String(n).padStart(3, '0');
-}
-
-function nextChapterIndex(root: string): number {
-  const chaptersDir = resolveWithin(root, 'chapters');
-  let max = 0;
-  for (const rel of listFilesRecursive(chaptersDir)) {
-    const m = /^(\d{3})\.md$/.exec(rel);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return max + 1;
 }
 
 /** adopt 的目标状态: 候选正文→draft(R34), 其余→canonical。 */

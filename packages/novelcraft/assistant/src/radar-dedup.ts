@@ -7,13 +7,30 @@
 import { listObjects, listPending } from "@novelcraft/world";
 import { l0ExactGroups, normalizeAliasKey, normalizeNameForKey } from "@novelcraft/store";
 import { reconcileRadarSignals, type RadarReconcileResult } from "./radar-utils.js";
-import type { CreateSignalInput } from "./signals.js";
+import { signalIdFromKey, signalLogicalKey, type CreateSignalInput } from "./signals.js";
+
+export interface DedupRadarObject {
+  slug: string;
+  name: string;
+  entity_type: string;
+  status: string;
+  aliases: string[];
+}
 
 /** 去重雷达全扫: L0 同名同型组 + 别名候选 → 收件箱(幂等, 双向对账)。 */
 export function scanDedupRadar(root: string, now?: Date): RadarReconcileResult {
+  return reconcileRadarSignals(root, "dedup-", collectDedupRadarHits(root), now);
+}
+
+export function collectDedupRadarHits(
+  root: string,
+  data: { objects: DedupRadarObject[]; pending: DedupRadarObject[] } = {
+    objects: listObjects(root),
+    pending: listPending(root),
+  },
+): CreateSignalInput[] {
   const hits: CreateSignalInput[] = [];
-  const objects = listObjects(root);
-  const pending = listPending(root);
+  const { objects, pending } = data;
 
   // 1. L0 精确分组(store-rules R28): 归一化名完全相同且同型。
   const all = [...objects, ...pending].map((o) => ({
@@ -26,8 +43,10 @@ export function scanDedupRadar(root: string, now?: Date): RadarReconcileResult {
   for (const group of l0ExactGroups(all)) {
     const sorted = group.slice().sort((a, b) => a.slug.localeCompare(b.slug));
     const [n1, n2] = [sorted[0].name, sorted[1].name];
+    const logicalKey = signalLogicalKey("dedup", "l0", sorted[0].kind, normalizeNameForKey(sorted[0].name));
     hits.push({
-      id: `dedup-l0-${normalizeNameForKey(sorted[0].name)}`,
+      id: signalIdFromKey("dedup-l0-", logicalKey),
+      logical_key: logicalKey,
       radar: "dedup",
       severity: "risk",
       title: `『${n1}』『${n2}』疑似同一对象`,
@@ -57,6 +76,7 @@ export function scanDedupRadar(root: string, now?: Date): RadarReconcileResult {
     const c = matches[0];
     hits.push({
       id: `dedup-alias-${p.slug}`,
+      logical_key: signalLogicalKey("dedup", "alias", p.slug, c.slug),
       radar: "dedup",
       severity: "hint",
       title: `『${p.name}』可能是『${c.name}』的别名`,
@@ -69,5 +89,5 @@ export function scanDedupRadar(root: string, now?: Date): RadarReconcileResult {
     });
   }
 
-  return reconcileRadarSignals(root, "dedup-", hits, now);
+  return hits;
 }

@@ -6,16 +6,22 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import {
+  collectRiskRadarHits,
   inboxView,
+  listSignals,
   loadSignal,
   plotSummaryLine,
   pushSignal,
+  reconcileRadarSignals,
   runRadarSweep,
+  runRadarSweepAtomic,
   scanDedupRadar,
   scanIngestRadar,
   scanPlotRadar,
   scanRiskRadar,
   scanSuggestRadar,
+  signalIdFromKey,
+  signalLogicalKey,
 } from "../src/index";
 
 const dirs: string[] = [];
@@ -105,7 +111,8 @@ describe("scanIngestRadar(§7 摄入雷达)", () => {
     );
     const r = scanIngestRadar(root);
     expect(r.created).toBe(1); // §11: risk 进角标, 非静默堆积。
-    const sig = loadSignal(root, "ingest-failed-第一章.txt");
+    const id = signalIdFromKey("ingest-failed-", signalLogicalKey("ingest", "failed", "i1", "第一章.txt"));
+    const sig = loadSignal(root, id);
     expect(sig?.severity).toBe("risk");
     expect(sig?.title).toBe("导入失败: 第一章.txt");
     expect(sig?.evidence).toContain("解析失败"); // evidence 带 error_message。
@@ -145,21 +152,22 @@ describe("scanDedupRadar(§7 去重雷达)", () => {
     seedObject(root, "b", { name: "苏  婉", entity_type: "character", status: "canonical" }); // 空白变体归一化后同名(R28)。
     const r1 = scanDedupRadar(root);
     expect(r1.created).toBe(1);
-    const sig = loadSignal(root, "dedup-l0-苏 婉");
+    const id = signalIdFromKey("dedup-l0-", signalLogicalKey("dedup", "l0", "character", "苏 婉"));
+    const sig = loadSignal(root, id);
     expect(sig?.severity).toBe("risk"); // §11: risk 进角标。
     expect(sig?.title).toBe("『苏 婉』『苏  婉』疑似同一对象"); // 名称按 slug 排序。
     expect(sig?.proposed_action).toContain("去重修复");
 
     // 作者打回(直接改信号文件, 同 health.test.ts 手法)。
     writeFileSync(
-      join(root, ".assistant", "signals", "dedup-l0-苏 婉.json"),
+      join(root, ".assistant", "signals", `${id}.json`),
       JSON.stringify({ ...sig, status: "rejected", decided_at: "2026-08-14T00:00:00Z" }, null, 2) + "\n",
       "utf8",
     );
     const r2 = scanDedupRadar(root);
     expect(r2.created).toBe(0);
     expect(r2.skipped).toBe(1);
-    expect(loadSignal(root, "dedup-l0-苏 婉")?.status).toBe("rejected"); // 不复活、不覆盖。
+    expect(loadSignal(root, id)?.status).toBe("rejected"); // 同 observation 不复活、不覆盖。
   });
 
   it("pending 归一化名命中 canonical aliases(不命中 name)→ hint(attach_alias 候选)", () => {
@@ -251,7 +259,7 @@ describe("scanRiskRadar(§7 风险雷达)", () => {
     expect(sig?.title).toBe("第 2 章缺失(章序号断档)");
   });
 
-  it("悬空关系 → risk(id 截断 48 字)", () => {
+  it("悬空关系 → risk(完整 logical key 的 bounded hash id)", () => {
     const root = makeRoot();
     seedObject(root, "a", {
       name: "苏婉",
@@ -261,10 +269,26 @@ describe("scanRiskRadar(§7 风险雷达)", () => {
     });
     const r = scanRiskRadar(root);
     expect(r.created).toBe(1);
-    const sig = loadSignal(root, "risk-dangling-a-ghost");
+    const id = signalIdFromKey("risk-dangling-", signalLogicalKey("risk", "dangling_relation", "a", "ghost", "references"));
+    const sig = loadSignal(root, id);
     expect(sig?.severity).toBe("risk");
     expect(sig?.title).toBe("关系边悬空: a → ghost");
     expect(sig?.proposed_action).toBe("修正或删除该关系");
+  });
+
+  it("长引用不因公共前缀碰撞；同名跨 kind 各有独立 logical key", () => {
+    const root = makeRoot();
+    const shared = "x".repeat(80);
+    seedObject(root, "a", { name: "同名", entity_type: "character", status: "canonical", relations: [{ target: `${shared}-a`, type: "references", status: "canonical" }] });
+    seedObject(root, "b", { name: "同名", entity_type: "character", status: "canonical" });
+    seedObject(root, "c", { name: "同名", entity_type: "location", status: "canonical", relations: [{ target: `${shared}-b`, type: "references", status: "canonical" }] });
+    seedObject(root, "d", { name: "同名", entity_type: "location", status: "canonical" });
+    const dangling = collectRiskRadarHits(root).filter((hit) => hit.id?.startsWith("risk-dangling-"));
+    expect(dangling).toHaveLength(2);
+    expect(new Set(dangling.map((hit) => hit.id)).size).toBe(2);
+    expect(scanDedupRadar(root).created).toBe(2);
+    const dedup = listSignals(root).filter((signal) => signal.id.startsWith("dedup-l0-"));
+    expect(new Set(dedup.map((signal) => signal.logical_key)).size).toBe(2);
   });
   it("对象 relations(list 形态)边对 radar 可见: 指向已存在对象不误报悬空(N11/N14)", () => {
     const root = makeRoot();
@@ -350,6 +374,50 @@ describe("runRadarSweep(§7 六雷达巡检)", () => {
     const s2 = runRadarSweep(root, { radars: ["risk"] });
     expect(Object.keys(s2.results)).toEqual(["risk"]);
     expect(typeof s2.plotSummary).toBe("string");
+  });
+
+  it("新 observation 刷新证据并重开；统一 scan clock；碰撞时零写", () => {
+    const root = makeRoot();
+    const t0 = new Date("2026-08-24T01:02:03.000Z");
+    const key = signalLogicalKey("test", "mutable");
+    const id = signalIdFromKey("risk-test-", key);
+    const base = {
+      id, logical_key: key, radar: "risk" as const, severity: "risk" as const,
+      title: "旧观察", evidence: ["旧证据"], proposed_action: "复核", reversibility: true,
+    };
+    reconcileRadarSignals(root, "risk-test-", [base], t0);
+    expect(loadSignal(root, id)?.observed_at).toBe(t0.toISOString());
+    reconcileRadarSignals(root, "risk-test-", [], new Date("2026-08-24T02:00:00.000Z"));
+    const t1 = new Date("2026-08-24T03:00:00.000Z");
+    const reopened = reconcileRadarSignals(root, "risk-test-", [{ ...base, title: "新观察", evidence: ["新证据"] }], t1);
+    expect(reopened.reopened).toBe(1);
+    expect(loadSignal(root, id)).toMatchObject({ status: "open", title: "新观察", evidence: ["新证据"], observed_at: t1.toISOString() });
+
+    const before = listSignals(root).length;
+    expect(() => reconcileRadarSignals(root, "risk-collision-", [
+      { ...base, id: "risk-collision-same", logical_key: signalLogicalKey("collision", "a") },
+      { ...base, id: "risk-collision-same", logical_key: signalLogicalKey("collision", "b") },
+    ])).toThrow(/碰撞/);
+    expect(listSignals(root)).toHaveLength(before);
+  });
+
+  it("atomic sweep 将一轮 Signal 变化提交为一个 state transaction", async () => {
+    const root = makeRoot();
+    writeFileSync(
+      join(root, "imports", "import-log.jsonl"),
+      JSON.stringify({ id: "atomic-1", file_name: "坏书.txt", status: "failed", error_message: "坏" }) + "\n",
+      "utf8",
+    );
+    const before = (await import("@novelcraft/store")).gitHead(root);
+    const first = await runRadarSweepAtomic(root, { radars: ["ingest", "suggest"] });
+    const after = (await import("@novelcraft/store")).gitHead(root);
+    expect(first.results.ingest?.created).toBe(1);
+    expect(after).not.toBe(before);
+    const changed = (await import("@novelcraft/store")).gitRead(root, ["show", "--pretty=", "--name-only", after]);
+    expect(changed.split(/\r?\n/).filter(Boolean).every((path) => path.startsWith(".assistant/signals/"))).toBe(true);
+    const second = await runRadarSweepAtomic(root, { radars: ["ingest", "suggest"] });
+    expect(second.results.ingest?.skipped).toBe(1);
+    expect((await import("@novelcraft/store")).gitHead(root)).toBe(after);
   });
 
   it("空 vault(仅 book.yml + 目录骨架)→ 全面零计数不炸", () => {

@@ -136,7 +136,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
             ...(args.premise ? { premise: args.premise } : {}),
           }, exec.signal);
           if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '生成失败');
-          fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
+          await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
           return {
             ok: true,
             file: result.file ?? '',
@@ -245,7 +245,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
             }
             const result = await service.capabilities.propose.reviseChapter(root, args.chapter, args.finding_ids, exec.signal);
             if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '返修失败');
-            fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
+            await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.generate);
             return { ...blank, file: result.file ?? '', message: `第 ${args.chapter} 章返修候选已生成；采用前必须独立审查 candidate。` };
           }
           if (args.action === 'reject_finding') {
@@ -281,7 +281,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
               args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {},
               `采用第 ${args.chapter} 章候选 ${ref}`,
             );
-            fireRadarHooks(ctx, root, [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]);
+            await fireRadarHooks(ctx, root, [...EVENT_RADAR_MAP.adopt, ...EVENT_RADAR_MAP.adoptChapterCandidate]);
             fireRagHook(ctx, root);
             return {
               ...blank,
@@ -392,7 +392,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
               args.receipt_id,
             );
             if (!result.skipped) {
-              fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
+              await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
               fireRagHook(ctx, root);
             }
             return {
@@ -416,7 +416,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
               args.expected_content_hash,
             );
             if (!result.skipped) {
-              fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
+              await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
               fireRagHook(ctx, root);
             }
             return {

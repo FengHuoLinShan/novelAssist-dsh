@@ -720,7 +720,6 @@ function applyPlanBindings(
   target: string,
   expectedHash: string,
   artifactHash: string,
-  planDigest: string,
 ): { writeSetDigest: string; checkpoint: string; provenance: string } {
   const writeSetDigest = workflowSha256(canonicalRunJson({ target, expectedHash, artifactHash }));
   const checkpoint = workflowSha256(canonicalRunJson({ workflowId, batchId, artifactHash }));
@@ -1020,7 +1019,7 @@ async function applyChain(
     const record = ctx.manifest.applies[applyId];
     if (record === undefined) {
       // apply plan + waiting_approval 独立 state transaction(ADR-0022 §6; 复审 R4 全绑定)
-      const bindings = applyPlanBindings(ctx.workflowId, batchId, applySpec.target, applySpec.expectedHash, artifactHash, ctx.manifest.planDigest);
+      const bindings = applyPlanBindings(ctx.workflowId, batchId, applySpec.target, applySpec.expectedHash, artifactHash);
       const fresh: ApplyRecord = deepFreeze({
         version: 1,
         applyId,
@@ -1099,7 +1098,7 @@ async function applyChain(
     } catch {
       probe = { state: 'unknown' };
     }
-    const outcome = await settleApplyProbe(ctx, applyPort, applyId, record, record.transactionId, probe, reappliedApplyIds);
+    const outcome = await settleApplyProbe(ctx, applyId, record, record.transactionId, probe, reappliedApplyIds);
     if (outcome === 'unknown') {
       applyProbeUnknown.push(applyId);
       return true;
@@ -1154,7 +1153,7 @@ async function runCanonicalApply(
       probe = { state: 'unknown' };
     }
   }
-  return settleApplyProbe(ctx, applyPort, applyId, applying, txid, probe, reappliedApplyIds);
+  return settleApplyProbe(ctx, applyId, applying, txid, probe, reappliedApplyIds);
 }
 
 /**
@@ -1164,7 +1163,6 @@ async function runCanonicalApply(
  */
 async function settleApplyProbe(
   ctx: RunContext,
-  applyPort: RunApplyPort,
   applyId: string,
   record: ApplyRecord,
   txid: string,

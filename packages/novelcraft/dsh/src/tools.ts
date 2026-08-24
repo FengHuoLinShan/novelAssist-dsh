@@ -273,7 +273,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             args.note,
           );
           // 事件触发雷达(§11): adopt 后去重+风险对账; 章候选采用另加写作面。
-          fireRadarHooks(
+          await fireRadarHooks(
             ctx,
             root,
             args.kind === 'chapter_candidate'
@@ -452,7 +452,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             throw new HarnessError('深度导入的 Scene 采用未获批准, 候选保持未采用', 'APPROVAL_REJECTED');
           }
           // 事件触发雷达(§11): 导入后去重/风险/剧情/写作四面对账。
-          fireRadarHooks(ctx, root, EVENT_RADAR_MAP.deepImport);
+          await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.deepImport);
           // 事件触发 RAG 索引(§11): 导入后只同步词法派生索引;
           // 向量写入由显式 novelcraft_rag_embed 独占。
           fireRagHook(ctx, root);
@@ -505,7 +505,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const { root: requestedRoot } = rawArgs as unknown as RootArgs;
         try {
           const root = await resolveBoundRoot(service, exec, requestedRoot);
-          const r = service.capabilities.propose.scanHealth(root);
+          const r = await service.capabilities.propose.scanHealth(root);
           pushSignalsChanged(ctx, { root });
           return {
             ok: true,
@@ -569,7 +569,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
             throw new HarnessError(report.reason ?? '导入失败', 'INGEST_FAILED');
           }
           // 事件触发雷达(§11): 摄入对账 + 写作健康。
-          fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
+          await fireRadarHooks(ctx, root, EVENT_RADAR_MAP.ingest);
           // 事件触发 RAG 索引(§11): 新章落库后只同步词法派生索引;
           // 向量写入由显式 novelcraft_rag_embed 独占。
           fireRagHook(ctx, root);
@@ -629,7 +629,7 @@ function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] 
         const args = rawArgs as unknown as RadarSweepArgs;
         try {
           const root = await resolveBoundRoot(service, exec, args.root);
-          const r = service.capabilities.propose.radarSweep(
+          const r = await service.capabilities.propose.radarSweep(
             root,
             args.radar ? [args.radar as assistant.RadarKind] : undefined,
           );

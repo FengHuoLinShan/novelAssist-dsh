@@ -63,6 +63,12 @@ export interface VaultIndex {
   structure: StructureEntry[];
 }
 
+/** 单次 Vault 扫描产物；剧情聚合/巡检可复用已解析 frontmatter，避免重复 I/O。 */
+export interface VaultIndexSnapshot {
+  index: VaultIndex;
+  frontmatterByFile: ReadonlyMap<string, Record<string, unknown>>;
+}
+
 function normalizeChapterIds(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.map((x) => String(x)).filter((s) => s.length > 0);
@@ -72,8 +78,8 @@ function cmpStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** 纯函数: 扫描全 vault 产索引 JSON(对象 slug→文件、别名→owner、关系有向对、Scene→章节覆盖)。 */
-export function rebuildIndex(root: string): VaultIndex {
+/** 纯函数: 扫描全 vault 一次，产索引与同源 frontmatter 快照。 */
+export function rebuildIndexSnapshot(root: string): VaultIndexSnapshot {
   const p = paths(root);
 
   const objects: IndexedObject[] = [];
@@ -82,6 +88,7 @@ export function rebuildIndex(root: string): VaultIndex {
   const scenes: SceneEntry[] = [];
   const chapters: ChapterEntry[] = [];
   const structure: StructureEntry[] = [];
+  const frontmatterByFile = new Map<string, Record<string, unknown>>();
 
   const scan = (absDir: string, cb: (rel: string, abs: string) => void): void => {
     if (!exists(absDir)) return;
@@ -114,6 +121,7 @@ export function rebuildIndex(root: string): VaultIndex {
 
   const addObject = (rel: string, abs: string): void => {
     const { data } = parseFrontmatter(readText(abs));
+    frontmatterByFile.set(rel, data as Record<string, unknown>);
     const slug = slugFromFilename(rel);
     const aliases = normalizeAliases(data.aliases);
     objects.push({
@@ -139,6 +147,7 @@ export function rebuildIndex(root: string): VaultIndex {
     if (!rel.endsWith('.md')) return;
     const { data } = parseFrontmatter(readText(abs));
     const slug = slugFromFilename(rel);
+    frontmatterByFile.set(`scenes/${rel}`, data as Record<string, unknown>);
     scenes.push({
       slug,
       file: `scenes/${rel}`,
@@ -154,6 +163,7 @@ export function rebuildIndex(root: string): VaultIndex {
     const m = /^(\d{3})\.md$/.exec(rel);
     if (!m) return;
     const { data } = parseFrontmatter(readText(abs));
+    frontmatterByFile.set(`chapters/${rel}`, data as Record<string, unknown>);
     chapters.push({
       index: parseInt(m[1], 10),
       file: `chapters/${rel}`,
@@ -174,6 +184,7 @@ export function rebuildIndex(root: string): VaultIndex {
     const { data } = parseFrontmatter(readText(abs));
     const kind = assetKindFromPath(`structure/${rel}`);
     const slug = slugFromFilename(rel);
+    frontmatterByFile.set(`structure/${rel}`, data as Record<string, unknown>);
     structure.push({
       kind,
       slug,
@@ -212,7 +223,15 @@ export function rebuildIndex(root: string): VaultIndex {
   chapters.sort((a, b) => a.index - b.index);
   structure.sort((a, b) => cmpStr(a.kind, b.kind) || cmpStr(a.slug, b.slug));
 
-  return { version: 1, objects, aliases, relations, scenes, chapters, structure };
+  return {
+    index: { version: 1, objects, aliases, relations, scenes, chapters, structure },
+    frontmatterByFile,
+  };
+}
+
+/** 兼容索引入口；公开签名不变。 */
+export function rebuildIndex(root: string): VaultIndex {
+  return rebuildIndexSnapshot(root).index;
 }
 
 // ============================================================================

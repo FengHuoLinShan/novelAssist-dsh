@@ -36,12 +36,11 @@ const VERB_KEYS: Record<string, InboxAction> = {
 
 /** 四动词按钮(含打回/改一改的内联理由行)。 */
 function VerbRow(props: {
-  card: SignalCard
   t: TranslateNS<typeof NS>
   busy: boolean
   onAct: (action: InboxAction, reason?: string, modified?: ActModifyFields) => void
 }): JSX.Element {
-  const { card, t, busy, onAct } = props
+  const { t, busy, onAct } = props
   const [pending, setPending] = useState<'reject' | 'modify' | null>(null)
   const [reason, setReason] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -159,7 +158,7 @@ export function InboxPanel(props: InboxPanelProps): JSX.Element {
             </ul>
           ) : null}
           <p className={css.proposed}>{t('inbox.action')}: {card.proposed_action}</p>
-          <VerbRow card={card} t={t} busy={busy} onAct={(a, r, m) => void handleAct(a, r, m)} />
+          <VerbRow t={t} busy={busy} onAct={(a, r, m) => void handleAct(a, r, m)} />
         </article>
       ))}
       <footer className={css.keyboardHints}>j/k · 1-4 · u · Esc</footer>

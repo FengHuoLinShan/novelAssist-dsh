@@ -108,11 +108,6 @@ import {
 import { normalizeRelPath, normalizeSha256, isTransactionKind, isTxId, requirePlainRecord, assertNoUnknownFields } from './codec.js';
 import { StoreError } from '../errors.js';
 
-// txid 统一契约(审计: canonical `tx-` + 64 位小写 hex, 与 codec.isTxId 同口径;
-// makeTxid 产出完整 64 位 hex; git-transaction TXID_RE / intent TXID_PATTERN 已同步
-// 收紧为同一 canonical 形态——不再保留 32..64 宽松区间)。
-const TXID_RE = /^tx-[0-9a-f]{64}$/;
-
 // 供 recovery.ts / 调用方引用的并行模块类型透传。
 export type { VaultLock } from './lock.js';
 export type { IntentRecord, IntentBlobSet, IntentTargetEntry } from './intent.js';

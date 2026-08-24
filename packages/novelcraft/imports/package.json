@@ -15,7 +15,6 @@
     "@novelcraft/vault": "*",
     "@novelcraft/store": "*",
     "@novelcraft/llm-step": "*",
-    "@novelcraft/writing": "*",
     "@novelcraft/trace": "*"
   }
 }

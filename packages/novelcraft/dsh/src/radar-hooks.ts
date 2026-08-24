@@ -23,17 +23,17 @@ export const EVENT_RADAR_MAP = {
 } as const satisfies Record<string, readonly assistant.RadarKind[]>;
 
 /** 跑一组雷达并推送信号变化; 非已初始化 vault 或扫描异常时跳过(返回 undefined), 推送仍尝试。 */
-export function fireRadarHooks(
+export async function fireRadarHooks(
   ctx: Context,
   root: string,
   radars: readonly assistant.RadarKind[],
-): assistant.SweepResult | undefined {
+): Promise<assistant.SweepResult | undefined> {
   // N34: root 必须通过只读 validateInitializedVault(工具层已传入绑定 root; 此处
   // 兜底防任意目录误入)——伪 vault/无 git/无 HEAD 一律不跑雷达(fail-closed)。
   if (!validateInitializedVault(root).ok) return undefined;
   let result: assistant.SweepResult | undefined;
   try {
-    result = assistant.runRadarSweep(root, { radars: [...radars] });
+    result = await assistant.runRadarSweepAtomic(root, { radars: [...radars] });
   } catch {
     // 雷达是后台监看(§7), 失败不进主调用链; 作者可经 novelcraft_radar_sweep 手动重扫。
     result = undefined;

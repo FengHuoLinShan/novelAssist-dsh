@@ -15,7 +15,7 @@
 // 覆盖: 解析一次并冻结(pass-through 零重解析)、fail-closed(非法 preset/strict llm.yml
 //       在 provider 前抛; deepImport 在范围授权前抛, 零审批零 provider 零文件)、
 //       timeout/预算继承与请求级 override 优先; 全程不出现任何密钥材料(铁律 6)。
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,6 +25,7 @@ import { gitAdd, gitCommit } from '@novelcraft/store';
 import { ingestChapter } from '@novelcraft/writing';
 import { readCheckpoint, resumeImport } from '@novelcraft/imports';
 import { estimateTokens, fingerprintExecutionProfile, parseExecutionProfile } from '@novelcraft/llm-step';
+import { paths as vaultPaths } from '@novelcraft/vault';
 import { ExecutionProfileError, type ExecutionProfile } from '../src/llm/execution-profile.js';
 import { NovelCraftService } from '../src/index.js';
 import { FakeAdapter, makeContext, type HarnessServices } from './helpers.js';
@@ -71,7 +72,7 @@ class AbortHangingAdapter extends FakeAdapter {
   }
 }
 
-async function setup(opts: { provider?: string; adapter?: FakeAdapter } = {}): Promise<Env> {
+async function setup(opts: { provider?: string; adapter?: FakeAdapter; durable?: boolean } = {}): Promise<Env> {
   const h = await makeContext({ approval: { outcome: 'allowed-once' } });
   const provider = opts.provider ?? 'fake';
   if (opts.adapter) h.ctx.llm.registerAdapter([provider], opts.adapter);
@@ -82,7 +83,14 @@ async function setup(opts: { provider?: string; adapter?: FakeAdapter } = {}): P
     watch: { enabled: false, intervalMinutes: 60 },
   });
   const service = h.ctx.novelcraft;
-  const binding = service.vaults.ensureVault('画像书');
+  // ponytail: profile/policy 组合不验证 Git，只为两条 durable deep-import 用真实 vault。
+  const binding = opts.durable
+    ? service.vaults.ensureVault('画像书')
+    : (() => {
+        const root = path.join(vaultsDir, '画像书');
+        mkdirSync(path.join(root, '.assistant'), { recursive: true });
+        return { book: '画像书', root, paths: vaultPaths(root) };
+      })();
   await service.vaults.bindSession('s1', binding);
   return {
     h,
@@ -533,7 +541,7 @@ describe('temperature 覆盖链(R2/P2: spec 默认 < profile 默认 < 请求 ove
 describe('真实 deepImport 挂起超时(P2: 每步 wall-clock timeout 生效, 不整链挂死)', () => {
   it('单章 hanging adapter + timeout_ms: 1000 → deepImport 有界完成, 全部 llm_step ok:false', async () => {
     const hang = new AbortHangingAdapter();
-    const env = await setup({ provider: 'hang', adapter: hang });
+    const env = await setup({ provider: 'hang', adapter: hang, durable: true });
     seedChapters(env.root, 'timeout_ms: 1000\n');
     const t0 = Date.now();
     const result = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 1 });
@@ -560,7 +568,7 @@ describe('真实 deepImport 挂起超时(P2: 每步 wall-clock timeout 生效, �
 
 describe('fingerprint 接入 deep import run/checkpoint identity(P5: 执行画像变化拒绝旧 run)', () => {
   it('checkpoint/trace 落执行指纹；画像变化后同 scope 拒绝旧 run(provider 零新增调用)', async () => {
-    const env = await setup();
+    const env = await setup({ durable: true });
     seedChapters(env.root, 'preset: default\n');
     for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
     const first = await env.service.deepImport(fakeAgent, env.root, { startChapter: 1, endChapter: 2 });

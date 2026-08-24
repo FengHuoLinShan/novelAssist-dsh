@@ -7,13 +7,14 @@
 // 对账: 全部经 reconcileRadarSignals(§11 静默纪律 + 双向对账)。
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { paths, slugify } from "@novelcraft/vault";
-import { rebuildIndex } from "@novelcraft/store";
+import { paths } from "@novelcraft/vault";
+import { rebuildIndex, type VaultIndex } from "@novelcraft/store";
 import { reconcileRadarSignals, type RadarReconcileResult } from "./radar-utils.js";
-import type { CreateSignalInput } from "./signals.js";
+import { signalIdFromKey, signalLogicalKey, type CreateSignalInput } from "./signals.js";
 
 /** 只取本雷达关心的字段(imports.md §41 子集)。 */
 interface ImportLogLine {
+  id?: unknown;
   file_name?: unknown;
   status?: unknown;
   error_message?: unknown;
@@ -37,21 +38,12 @@ function readImportLogLines(root: string): ImportLogLine[] {
   return out;
 }
 
-/** file_name → 确定性 id 片段(vault slugify, 保 CJK; 异常回退净化)。 */
-function slugifySafe(name: string): string {
-  try {
-    return slugify(name);
-  } catch {
-    return (
-      String(name)
-        .replace(/[^\p{L}\p{N}._-]+/gu, "-")
-        .replace(/^-+|-+$/g, "") || "unknown"
-    );
-  }
-}
-
 /** 摄入雷达全扫: 失败导入 + 章覆盖缺口 → 收件箱(幂等, 双向对账)。 */
 export function scanIngestRadar(root: string, now?: Date): RadarReconcileResult {
+  return reconcileRadarSignals(root, "ingest-", collectIngestRadarHits(root), now);
+}
+
+export function collectIngestRadarHits(root: string, index: VaultIndex = rebuildIndex(root)): CreateSignalInput[] {
   const hits: CreateSignalInput[] = [];
 
   // 1. 失败导入 → risk 信号(§7 摄入雷达)。
@@ -63,8 +55,11 @@ export function scanIngestRadar(root: string, now?: Date): RadarReconcileResult 
     if (typeof rec.total_chapters === "number" && rec.total_chapters > 0) {
       evidence.push(`共 ${rec.total_chapters} 章`);
     }
+    const recordId = typeof rec.id === "string" && rec.id.trim() ? rec.id : file_name;
+    const logicalKey = signalLogicalKey("ingest", "failed", recordId, file_name);
     hits.push({
-      id: `ingest-failed-${slugifySafe(file_name)}`,
+      id: signalIdFromKey("ingest-failed-", logicalKey),
+      logical_key: logicalKey,
       radar: "ingest",
       severity: "risk",
       title: `导入失败: ${file_name}`,
@@ -75,7 +70,6 @@ export function scanIngestRadar(root: string, now?: Date): RadarReconcileResult 
   }
 
   // 2. 章无 Scene 覆盖 → note 信号(§7: 章已入库, 待增量导入/Scene 关联)。
-  const index = rebuildIndex(root);
   const covered = new Set<number>();
   for (const s of index.scenes) {
     for (const c of s.chapters) {
@@ -87,6 +81,7 @@ export function scanIngestRadar(root: string, now?: Date): RadarReconcileResult 
     if (covered.has(ch.index)) continue;
     hits.push({
       id: `ingest-uncovered-ch${ch.index}`,
+      logical_key: signalLogicalKey("ingest", "uncovered_chapter", ch.index),
       radar: "ingest",
       severity: "note",
       title: `第 ${ch.index} 章已入库, 待增量导入/Scene 关联`,
@@ -96,5 +91,5 @@ export function scanIngestRadar(root: string, now?: Date): RadarReconcileResult 
     });
   }
 
-  return reconcileRadarSignals(root, "ingest-", hits, now);
+  return hits;
 }

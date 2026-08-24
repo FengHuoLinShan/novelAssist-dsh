@@ -10,13 +10,14 @@
   ],
   "scripts": {
     "postinstall": "node scripts/apply-dsh-patches.mjs",
-    "test": "npm run test --workspaces --if-present",
+    "test": "node scripts/test-workspaces.mjs",
     "build": "node scripts/build-topological.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:deps": "node scripts/check-workspace-deps.mjs",
     "check:git-writers": "node scripts/check-git-writers.mjs",
     "check:distribution": "node scripts/check-distribution-profile.mjs",
     "check:audit-gate": "node scripts/audit-baseline-selftest.mjs",
+    "bench:read-paths": "npm run build && node scripts/benchmark-read-paths.mjs",
     "audit:default": "node scripts/check-audit-baseline.mjs --profile=default",
     "audit:bge": "node scripts/check-audit-baseline.mjs --profile=bge"
   },

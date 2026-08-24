@@ -1003,7 +1003,7 @@ function unquoteBookYamlScalar(value: string): string | undefined {
     if (!value.endsWith('"') || value.length < 2) return undefined; // 未闭合: 非法
     const inner = value.slice(1, -1);
     return inner
-      .replace(/\\(\\|"|n|r|t)/g, (m, ch: string) =>
+      .replace(/\\(\\|"|n|r|t)/g, (_match, ch: string) =>
         ch === 'n' ? '\n' : ch === 'r' ? '\r' : ch === 't' ? '\t' : ch === '"' ? '"' : '\\')
       .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
   }

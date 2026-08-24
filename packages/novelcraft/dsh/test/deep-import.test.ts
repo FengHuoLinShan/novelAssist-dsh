@@ -239,8 +239,8 @@ describe('deepImport(DSH 挂载)', () => {
     expect(types).toContain('adopt');
     expect(types[types.length - 1]).toBe('complete_import');
 
-    // durable 深导状态全部进 git；工具返回后的 radar hook 只留下可重建 signals 派生读面。
-    expect(gitStatus(env.root)).toEqual(['?? .assistant/signals/']);
+    // durable 深导状态与 radar Signal 均经 state transaction 进 git，不留部分写。
+    expect(gitStatus(env.root)).toEqual([]);
     expect(gitHeadHas(env.root, '.assistant/checkpoint.json')).toBe(true);
     expect(gitHeadHas(env.root, '.assistant/import-trace.jsonl')).toBe(true);
     const runNs = `.assistant/import-runs/${out.workflow_id}`;

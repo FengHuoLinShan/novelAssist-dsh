@@ -181,7 +181,6 @@ const STRICT_KNOWN_KEYS = new Set([
   "workflow_budget",
   "embedding",
 ]);
-const STRICT_NUM_KEYS = new Set(["temperature", "top_p", "max_tokens", "timeout_ms", "workflow_budget"]);
 /** 整数键: 拒绝任何小数表示(10.0 也算小数表示, 一律 fail-closed)。 */
 const STRICT_INT_KEYS = new Set(["max_tokens", "timeout_ms", "workflow_budget"]);
 const STRICT_STRING_KEYS = new Set(["preset", "provider", "model", "embedding"]);

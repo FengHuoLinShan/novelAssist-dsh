@@ -1,6 +1,6 @@
 // rag · 片段资产与可重建索引(R5, small-modules §3; D16 嵌入后端可插拔)。
 // chunk 是派生索引可重建(R12); 文件是唯一真相。
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 
 export const RAG_SOURCE_TYPES = ["chapter_text", "world_entity", "character", "memory", "outline"] as const;
@@ -48,7 +48,6 @@ export function chunkChapterText(
   const out: RagChunk[] = [];
   const paras = text.split(/\n{2,}/);
   let buf = "";
-  let start = 0;
   let idx = 0;
   const flush = () => {
     if (!buf.trim()) return;
@@ -68,14 +67,11 @@ export function chunkChapterText(
     idx += 1;
     buf = "";
   };
-  let pos = 0;
   for (const p of paras) {
     if ((buf + "\n\n" + p).length > target && buf) {
       flush();
-      start = pos;
     }
     buf = buf ? `${buf}\n\n${p}` : p;
-    pos += p.length;
   }
   flush();
   return out;

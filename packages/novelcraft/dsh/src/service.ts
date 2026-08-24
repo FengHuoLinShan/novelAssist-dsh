@@ -7,17 +7,14 @@ import { existsSync as existsSyncLocal, readdirSync as readdirSyncLocal, readFil
 import path from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import * as assistant from '@novelcraft/assistant';
-import * as context from '@novelcraft/context';
 import * as imports from '@novelcraft/imports';
 import * as llmStep from '@novelcraft/llm-step';
-import * as memory from '@novelcraft/memory';
-import * as outline from '@novelcraft/outline';
 import * as rag from '@novelcraft/rag';
 import * as store from '@novelcraft/store';
 import { ensureVaultGitignore, paths as pathsFor } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
-import { ApprovalGate, GateDeniedError, GateRequiredError } from './approval/gate.js';
+import { ApprovalGate, GateDeniedError } from './approval/gate.js';
 import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './capabilities.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
@@ -39,28 +36,6 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** 核心包 facade 命名空间(与 13 包一一对应; 无 DSH 依赖, 可被组合代码直接消费)。 */
-export interface NovelcraftFacades {
-  store: StoreFacade;
-  llmStep: typeof llmStep;
-  writing: typeof writing;
-  imports: typeof imports;
-  world: WorldFacade;
-  outline: typeof outline;
-  memory: typeof memory;
-  rag: typeof rag;
-  context: typeof context;
-  assistant: typeof assistant;
-}
-
-/** store canonical 写面不通过 facade 暴露；外部只能走 capabilities.adoptGuarded。 */
-type StoreWriterName =
-  | 'adopt' | 'softDelete'
-  | 'mergeEntities' | 'merge_entities'
-  | 'splitMerge' | 'split_merge'
-  | 'attachAlias' | 'attach_alias';
-export type StoreFacade = Omit<typeof store, StoreWriterName> & Record<StoreWriterName, (...args: never[]) => never>;
-
 /** world.createObject 输入(与 @novelcraft/world 同形)。 */
 export interface WorldCreateInput {
   name: string;
@@ -76,54 +51,6 @@ export interface WorldUpdatePatch {
   description?: string;
   tags?: string[];
 }
-
-/**
- * world facade 包装类型(N31, M7 Phase F): 读取面原样透传;
- * createObject/updateObject 两写函数收口为拒绝存根(采用类写入必过审批门, 铁律3)。
- */
-export type WorldFacade = Omit<typeof world, 'createObject' | 'updateObject'> & {
-  createObject: (root: string, input: WorldCreateInput) => never;
-  updateObject: (root: string, slug: string, patch: WorldUpdatePatch) => never;
-};
-
-/** 写面拒绝存根工厂: 未经审批门调用采用类写操作 → 抛错(fail-closed, N31)。 */
-function worldWriteStub(op: string): never {
-  throw new GateRequiredError(
-    `采用类写操作请经 NovelCraftService.worldCreateGuarded/worldUpdateGuarded（审批门, N31）: ${op}`,
-  );
-}
-
-/** world 包装命名空间: 读面透传, 两写函数为拒绝存根(N31 + 铁律3)。 */
-export const WORLD_FACADE: WorldFacade = {
-  ...world,
-  createObject: (root, input) => worldWriteStub(`world.createObject(${root}, ${input.name})`),
-  updateObject: (root, slug) => worldWriteStub(`world.updateObject(${root}, ${slug})`),
-};
-
-export const STORE_FACADE: StoreFacade = Object.freeze({
-  ...store,
-  adopt: () => worldWriteStub('store.adopt'),
-  softDelete: () => worldWriteStub('store.softDelete'),
-  mergeEntities: () => worldWriteStub('store.mergeEntities'),
-  merge_entities: () => worldWriteStub('store.merge_entities'),
-  splitMerge: () => worldWriteStub('store.splitMerge'),
-  split_merge: () => worldWriteStub('store.split_merge'),
-  attachAlias: () => worldWriteStub('store.attachAlias'),
-  attach_alias: () => worldWriteStub('store.attach_alias'),
-}) as unknown as StoreFacade;
-
-export const FACADES: NovelcraftFacades = {
-  store: STORE_FACADE,
-  llmStep,
-  writing,
-  imports,
-  world: WORLD_FACADE,
-  outline,
-  memory,
-  rag,
-  context,
-  assistant,
-};
 
 /**
  * NovelCraft 挂载服务: 构造即组装 adapters; 工具注册容错(tools 服务缺失时
@@ -173,7 +100,7 @@ export class NovelCraftService extends Service {
       radars: ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'],
     })).digest('hex');
     const radarHost = new DshRadarJobHost(this.radars, async (binding, radar) =>
-      JSON.stringify(assistant.runRadarSweep(binding.root, { radars: [radar] })));
+      assistant.runRadarJobAtomic(binding.root, radar));
     const reportRuntimeError = (scope: string, error: unknown) => {
       console.error(`[novelcraft] ${scope}:`, error);
     };
@@ -700,8 +627,8 @@ export class NovelCraftService extends Service {
   }
 
   /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */
-  scanHealth(root: string): assistant.HealthScanResult {
-    return assistant.scanHealthSignals(root);
+  scanHealth(root: string): Promise<assistant.HealthScanResult> {
+    return assistant.scanHealthSignalsAtomic(root);
   }
 
   /** 便捷: 消费当前会话已授权的文本收据; 成功后重建派生索引。 */
@@ -718,8 +645,8 @@ export class NovelCraftService extends Service {
   }
 
   /** 便捷: 雷达巡检(默认五面; §11 事件/手动触发, 非定时)。 */
-  radarSweep(root: string, radars?: assistant.RadarKind[]): assistant.SweepResult {
-    return assistant.runRadarSweep(root, radars ? { radars } : {});
+  radarSweep(root: string, radars?: assistant.RadarKind[]): Promise<assistant.SweepResult> {
+    return assistant.runRadarSweepAtomic(root, radars ? { radars } : {});
   }
 
   /** 便捷: RAG 索引增量同步(兼容旧 vault: 先补 .gitignore 再重建派生索引; R5/R12 可随时重建)。 */

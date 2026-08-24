@@ -57,7 +57,20 @@ export function saveSignal(root: string, signal: Signal): void {
   // 的 symlink 或 vault 内同目录 symlink → 拒绝(fail-closed), 无法经信号 id
   // 跨目录写 vault 外文件或改写其他信号。
   const file = guardedSignalFile(root, dir, `${signal.id}.json`);
-  writeFileSync(file, JSON.stringify(signal, null, 2) + "\n", "utf8");
+  writeFileSync(file, serializeSignal(signal), "utf8");
+}
+
+/** Signal 的唯一落盘编码，供原子 state transaction 复用。 */
+export function serializeSignal(signal: Signal): string {
+  return JSON.stringify(signal, null, 2) + "\n";
+}
+
+/** 带 R9 路径门禁读取原始字节；原子事务用它建立精确 CAS。 */
+export function readSignalBytes(root: string, signalId: string): string | undefined {
+  const dir = paths(root).assistant.signals;
+  const file = guardedSignalFile(root, dir, `${signalId}.json`);
+  if (!existsSync(file)) return undefined;
+  return readFileSync(file, "utf8");
 }
 
 /** 读单信号; 不存在返回 undefined。 */

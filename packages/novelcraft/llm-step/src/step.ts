@@ -133,7 +133,6 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   const fixAttempts = req.fixAttempts ?? 1;
 
   const journal: StepResult["journal"] = [];
-  let lastText = "";
   let lastUsage = { inputTokens: budget.estimatedInput, outputTokens: 0 };
   // 跟踪最后一次失败类型: 尝试耗尽时按此分类(schema 耗尽 → schema_violation;
   // retryable provider 耗尽 → provider_retryable + 最后 message)
@@ -190,7 +189,6 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         return fail(spec, req, "timeout", "timeout", journal, lastUsage);
       }
       const resp = outcome.value;
-      lastText = resp.text;
       lastUsage = resp.usage ?? lastUsage;
 
       if (spec.outputFormat === "text") {
@@ -279,7 +277,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
 
 function fail(
   spec: LlmStepSpec,
-  req: StepRequest,
+  _req: StepRequest,
   kind: StepErrorKind,
   message: string,
   journal: StepResult["journal"],

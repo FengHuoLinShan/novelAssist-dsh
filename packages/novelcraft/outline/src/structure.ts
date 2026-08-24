@@ -48,10 +48,31 @@ export function sceneHealthSignals(
 }
 
 /** 结构资产级信号(N1 后两键): threads/arcs 等目录里的 needs_review/unassigned。 */
+export interface StructureHealthInput {
+  kind: string;
+  slug: string;
+  title: string;
+  fm: Record<string, unknown>;
+}
+
+export function structureHealthSignalsFromEntries(
+  entries: readonly StructureHealthInput[],
+): Array<{ kind: string; slug: string; title: string; keys: string[] }> {
+  const out: Array<{ kind: string; slug: string; title: string; keys: string[] }> = [];
+  for (const { kind, slug, title, fm } of entries) {
+    const keys: string[] = [];
+    if (fm.needs_review === true) keys.push("structure_needs_review");
+    const related = Array.isArray(fm.related_thread_ids) ? fm.related_thread_ids : [];
+    if (fm.unassigned === true || (related.length === 0 && kind === "thread")) keys.push("structure_unassigned");
+    if (keys.length) out.push({ kind, slug, title, keys });
+  }
+  return out;
+}
+
 export function structureHealthSignals(
   root: string,
 ): Array<{ kind: string; slug: string; title: string; keys: string[] }> {
-  const out: Array<{ kind: string; slug: string; title: string; keys: string[] }> = [];
+  const entries: StructureHealthInput[] = [];
   const p = paths(root).structure;
   const dirs: Array<[string, string]> = [
     ["thread", p.threads],
@@ -66,21 +87,15 @@ export function structureHealthSignals(
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
       const f = entry.name;
       const { data } = parseFrontmatter(readFileSync(`${dir}/${f}`, "utf8"));
-      const keys: string[] = [];
-      if (data.needs_review === true) keys.push("structure_needs_review");
-      const related = Array.isArray(data.related_thread_ids) ? data.related_thread_ids : [];
-      if (data.unassigned === true || (related.length === 0 && kind === "thread")) keys.push("structure_unassigned");
-      if (keys.length) {
-        out.push({
-          kind,
-          slug: f.replace(/\.md$/, ""),
-          title: typeof data.title === "string" ? data.title : String(data.name ?? ""),
-          keys,
-        });
-      }
+      entries.push({
+        kind,
+        slug: f.replace(/\.md$/, ""),
+        title: typeof data.title === "string" ? data.title : String(data.name ?? ""),
+        fm: data as Record<string, unknown>,
+      });
     }
   }
-  return out;
+  return structureHealthSignalsFromEntries(entries);
 }
 
 /** 总纲单文件(structure/outline.md, adjudication #1): 读/写; revisions 由 git 承接。 */

@@ -16,7 +16,6 @@ import {
   type AtlasNode,
   type AtlasPage,
   type AtlasPlan,
-  type AtlasPlanNode,
   type AtlasRun,
   type AtlasRunOptions,
   type AtlasTree,

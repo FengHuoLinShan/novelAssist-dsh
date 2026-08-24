@@ -24,7 +24,7 @@
 // - 公开 API: runAtlasWorkflow / resumeAtlasWorkflow, 返回兼容
 //   AtlasRun / PlanMapAtlasResult 的投影(AtlasWorkflowResult)。
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "@novelcraft/vault";
 import {
@@ -584,7 +584,7 @@ async function generateSpatialBatch(ctx: AtlasDriverContext, input: RunGenerator
   return { payload: payloadOf({ spatial } satisfies AtlasSpatialPayload) };
 }
 
-async function generatePlanBatch(ctx: AtlasDriverContext, input: RunGeneratorInput): Promise<RunGeneratorOutput> {
+async function generatePlanBatch(ctx: AtlasDriverContext, _input: RunGeneratorInput): Promise<RunGeneratorOutput> {
   registerAtlasPlanSpecOnce();
   const contextPayload = (await readArtifactPayload<AtlasContextPayload>(ctx, ctx.batchByPhase.context))!;
   const spatialPayload = (await combinedSpatialPayload(ctx))!;
@@ -937,7 +937,6 @@ function baseRunProjection(ctx: AtlasDriverContext, createdAt: string): AtlasRun
 }
 
 async function aggregateRun(ctx: AtlasDriverContext, run: RunEngineResult): Promise<AtlasAggregation> {
-  const runRef = ctx.workflowId;
   const contextPayload = await readArtifactPayload<AtlasContextPayload>(ctx, ctx.batchByPhase.context);
   const spatialPayload = await combinedSpatialPayload(ctx);
   const planPayload = await readArtifactPayload<AtlasPlanPayload>(ctx, ctx.batchByPhase.plan);

@@ -3,7 +3,6 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import * as publicApi from '../src/index.js';
 import { createNovelCraftCapabilities, NovelCraftService } from '../src/index.js';
-import { STORE_FACADE } from '../src/service.js';
 
 function fakeService(): NovelCraftService {
   const service: Record<string, unknown> = { marker: 'bound' };
@@ -54,12 +53,6 @@ describe('createNovelCraftCapabilities', () => {
     expect('applyAtlasAnnotations' in NovelCraftService.prototype).toBe(false);
     expect('applyAtlasAnnotationQueue' in NovelCraftService.prototype).toBe(true);
     expect('facades' in NovelCraftService.prototype).toBe(false);
-  });
-
-  it('legacy store facade 的 raw canonical writers 全部是 fail-closed 存根(N35)', () => {
-    for (const name of ['adopt', 'softDelete', 'mergeEntities', 'splitMerge', 'attachAlias'] as const) {
-      expect(() => (STORE_FACADE[name] as (...args: unknown[]) => unknown)()).toThrow(/审批|guarded|采用类写操作/);
-    }
   });
 
   it('生产 tools 只经 capability namespaces 调用 domain 方法(N35)', () => {

@@ -27,11 +27,8 @@
   },
   "dependencies": {
     "@novelcraft/assistant": "*",
-    "@novelcraft/context": "*",
     "@novelcraft/imports": "*",
     "@novelcraft/llm-step": "*",
-    "@novelcraft/memory": "*",
-    "@novelcraft/outline": "*",
     "@novelcraft/rag": "*",
     "@novelcraft/store": "*",
     "@novelcraft/trace": "*",

@@ -598,8 +598,11 @@ describe('createWorkflowIdentity / createForcedWorkflowIdentity(审查发现 4)'
 
   it('记录形 API 输入：可选字段显式 undefined 按缺省处理(加法兼容)；数据面仍拒绝(复审 R1)', () => {
     // identity 可选 createdAt: undefined → 视为缺省
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
     const a = createWorkflowIdentity({ ...baseIdentityInput, uniqueRunId: 'run-01', createdAt: undefined as unknown as string });
     const b = createWorkflowIdentity({ ...baseIdentityInput, uniqueRunId: 'run-01' });
+    vi.useRealTimers();
     expect(a).toEqual(b);
     const f = createForcedWorkflowIdentity({
       ...baseIdentityInput, uniqueRunId: 'run-01',

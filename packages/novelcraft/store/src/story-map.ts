@@ -4,10 +4,9 @@
 // 依据: 设计文档 §17.5(剧情地图)、ADR-0019(附录 A type 枚举 + N14/N16/N17)、N12(目录化)。
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { parseFrontmatter } from "./frontmatter.js";
 import { readText } from "./fs.js";
-import { rebuildIndex } from "./index.js";
-import type { RelationEntry } from "./index.js";
+import { rebuildIndexSnapshot } from "./index.js";
+import type { RelationEntry, VaultIndexSnapshot } from "./index.js";
 
 export interface StoryMapAsset {
   kind: "thread" | "arc" | "foreshadowing" | "reveal";
@@ -126,7 +125,12 @@ function expandLegacyEdges(
 
 /** 聚合剧情地图: book + chapters + scenes + 四类结构资产(带深字段)+ 跨类边。 */
 export function storyMap(root: string): StoryMap {
-  const index = rebuildIndex(root);
+  return storyMapFromSnapshot(root, rebuildIndexSnapshot(root));
+}
+
+/** 复用 rebuildIndexSnapshot 的已解析 frontmatter，不再次读取 Scene/结构文件。 */
+export function storyMapFromSnapshot(root: string, snapshot: VaultIndexSnapshot): StoryMap {
+  const { index, frontmatterByFile } = snapshot;
 
   let book = path.basename(root);
   try {
@@ -138,13 +142,8 @@ export function storyMap(root: string): StoryMap {
   }
 
   const scenes: StoryMapScene[] = index.scenes.map((s) => {
-    let title: string | undefined;
-    try {
-      const { data } = parseFrontmatter(readText(path.join(root, s.file)));
-      title = typeof data.title === "string" ? data.title : undefined;
-    } catch {
-      title = undefined;
-    }
+    const data = frontmatterByFile.get(s.file);
+    const title = typeof data?.title === "string" ? data.title : undefined;
     return { slug: s.slug, status: s.status, chapters: s.chapters, title };
   });
 
@@ -158,21 +157,13 @@ export function storyMap(root: string): StoryMap {
   }
   const legacy: RelationEntry[] = [];
   for (const s of index.scenes) {
-    try {
-      const { data } = parseFrontmatter(readText(path.join(root, s.file)));
-      expandLegacyEdges("scene", s.slug, data as Record<string, unknown>, legacy);
-    } catch {
-      // 场景文件缺失/损坏: 跳过投影
-    }
+    const data = frontmatterByFile.get(s.file);
+    if (data !== undefined) expandLegacyEdges("scene", s.slug, data, legacy);
   }
   for (const st of index.structure) {
     if (st.kind === "outline") continue;
-    try {
-      const { data } = parseFrontmatter(readText(path.join(root, st.file)));
-      expandLegacyEdges(st.kind, st.slug, data as Record<string, unknown>, legacy);
-    } catch {
-      // 结构资产文件缺失/损坏: 跳过投影
-    }
+    const data = frontmatterByFile.get(st.file);
+    if (data !== undefined) expandLegacyEdges(st.kind, st.slug, data, legacy);
   }
   for (const e of legacy) {
     const key = `${e.source}\u0000${e.sourceKind ?? ""}\u0000${e.target}\u0000${e.type}`;
@@ -188,12 +179,7 @@ export function storyMap(root: string): StoryMap {
   });
 
   const asset = (e: { kind: string; slug: string; file: string; status: string; name?: string }): StoryMapAsset => {
-    let fm: Record<string, unknown> = {};
-    try {
-      fm = parseFrontmatter(readText(path.join(root, e.file))).data as Record<string, unknown>;
-    } catch {
-      fm = {};
-    }
+    const fm = frontmatterByFile.get(e.file) ?? {};
     return {
       kind: e.kind as StoryMapAsset["kind"],
       slug: e.slug,

@@ -217,7 +217,6 @@ export class SessionVaultBinder {
    * 不进正文; 编排脑可见书名/路径是设计内(无隐私模式 D14 只约束原文转发)。
    */
   contextInjection(binding: VaultBinding): string {
-    const p = binding.paths;
     return [
       `当前工作区: 小说「${binding.book}」`,
       `vault 根目录(绝对路径): ${binding.root}`,

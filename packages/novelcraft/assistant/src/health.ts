@@ -2,11 +2,17 @@
 // 把 @novelcraft/outline 的确定性健康命中(Scene 四键 + 结构资产两键)映射为
 // 收件箱信号, 经 pushSignal 落 .assistant/signals/*.json(§20.6 / outline.md §535)。
 // 幂等 + 双向对账: 确定性 id `health-{key}-{ns}-{slug}`;
-//   正向: 无信号 → open; resolved → 重新 open(问题回来); 其余状态不复活;
+//   正向: 无信号 → open; 新观察重新 open; 相同观察保留作者裁决;
 //   反向: 条件已消失的 open 健康信号 → resolved(自动结算, outline.md §566)。
-import { listScenes, sceneHealthSignals, structureHealthSignals } from "@novelcraft/outline";
-import { listSignals, loadSignal, pushSignal, saveSignal } from "./inbox.js";
-import type { CreateSignalInput, Severity, Signal } from "./signals.js";
+import {
+  listScenes,
+  sceneHealthSignals,
+  structureHealthSignals,
+  structureHealthSignalsFromEntries,
+} from "@novelcraft/outline";
+import type { VaultIndexSnapshot } from "@novelcraft/store";
+import { reconcileRadarSignals, reconcileRadarSignalsAtomic } from "./radar-utils.js";
+import { signalLogicalKey, type CreateSignalInput, type Severity } from "./signals.js";
 
 const RADAR = "writing" as const;
 
@@ -82,6 +88,7 @@ function sceneSignal(
   }
   return {
     id: `health-${detail.key}-scene-${slug}`,
+    logical_key: signalLogicalKey("health", detail.key, "scene", slug),
     radar: RADAR,
     severity: SEVERITY[detail.key] ?? "note",
     title: (TITLE[detail.key] ?? ((n) => `「${n}」有结构问题`))(name),
@@ -105,6 +112,7 @@ function structureSignal(
     : [`该${label}资产未关联剧情线`];
   return {
     id: `health-${key}-${kind}-${slug}`,
+    logical_key: signalLogicalKey("health", key, kind, slug),
     radar: RADAR,
     severity: SEVERITY[key] ?? "note",
     title: (TITLE[key] ?? ((n) => `${label}「${n}」有结构问题`))(name),
@@ -133,55 +141,51 @@ export interface HealthScanResult {
  * 反向: 不再命中的 open 健康信号(health- 前缀)自动置 resolved(outline.md §566)。
  */
 export function scanHealthSignals(root: string, now: Date = new Date()): HealthScanResult {
-  let created = 0;
-  let skipped = 0;
-  let resolved = 0;
-  let reopened = 0;
-  let total = 0;
-  const hitIds = new Set<string>();
+  return reconcileRadarSignals(root, HEALTH_ID_PREFIX, collectHealthRadarHits(root), now);
+}
 
-  const processHit = (input: CreateSignalInput): void => {
-    const id = input.id!;
-    hitIds.add(id);
-    total += 1;
-    const existing = loadSignal(root, id);
-    if (!existing) {
-      pushSignal(root, input);
-      created += 1;
-      return;
-    }
-    if (existing.status === "resolved") {
-      // 问题回来了: 重新开放(刷新观察时间, 清除结算时间)。
-      saveSignal(root, {
-        ...existing,
-        status: "open",
-        observed_at: now.toISOString(),
-        decided_at: undefined,
+/** 生产入口：先完整规划，再经一次 state transaction 写入。 */
+export function scanHealthSignalsAtomic(root: string, now: Date = new Date()): Promise<HealthScanResult> {
+  return reconcileRadarSignalsAtomic(root, HEALTH_ID_PREFIX, collectHealthRadarHits(root), now);
+}
+
+/** 纯命中收集，供一次 sweep 的原子对账复用。 */
+export function collectHealthRadarHits(root: string, snapshot?: VaultIndexSnapshot): CreateSignalInput[] {
+  const hits: CreateSignalInput[] = [];
+  const scenes = snapshot === undefined
+    ? listScenes(root)
+    : snapshot.index.scenes.map((scene) => {
+        const fm = snapshot.frontmatterByFile.get(scene.file) ?? {};
+        return {
+          slug: scene.slug,
+          title: typeof fm.title === "string" ? fm.title : "",
+          status: scene.status,
+          chapter_ids: scene.chapters.map(Number),
+          file: scene.file,
+          fm,
+        };
       });
-      reopened += 1;
-      return;
-    }
-    // open/accepted/rejected/deferred: 不复活、不覆盖。
-    skipped += 1;
-  };
-
-  for (const s of sceneHealthSignals(listScenes(root))) {
-    for (const d of s.details) processHit(sceneSignal(s.slug, s.title, d));
+  for (const s of sceneHealthSignals(scenes)) {
+    for (const d of s.details) hits.push(sceneSignal(s.slug, s.title, d));
   }
 
-  for (const st of structureHealthSignals(root)) {
-    for (const key of st.keys) processHit(structureSignal(st.kind, st.slug, st.title, key));
+  const structures = snapshot === undefined
+    ? structureHealthSignals(root)
+    : structureHealthSignalsFromEntries(
+        snapshot.index.structure
+          .filter((entry) => entry.kind !== "outline")
+          .map((entry) => {
+            const fm = snapshot.frontmatterByFile.get(entry.file) ?? {};
+            return {
+              kind: entry.kind,
+              slug: entry.slug,
+              title: typeof fm.title === "string" ? fm.title : String(fm.name ?? ""),
+              fm,
+            };
+          }),
+      );
+  for (const st of structures) {
+    for (const key of st.keys) hits.push(structureSignal(st.kind, st.slug, st.title, key));
   }
-
-  // 反向对账: 条件已消失的 open 健康信号 → resolved。
-  for (const s of listSignals(root)) {
-    if (!s.id.startsWith(HEALTH_ID_PREFIX)) continue;
-    if (s.status !== "open") continue;
-    if (hitIds.has(s.id)) continue;
-    const next: Signal = { ...s, status: "resolved", decided_at: now.toISOString() };
-    saveSignal(root, next);
-    resolved += 1;
-  }
-
-  return { created, skipped, resolved, reopened, total };
+  return hits;
 }

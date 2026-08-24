@@ -2,7 +2,7 @@
 // 依据: 设计文档 §7 剧情雷达(当前剧情状态摘要、进度感)、§11 剧情摘要永远一句话、作者语言、零 raw 数据
 // (点击宠物的默认答复)。
 // v1 不产生收件箱卡片: 剧情面 = 摘要数据源; scanPlotRadar 保留对账语义(空命中集), 未来加卡片时旧信号自动结算。
-import { storyMap } from "@novelcraft/store";
+import { storyMap, type StoryMap } from "@novelcraft/store";
 import { inboxView } from "./inbox.js";
 import { reconcileRadarSignals, type RadarReconcileResult } from "./radar-utils.js";
 
@@ -10,6 +10,11 @@ import { reconcileRadarSignals, type RadarReconcileResult } from "./radar-utils.
 export function plotSummaryLine(root: string): string {
   const map = storyMap(root);
   const openCount = inboxView(root).length;
+  return plotSummaryFromStoryMap(map, openCount);
+}
+
+/** sweep 已有 snapshot 时复用，避免再次扫描 Vault/Signal。 */
+export function plotSummaryFromStoryMap(map: StoryMap, openCount: number): string {
   const maxChapter = map.chapters.reduce((m, c) => Math.max(m, c.index), 0);
   const latest = map.chapters.find((c) => c.index === maxChapter);
 
