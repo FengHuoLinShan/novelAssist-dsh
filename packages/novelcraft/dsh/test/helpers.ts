@@ -1,10 +1,10 @@
 // 测试助手: 真实 DSH 服务(storage/storage-json/storage-domain/llm)+ 假
-// approval/jobs/credentials; 全部经真实 Cordis Context 组装(seam 行为契约)。
+// approval/jobs; 全部经真实 Cordis Context 组装(seam 行为契约)。
+// 不设假 credentials: Key 由 DSH 原生 provider/凭据子系统自管, 插件层不接触(N5)。
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
-import { CredentialProvider, type CredentialInfo, type CredentialRef, type ResolvedCredential } from '@deepseek-ai/dsh-credentials';
 import { JobRegistry } from '@deepseek-ai/dsh-jobs';
 import type { JobDoneListener, JobId, JobRead, JobSnapshot, JobStart, JobsChangedListener } from '@deepseek-ai/dsh-jobs';
 import { LlmAdapter, LlmRuntime } from '@deepseek-ai/dsh-llm';
@@ -190,30 +190,6 @@ export class FakeJobs extends JobRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// 假凭据服务。
-// ---------------------------------------------------------------------------
-export class FakeCredentials extends CredentialProvider {
-  private readonly store = new Map<string, string>();
-
-  async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
-    const value = this.store.get(ref);
-    return value ? { value, source: 'fake' } : undefined;
-  }
-
-  async describe(ref: CredentialRef): Promise<CredentialInfo> {
-    return { configured: this.store.has(ref), source: this.store.has(ref) ? 'fake' : undefined, writable: true };
-  }
-
-  async set(ref: CredentialRef, value: string): Promise<void> {
-    this.store.set(ref, value);
-  }
-
-  async unset(ref: CredentialRef): Promise<void> {
-    this.store.delete(ref);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // 组合工厂: 真实 storage(json backend)+ storage-domain + llm + 假服务。
 // ---------------------------------------------------------------------------
 export interface HarnessServices {
@@ -221,7 +197,6 @@ export interface HarnessServices {
   adapter: FakeAdapter;
   approval: FakeApproval;
   jobs: FakeJobs;
-  credentials: FakeCredentials;
   dataDir: string;
   dispose: () => Promise<void>;
 }
@@ -243,14 +218,12 @@ export async function makeContext(opts: { approval?: FakeApprovalConfig } = {}):
   // Service 基类构造即注册服务(Service 构造器内部 ctx.provide), 无需显式 provide。
   const approval = new FakeApproval(root, opts.approval ?? {});
   const jobs = new FakeJobs(root);
-  const credentials = new FakeCredentials(root);
 
   return {
     ctx: root,
     adapter,
     approval,
     jobs,
-    credentials,
     dataDir,
     dispose: async () => {
       rmSync(dataDir, { recursive: true, force: true });
