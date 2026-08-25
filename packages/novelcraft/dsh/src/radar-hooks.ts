@@ -58,7 +58,8 @@ export async function afterMutation(ctx: Context, root: string, opts: AfterMutat
   }
 }
 
-/** 跑一组雷达并推送信号变化; 非已初始化 vault 或扫描异常时跳过(返回 undefined), 推送仍尝试。 */
+/** 跑一组雷达并推送信号变化。非已初始化 vault 提前返回(fail-closed: 零扫描零推送);
+ *  扫描异常时跳过扫描(返回 undefined)但推送仍尝试。 */
 export async function fireRadarHooks(
   ctx: Context,
   root: string,
