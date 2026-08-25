@@ -296,3 +296,90 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
     env.cleanup();
   });
 });
+
+// ---------------------------------------------------------------------------
+// N34 全量工具矩阵: 上面的详测只抽查了 4 个工具; 这里对 21 个工具逐一验证
+// 「隔离先于一切服务调用」(define.ts 的 resolveBoundRoot 在 execute 之前),
+// 因此参数都是 schema 合法的哑值, 永远到达不了工具逻辑。
+// ---------------------------------------------------------------------------
+type MatrixEntry = { name: string; args: (root: string) => Record<string, unknown> };
+
+const MATRIX: readonly MatrixEntry[] = [
+  { name: 'novelcraft_llm_step', args: () => ({ spec: 'semantic_review', input: 'x' }) },
+  { name: 'novelcraft_store_index', args: (root) => ({ root }) },
+  { name: 'novelcraft_store_adopt', args: (root) => ({ root, kind: 'object', ref: 'x' }) },
+  { name: 'novelcraft_inbox_view', args: (root) => ({ root }) },
+  { name: 'novelcraft_inbox_act', args: (root) => ({ root, signal_id: 'missing', action: 'defer' }) },
+  { name: 'novelcraft_deep_import', args: (root) => ({ root, start_chapter: 1, end_chapter: 1 }) },
+  { name: 'novelcraft_propose_next_chapter', args: (root) => ({ root, chapter: 1 }) },
+  { name: 'novelcraft_health_scan', args: (root) => ({ root }) },
+  { name: 'novelcraft_generate_next_chapter', args: (root) => ({ root, chapter: 1, proposal_title: 't' }) },
+  { name: 'novelcraft_ingest_file', args: (root) => ({ root, receipt_id: 'r' }) },
+  { name: 'novelcraft_chapter_review', args: (root) => ({ root, action: 'inspect', target: 'current', chapter: 1 }) },
+  { name: 'novelcraft_chapter_version', args: (root) => ({ root, action: 'inspect', chapter: 1 }) },
+  { name: 'novelcraft_radar_sweep', args: (root) => ({ root }) },
+  { name: 'novelcraft_rag_search', args: (root) => ({ root, query: 'q' }) },
+  { name: 'novelcraft_rag_embed', args: (root) => ({ root }) },
+  { name: 'novelcraft_map_atlas_plan', args: (root) => ({ root }) },
+  { name: 'novelcraft_map_atlas_view', args: (root) => ({ root }) },
+  { name: 'novelcraft_map_atlas_upload', args: (root) => ({ root, receipt_id: 'r' }) },
+  { name: 'novelcraft_map_atlas_review', args: (root) => ({ root, action: 'adopt' }) },
+  { name: 'novelcraft_map_atlas_annotation', args: (root) => ({ root }) },
+  { name: 'novelcraft_map_atlas_update_prompt', args: (root) => ({ root, page_ref: 'p', prompt: 'x' }) },
+];
+
+describe('N34 全量工具矩阵(21 工具逐一 fail-closed)', () => {
+  it('矩阵覆盖全部注册工具(数量与名字一一对应, 新工具不得逃逸矩阵)', async () => {
+    const env = await setup();
+    expect(env.tools.length).toBe(21);
+    expect(MATRIX.map((e) => e.name).sort()).toEqual(env.tools.map((t) => t.name).sort());
+    env.cleanup();
+  });
+
+  it('无 agent → 21 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
+    const env = await setup();
+    const beforeA = snapshot(env.rootA);
+    for (const entry of MATRIX) {
+      const t = tool(env, entry.name);
+      await expect(
+        t.execute(entry.args(env.rootA), execOf(entry.name, undefined)),
+        entry.name,
+      ).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
+    }
+    expect(env.h.approval.requests).toHaveLength(0);
+    expect(env.h.adapter.requests).toHaveLength(0);
+    expect(snapshot(env.rootA)).toBe(beforeA);
+    env.cleanup();
+  });
+
+  it('session 未绑定(有 id 无绑定)→ 21 工具全部拒绝', async () => {
+    const env = await setup();
+    for (const entry of MATRIX) {
+      const t = tool(env, entry.name);
+      await expect(
+        t.execute(entry.args(env.rootA), execOf(entry.name, agentUnbound)),
+        entry.name,
+      ).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
+    }
+    expect(env.h.approval.requests).toHaveLength(0);
+    env.cleanup();
+  });
+
+  it('绑定 A 传 B root → 带 root 参数的 20 工具全部拒绝, B 零读写', async () => {
+    const env = await setup();
+    const before = snapshot(env.rootB);
+    for (const entry of MATRIX) {
+      // llm_step 是唯一 bindRoot='session' 的工具(无 root 参数), 不适用本例。
+      if (entry.name === 'novelcraft_llm_step') continue;
+      const t = tool(env, entry.name);
+      await expect(
+        t.execute(entry.args(env.rootB), execOf(entry.name, agentA)),
+        entry.name,
+      ).rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
+    }
+    expect(env.h.approval.requests).toHaveLength(0);
+    expect(env.h.adapter.requests).toHaveLength(0);
+    expect(snapshot(env.rootB)).toBe(before);
+    env.cleanup();
+  });
+});
