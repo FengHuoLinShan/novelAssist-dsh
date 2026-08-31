@@ -60,9 +60,9 @@ afterEach(() => {
 });
 
 describe('config.tools 工具组开关(profile 即产品)', () => {
-  it('缺省 → 28 个(15 写作/存储 + 6 地图册 + 4 workflow + 3 book, M11/N42)', async () => {
+  it('缺省 → 30 个(17 写作/存储(含 world 写 2) + 6 地图册 + 4 workflow + 3 book, M12-a/N43)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(28);
+    expect(env.tools.length).toBe(30);
     expect(env.tools.filter((t) => t.name.startsWith('novelcraft_map_atlas_')).length).toBe(6);
     expect(env.tools.filter((t) => t.name.startsWith('novelcraft_workflow_')).length).toBe(4);
     expect(env.tools.filter((t) => t.name.startsWith('novelcraft_book_')).length).toBe(3);
@@ -70,20 +70,20 @@ describe('config.tools 工具组开关(profile 即产品)', () => {
 
   it('mapAtlas=false → 22 个(写作/存储 + workflow + book; 零 map_atlas 面)', async () => {
     const env = await setup({ tools: { mapAtlas: false } });
-    expect(env.tools.length).toBe(22);
+    expect(env.tools.length).toBe(24);
     expect(env.tools.every((t) => !t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
   });
 
-  it('writing=false → 13 个(地图册 + workflow + book)', async () => {
+  it('writing=false → 13 个(地图册 + workflow + book; world 写 2 归写作组)', async () => {
     const env = await setup({ tools: { writing: false } });
     expect(env.tools.length).toBe(13);
     expect(env.tools.every((t) =>
       t.name.startsWith('novelcraft_map_atlas_') || t.name.startsWith('novelcraft_workflow_') || t.name.startsWith('novelcraft_book_'))).toBe(true);
   });
 
-  it('workflow=false → 24 个(恢复面整组关闭)', async () => {
+  it('workflow=false → 26 个(恢复面整组关闭)', async () => {
     const env = await setup({ tools: { workflow: false } });
-    expect(env.tools.length).toBe(24);
+    expect(env.tools.length).toBe(26);
     expect(env.tools.every((t) => !t.name.startsWith('novelcraft_workflow_'))).toBe(true);
   });
 });
@@ -92,10 +92,10 @@ describe('工具组独立插件(inject novelcraft; 组合式 profile)', () => {
   it('NovelcraftMapAtlasPlugin 单独挂载 → 只注册 6 个地图册工具(与默认路径逐名一致)', async () => {
     const base = await setup();
     const env = await setup({ tools: { mapAtlas: false } });
-    expect(env.tools.length).toBe(22);
+    expect(env.tools.length).toBe(24);
     await env.h.ctx.plugin(NovelcraftMapAtlasPlugin);
-    expect(env.tools.length).toBe(28);
-    expect(env.tools.slice(22).every((t) => t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
+    expect(env.tools.length).toBe(30);
+    expect(env.tools.slice(-6).every((t) => t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
     const atlasNames = (list: ToolDefinition[]) =>
       list.map((t) => t.name).filter((n) => n.startsWith('novelcraft_map_atlas_')).sort();
     expect(atlasNames(env.tools)).toEqual(atlasNames(base.tools));
@@ -131,9 +131,9 @@ describe('工具组独立插件(inject novelcraft; 组合式 profile)', () => {
     expect(bookNames(env.tools)).toEqual(bookNames(base.tools));
   });
 
-  it('book=false → 25 个(书库组整组关闭)', async () => {
+  it('book=false → 27 个(书库组整组关闭)', async () => {
     const env = await setup({ tools: { book: false } });
-    expect(env.tools.length).toBe(25);
+    expect(env.tools.length).toBe(27);
     expect(env.tools.every((t) => !t.name.startsWith('novelcraft_book_'))).toBe(true);
   });
 
@@ -158,18 +158,18 @@ describe('工具组独立插件(inject novelcraft; 组合式 profile)', () => {
 
   it('MapAtlas 插件 dispose → 6 个地图册工具逐个注销, 默认路径 19 个保留', async () => {
     const env = await setup({ tools: { mapAtlas: false } });
-    expect(env.tools.length).toBe(22);
+    expect(env.tools.length).toBe(24);
     const fork = await env.h.ctx.plugin(NovelcraftMapAtlasPlugin);
-    expect(env.tools.length).toBe(28);
+    expect(env.tools.length).toBe(30);
     await fork.dispose();
-    expect(env.tools.length).toBe(22);
+    expect(env.tools.length).toBe(24);
     expect(env.tools.every((t) => !t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
   });
 
   it('Writing 插件 dispose → 15 个写作/存储工具全部注销, 默认路径 10 个保留', async () => {
     const env = await setup({ tools: { writing: false } });
     const fork = await env.h.ctx.plugin(NovelcraftWritingToolsPlugin);
-    expect(env.tools.length).toBe(28);
+    expect(env.tools.length).toBe(30);
     await fork.dispose();
     expect(env.tools.length).toBe(13);
     expect(env.tools.every((t) =>

@@ -689,5 +689,98 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
     ...buildMapAtlasTools(ctx, service),
     ...buildWorkflowTools(ctx, service),
     ...buildBookTools(ctx, service),
+    // ---- M12-a(N43): worldCreate/worldUpdate 工具入口(能力 N31 起已注册, 补齐作者可达面) ----
+    tool({
+      name: 'novelcraft_world_create',
+      description:
+        '创建世界对象(审批后执行): 写入 world/objects/(canonical 状态, 经 N32 事务精确提交)。' +
+        'name 必填; entityType 缺省 object; 别名/标签/描述可选。同名对象已存在时拒绝。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        name: { type: 'string', required: true, description: '对象名(如「红衣女子」)' },
+        entity_type: { type: 'string', description: "类型(缺省 'object'; 如 character/location/faction)" },
+        aliases: { type: 'array', description: '别名列表(可选)' },
+        tags: { type: 'array', description: '标签列表(可选)' },
+        description: { type: 'string', description: '对象正文描述(可选)' },
+        note: { type: 'string', description: '审批摘要补充说明(可选)' },
+      },
+      output: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          slug: { type: 'string', required: true },
+        },
+      },
+      timeoutMs: 60_000,
+      async execute(args, run) {
+        // schema 面数组是 JsonValue[]; 字符串化校验后收窄(schema type:array 元素未细化为
+        // string, 运行时逐项校验 fail-closed, 不静默丢弃非字符串项)。
+        const strList = (v: readonly unknown[] | undefined, what: string): string[] | undefined => {
+          if (v === undefined) return undefined;
+          const out = v.map((x) => {
+            if (typeof x !== 'string') throw llmError('schema_violation', `${what} 必须是字符串数组`);
+            return x;
+          });
+          return out;
+        };
+        const slug = await run.service.capabilities.adoptGuarded.worldCreate(
+          run.agent,
+          requireRoot(run),
+          {
+            name: args.name,
+            entityType: args.entity_type ?? 'object',
+            ...(strList(args.aliases, 'aliases') ? { aliases: strList(args.aliases, 'aliases') } : {}),
+            ...(strList(args.tags, 'tags') ? { tags: strList(args.tags, 'tags') } : {}),
+            ...(args.description ? { description: args.description } : {}),
+          },
+          args.note,
+        );
+        return { ok: true, slug };
+      },
+    }),
+    tool({
+      name: 'novelcraft_world_update',
+      description:
+        '修改世界对象(审批后执行): 按对象名或 slug 定位 world/objects/ 内对象, 更新' +
+        'name/tags/正文描述(经 N32 事务, 保留其余 frontmatter 与正文语义)。审批冻结' +
+        '写前字节与 HEAD, 写前重验(并发修改 CAS 拒绝)。',
+      parameters: {
+        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
+        slug: { type: 'string', required: true, description: '对象 slug(store_adopt/world 对象读面返回的 id)' },
+        name: { type: 'string', description: '新名称(可选)' },
+        tags: { type: 'array', description: '新标签列表(可选; 整组替换)' },
+        description: { type: 'string', description: '新正文描述(可选; 整段替换)' },
+        note: { type: 'string', description: '审批摘要补充说明(可选)' },
+      },
+      output: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          slug: { type: 'string', required: true },
+        },
+      },
+      timeoutMs: 60_000,
+      async execute(args, run) {
+        const patch: { name?: string; description?: string; tags?: string[] } = {};
+        if (args.name !== undefined) patch.name = args.name;
+        if (args.tags !== undefined) {
+          patch.tags = args.tags.map((x) => {
+            if (typeof x !== 'string') throw llmError('schema_violation', 'tags 必须是字符串数组');
+            return x;
+          });
+        }
+        if (args.description !== undefined) patch.description = args.description;
+        await run.service.capabilities.adoptGuarded.worldUpdate(
+          run.agent,
+          requireRoot(run),
+          args.slug,
+          patch,
+          args.note,
+        );
+        return { ok: true, slug: args.slug };
+      },
+    }),
   ];
 }

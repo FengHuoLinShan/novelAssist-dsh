@@ -333,17 +333,19 @@ const MATRIX: readonly MatrixEntry[] = [
   { name: 'novelcraft_book_list', args: () => ({}) },
   { name: 'novelcraft_book_create', args: () => ({ book: '新书' }) },
   { name: 'novelcraft_book_open', args: () => ({ book: '某书' }) },
+  { name: 'novelcraft_world_create', args: (root) => ({ root, name: 'x' }) },
+  { name: 'novelcraft_world_update', args: (root) => ({ root, slug: 'obj-x' }) },
 ];
 
-describe('N34 全量工具矩阵(28 工具逐一 fail-closed)', () => {
+describe('N34 全量工具矩阵(30 工具逐一 fail-closed)', () => {
   it('矩阵覆盖全部注册工具(数量与名字一一对应, 新工具不得逃逸矩阵)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(28);
+    expect(env.tools.length).toBe(30);
     expect(MATRIX.map((e) => e.name).sort()).toEqual(env.tools.map((t) => t.name).sort());
     env.cleanup();
   });
 
-  it('无 agent → 28 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
+  it('无 agent → 30 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
     const env = await setup();
     const beforeA = snapshot(env.rootA);
     for (const entry of MATRIX) {
@@ -359,7 +361,7 @@ describe('N34 全量工具矩阵(28 工具逐一 fail-closed)', () => {
     env.cleanup();
   });
 
-  it('session 未绑定(有 id 无绑定)→ 25 工具拒绝; book 组 3 工具例外(发现/创建/首绑入口, M11/N42)', async () => {
+  it('session 未绑定(有 id 无绑定)→ 27 工具拒绝; book 组 3 工具例外(发现/创建/首绑入口, M11/N42)', async () => {
     const env = await setup();
     for (const entry of MATRIX) {
       // book 组(bindRoot='none', M11/N42)是「未绑定也可用」的发现/创建/首绑入口——

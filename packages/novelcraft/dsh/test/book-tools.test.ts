@@ -64,9 +64,9 @@ const exec = (env: TestEnv, name: string, args: Record<string, unknown>, agent: 
   tool(env, name).execute(args, { callId: 'c1', name, arguments: args, agent, signal: new AbortController().signal });
 
 describe('book 工具组(M11/N42)', () => {
-  it('注册面: 28 工具含 book 3 个(list/create/open)', async () => {
+  it('注册面: 30 工具含 book 3 个(list/create/open)', async () => {
     const env = await setup();
-    expect(env.tools).toHaveLength(28);
+    expect(env.tools).toHaveLength(30);
     expect(env.tools.filter((t) => isBookTool(t.name)).map((t) => t.name)).toEqual([
       'novelcraft_book_list', 'novelcraft_book_create', 'novelcraft_book_open',
     ]);

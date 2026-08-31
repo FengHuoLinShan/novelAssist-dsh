@@ -226,6 +226,8 @@ describe('NovelCraftService 端到端', () => {
       'novelcraft_workflow_inspect',
       'novelcraft_workflow_resume',
       'novelcraft_workflow_start_new',
+      'novelcraft_world_create',
+      'novelcraft_world_update',
     ]);
     for (const definition of env.tools) {
       const schema = definition.output.schema as {
