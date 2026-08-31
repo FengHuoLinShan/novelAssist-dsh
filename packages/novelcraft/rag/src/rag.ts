@@ -26,6 +26,13 @@ export interface RagChunk {
   index_version: string;
   embedding_status: (typeof RAG_EMBEDDING_STATUSES)[number];
   embedding_error?: string;
+  /**
+   * 可定位引用(M12-c/N47 §6.12.6「来源重开」的最小读面): 章正文 chunk 给出
+   * chapters/NNN.md 相对路径 + 偏移; 其余 source_type 给资产相对路径(无偏移)。
+   * 由 chunk 字段确定性派生(不改落盘格式)。
+   */
+  open_target?: { path: string; start_offset?: number; end_offset?: number };
+
   /** 嵌入向量(L1 起由嵌入后端填充; 未嵌入时为 undefined)。 */
   vector?: number[];
   /** 生成 vector 所用的嵌入模型名(与 embedding_status 联动)。 */

@@ -20,6 +20,10 @@ import type { Provider } from "@novelcraft/llm-step";
 
 export interface RagSearchResult {
   hits: RagChunk[];
+  /** 召回总数(截断前; M12-c/N47 §6.12.6: total/truncated 让调用方可信判断截断)。 */
+  total?: number;
+  /** topK 截断标记(total > hits.length 时 true)。 */
+  truncated?: boolean;
   ranking: "bm25" | "llm_rerank" | "vector";
   degraded?: string;
 }
@@ -105,26 +109,53 @@ export async function searchRag(
     }
   }
   const recalled = vectorHits ?? rankChunksBm25(index.chunks, query, recall);
+  // N47: total = 召回截断前数量; truncated 由 topK 截断产生(调用方可信判断,
+  // 不再把「8 条结果」误读为「只有 8 条」)。
+  const total = recalled.length;
+  const truncated = total > topK;
+  const totals = { total, truncated }; // N47: truncated 恒为布尔(缺省 false), 调用方免判 undefined
+
+  // N47: open_target 确定性派生(不改落盘): 章正文 → chapters/NNN.md + 偏移;
+  // 其余 source_type → 结构化资产目录约定(无偏移)。坏数据缺 chapter_index 跳过。
+  const withTargets = (chunks: RagChunk[]): RagChunk[] =>
+    chunks.map((c) => {
+      if (c.source_type === "chapter_text" && typeof c.chapter_index === "number") {
+        return {
+          ...c,
+          open_target: {
+            path: `chapters/${String(c.chapter_index).padStart(3, "0")}.md`,
+            ...(c.start_offset !== undefined ? { start_offset: c.start_offset } : {}),
+            ...(c.end_offset !== undefined ? { end_offset: c.end_offset } : {}),
+          },
+        };
+      }
+      if (c.source_type === "outline") return { ...c, open_target: { path: "structure/" } };
+      if (c.source_type === "memory") return { ...c, open_target: { path: "memory/events.jsonl" } };
+      return { ...c, open_target: { path: "world/" } };
+    });
 
   if (opts?.provider !== undefined && recalled.length > 1) {
     try {
       const reranked = await rerankWithProvider(opts.provider, query, recalled);
       return {
-        hits: reranked.slice(0, topK),
+        ...totals,
+        hits: withTargets(reranked.slice(0, topK)),
         ranking: "llm_rerank",
         ...(degradedParts.length > 0 ? { degraded: degradedParts.join(",") } : {}),
       };
     } catch {
       degradedParts.push("rerank_failed");
       return {
-        hits: recalled.slice(0, topK),
+        ...totals,
+        hits: withTargets(recalled.slice(0, topK)),
         ranking: vectorHits !== undefined ? "vector" : "bm25",
         ...(degradedParts.length > 0 ? { degraded: degradedParts.join(",") } : {}),
       };
     }
   }
   return {
-    hits: recalled.slice(0, topK),
+    ...totals,
+    hits: withTargets(recalled.slice(0, topK)),
     ranking: vectorHits !== undefined ? "vector" : "bm25",
     ...(degradedParts.length > 0 ? { degraded: degradedParts.join(",") } : {}),
   };

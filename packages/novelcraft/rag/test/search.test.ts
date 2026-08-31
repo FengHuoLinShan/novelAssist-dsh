@@ -30,6 +30,26 @@ function writeChapter(root: string, n: number, body: string) {
   );
 }
 
+// M12-c/N47: current-source typed result(total/truncated/open_target)。
+describe('searchRag typed result(N47)', () => {
+  it('total/truncated 反映召回截断; 章正文 hit 带 open_target 路径与偏移', async () => {
+    const root = makeRoot();
+    writeChapter(root, 1, '克莱恩推开公寓的门, 走进雾气弥漫的街道。'.repeat(10));
+    writeChapter(root, 2, '第二章: 他在灰雾中看见熟悉的身影。'.repeat(10));
+    syncRagIndex(root);
+    const full = await searchRag(root, '克莱恩 街道', { topK: 10 });
+    expect(full.total).toBeGreaterThanOrEqual(1);
+    expect(full.truncated).toBe(false);
+    const cut = await searchRag(root, '克莱恩 街道', { topK: 1 });
+    if ((cut.total ?? 0) > 1) {
+      expect(cut.truncated).toBe(true);
+      expect(cut.hits).toHaveLength(1);
+    }
+    const ch1 = full.hits.find((h) => h.chapter_index === 1);
+    expect(ch1?.open_target).toMatchObject({ path: 'chapters/001.md' });
+  });
+});
+
 describe("searchRag(L0 BM25)", () => {
   it("索引不存在 → 空 hits, ranking=bm25", async () => {
     const root = makeRoot(); // initVault 后尚无 rag-index.json。

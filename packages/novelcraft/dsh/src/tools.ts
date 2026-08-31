@@ -629,6 +629,8 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         properties: {
           ok: { type: 'boolean', required: true },
           hits: { type: 'array', required: true },
+          total: { type: 'integer', required: true },
+          truncated: { type: 'boolean', required: true },
           ranking: { type: 'string', required: true },
           degraded: { type: 'string', required: true },
           message: { type: 'string', required: true },
@@ -639,13 +641,20 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
           ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
         });
-        // hits 摊平为作者可读字段。
+        // hits 摊平为作者可读字段(N47: 附 open_target 可定位引用)。
         const hits = r.hits.map((c) => ({
           chunk_id: c.chunk_id,
           source_type: c.source_type,
           ...(c.chapter_index !== undefined ? { chapter_index: c.chapter_index } : {}),
           char_count: c.char_count,
           text: c.text,
+          ...(c.open_target !== undefined
+            ? {
+                open_path: c.open_target.path,
+                ...(c.open_target.start_offset !== undefined ? { open_start: c.open_target.start_offset } : {}),
+                ...(c.open_target.end_offset !== undefined ? { open_end: c.open_target.end_offset } : {}),
+              }
+            : {}),
         }));
         const rankingLabel = r.ranking === 'llm_rerank' ? '精排' : r.ranking === 'vector' ? '向量召回' : 'BM25';
         const degradedNote = r.degraded
@@ -654,9 +663,12 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
             : '; 嵌入失败, 已回退文本检索'
           : '';
         const message = hits.length > 0
-          ? `命中 ${hits.length} 条(${rankingLabel}${degradedNote})。`
+          ? `命中 ${hits.length}/${r.total ?? hits.length} 条(${rankingLabel}${degradedNote}${r.truncated ? '; 结果截断, 可提高 top_k 或缩小查询' : ''})。`
           : '无命中或索引为空, 可先文本入库/采用资产后重试。';
-        return { ok: true, hits, ranking: r.ranking, degraded: r.degraded ?? '', message };
+        return {
+          ok: true, hits, total: r.total ?? hits.length, truncated: r.truncated === true,
+          ranking: r.ranking, degraded: r.degraded ?? '', message,
+        };
       },
     }),
 
