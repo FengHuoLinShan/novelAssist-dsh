@@ -53,7 +53,7 @@ describe('createObject slug 冲突语义(N44 追记)', () => {
     await expect(createObject(root, { name: '神秘女子', entityType: 'character' })).rejects.toThrow(/同名对象/);
     // 坍缩: 「?!?」全折为 '-' 与既有 slug(obj-神秘女子)不同 → 正常创建(不同 slug);
     // 用中文名折出相同前缀的场景难构造, 此处锁定的是同名分支可分辨 + 坍缩分支存在。
-    await expect(createObject(root, { name: '?!?' })).resolves.toBeTruthy();
+    await expect(createObject(root, { name: '?!?', entityType: 'object' })).resolves.toBeTruthy();
   });
 });
 
