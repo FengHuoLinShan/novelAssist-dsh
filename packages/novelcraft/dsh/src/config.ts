@@ -38,6 +38,8 @@ export interface ToolsConfig {
   mapAtlas?: boolean;
   /** 长任务恢复工具组(4 个, novelcraft_workflow_ 前缀; M10-B1/N40, 默认开) */
   workflow?: boolean;
+  /** 书库生命周期工具组(3 个, novelcraft_book_ 前缀; M11/N42, 默认开) */
+  book?: boolean;
 }
 
 export interface Config {

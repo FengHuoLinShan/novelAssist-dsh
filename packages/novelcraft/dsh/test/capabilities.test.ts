@@ -15,6 +15,7 @@ function fakeService(): NovelCraftService {
     'worldCreateGuarded', 'worldUpdateGuarded', 'reviewMapAtlasGuarded', 'deepImport',
     'saveChapterGuarded', 'restoreChapterGuarded',
     'workflowInspect', 'workflowResumeGuarded', 'workflowStartNewGuarded', 'workflowAbandonGuarded',
+    'bookList', 'bookCreateGuarded', 'bookOpenGuarded',
   ];
   for (const name of methods) service[name] = vi.fn(function (this: Record<string, unknown>) { return this.marker; });
   // Existing raw direct annotation and raw facade members intentionally exist on service but must not be routed.
@@ -72,8 +73,8 @@ describe('createNovelCraftCapabilities', () => {
     const capabilities = createNovelCraftCapabilities(fakeService());
     expect(Object.keys(capabilities.propose.authorEdit)).toEqual(['annotations']);
     expect(Object.keys(capabilities.adoptGuarded).sort()).toEqual([
-      'deepImport', 'restoreChapter', 'reviewMapAtlas', 'saveChapter', 'storeAdopt', 'workflowAbandon',
-      'workflowResume', 'workflowStartNew', 'worldCreate', 'worldUpdate',
+      'bookCreate', 'bookOpen', 'deepImport', 'restoreChapter', 'reviewMapAtlas', 'saveChapter', 'storeAdopt',
+      'workflowAbandon', 'workflowResume', 'workflowStartNew', 'worldCreate', 'worldUpdate',
     ]);
   });
 });

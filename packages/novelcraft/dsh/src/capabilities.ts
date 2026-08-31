@@ -23,6 +23,8 @@ const READ_METHODS = [
   'receiptLimit',
   // M10-B1(N40): 长任务恢复只读面(durable run 枚举 + checkpoint 概要)。
   'workflowInspect',
+  // M11(N42): 书库只读枚举。
+  'bookList',
 ] as const satisfies readonly MethodName[];
 
 const PROPOSE_METHODS = [
@@ -58,6 +60,8 @@ const ADOPT_PAIRS = [
   // M10-B1(N40): 长任务恢复动作面(§6.9/§6.6)。注: workflowAbandon 清理的是
   // .assistant 机器状态(非 canonical adopt), 归 guarded 因其破坏性删除 + git 写面
   // (ADR-0024 三分法的保守扩展, N40)。
+  ['bookCreate', 'bookCreateGuarded'],
+  ['bookOpen', 'bookOpenGuarded'],
   ['workflowResume', 'workflowResumeGuarded'],
   ['workflowStartNew', 'workflowStartNewGuarded'],
   ['workflowAbandon', 'workflowAbandonGuarded'],

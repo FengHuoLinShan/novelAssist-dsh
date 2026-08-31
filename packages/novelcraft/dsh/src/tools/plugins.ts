@@ -7,7 +7,8 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from '../ctx.js';
 import type { NovelCraftService } from '../service.js';
-import { buildTools, isMapAtlasTool, isWorkflowTool } from '../tools.js';
+import { buildBookTools } from './book.js';
+import { buildTools, isBookTool, isMapAtlasTool, isWorkflowTool } from '../tools.js';
 import { buildMapAtlasTools } from './map-atlas.js';
 import { buildWorkflowTools } from './workflow.js';
 
@@ -43,7 +44,7 @@ export class NovelcraftWritingToolsPlugin {
 
   constructor(ctx: Context) {
     const service = resolveService(ctx);
-    const definitions = buildTools(ctx, service).filter((tool) => !isMapAtlasTool(tool.name) && !isWorkflowTool(tool.name));
+    const definitions = buildTools(ctx, service).filter((tool) => !isMapAtlasTool(tool.name) && !isWorkflowTool(tool.name) && !isBookTool(tool.name));
     const disposers = registerToolList(ctx, definitions);
     ctx.effect(() => () => {
       for (const dispose of disposers) {
@@ -77,6 +78,22 @@ export class NovelcraftWorkflowToolsPlugin {
   constructor(ctx: Context) {
     const service = resolveService(ctx);
     const disposers = registerToolList(ctx, buildWorkflowTools(ctx, service));
+    ctx.effect(() => () => {
+      for (const dispose of disposers) {
+        try { dispose(); } catch { /* 卸载尽力而为 */ }
+      }
+    });
+  }
+}
+
+/** 书库生命周期工具组(3 个: novelcraft_book_ 前缀, M11/N42)。 */
+export class NovelcraftBookToolsPlugin {
+  static name = 'novelcraft-book-tools';
+  static inject = ['novelcraft'] as const;
+
+  constructor(ctx: Context) {
+    const service = resolveService(ctx);
+    const disposers = registerToolList(ctx, buildBookTools(ctx, service));
     ctx.effect(() => () => {
       for (const dispose of disposers) {
         try { dispose(); } catch { /* 卸载尽力而为 */ }

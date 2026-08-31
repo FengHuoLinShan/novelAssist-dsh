@@ -18,6 +18,7 @@ import { createNovelcraftClientFace, type NovelcraftUiFace } from './client-face
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
 import * as workflowFace from './workflow-face.js';
+import * as bookFace from './book-face.js';
 import { DshRadarJobHost, RadarScheduler } from './jobs/radar.js';
 import { ActiveVaultWatchScheduler, TransactionWatchStatePersistence } from './jobs/watch-state.js';
 import { NovelcraftNodeRuntime } from './lifecycle/node-runtime.js';
@@ -390,6 +391,28 @@ export class NovelCraftService extends Service {
   /** 只读枚举 durable workflow runs + checkpoint 概要(M10-B1/N40, read 声明表)。 */
   workflowInspect(root: string): ReturnType<typeof workflowFace.workflowInspect> {
     return workflowFace.workflowInspect(root);
+  }
+
+  /** 只读枚举书库全部书 + 当前绑定标记(M11/N42, read 声明表)。 */
+  bookList(currentRoot?: string): ReturnType<typeof bookFace.bookList> {
+    return bookFace.bookList(this.config, currentRoot);
+  }
+
+  /** 创建新书(审批后, ensureVault 幂等初始化; M11/N42)。 */
+  bookCreateGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    book: string,
+  ): ReturnType<typeof bookFace.bookCreateGuarded> {
+    return bookFace.bookCreateGuarded(this, agent, book);
+  }
+
+  /** 切换会话绑定到既有书(审批后, binder 原子改绑; M11/N42)。 */
+  async bookOpenGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    sessionId: string,
+    book: string,
+  ): Promise<ReturnType<typeof bookFace.bookOpenGuarded>> {
+    return bookFace.bookOpenGuarded(this, agent, sessionId, book);
   }
 
   /** 恢复 deep-import run: checkpoint scope 续跑(授权只请求剩余, N33 P2 既有语义)。 */

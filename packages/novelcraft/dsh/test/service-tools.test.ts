@@ -198,6 +198,9 @@ describe('NovelCraftService 端到端', () => {
     expect(Object.keys(env.service.capabilities).sort()).toEqual(['adoptGuarded', 'propose', 'read']);
     expect('facades' in env.service).toBe(false);
     expect(env.tools.map((t) => t.name).sort()).toEqual([
+      'novelcraft_book_create',
+      'novelcraft_book_list',
+      'novelcraft_book_open',
       'novelcraft_chapter_review',
       'novelcraft_chapter_version',
       'novelcraft_deep_import',

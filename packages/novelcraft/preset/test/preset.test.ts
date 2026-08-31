@@ -63,7 +63,7 @@ describe('NovelCraft DSH 原生 Skill profile', () => {
 // 工具名漂移校验: skill/preset 的 prose 会引用 agent 工具名; 工具面演进
 // (如 19→21)时这些引用容易腐烂。preset 不依赖 @novelcraft/dsh(发布层零
 // DSH 运行时依赖), 故以内联清单比对; 清单与 dsh/src/tools.ts(21 工具,
-// 含 tools/writing.ts、tools/map-atlas.ts 与 tools/workflow.ts)同步, 由 dsh 侧 25 工具
+// 含 tools/writing.ts、tools/map-atlas.ts 与 tools/workflow.ts)同步, 由 dsh 侧 28 工具
 // 数量/名字断言间接约束不腐烂。
 // ---------------------------------------------------------------------------
 const TOOL_NAMES = [
@@ -77,6 +77,9 @@ const TOOL_NAMES = [
   'novelcraft_workflow_resume',
   'novelcraft_workflow_start_new',
   'novelcraft_workflow_abandon',
+  'novelcraft_book_list',
+  'novelcraft_book_create',
+  'novelcraft_book_open',
   'novelcraft_propose_next_chapter',
   'novelcraft_health_scan',
   'novelcraft_generate_next_chapter',
@@ -101,9 +104,9 @@ const skillDirs = (): string[] =>
     .sort();
 
 describe('Skill/preset 工具名漂移校验', () => {
-  it('内联 25 工具名清单自身完整(25 个无重复, 地图册组 6 个 + workflow 组 4 个)', () => {
-    expect(TOOL_NAMES.length).toBe(25);
-    expect(new Set(TOOL_NAMES).size).toBe(25);
+  it('内联 28 工具名清单自身完整(28 个无重复, 地图册组 6 + workflow 组 4 + book 组 3)', () => {
+    expect(TOOL_NAMES.length).toBe(28);
+    expect(new Set(TOOL_NAMES).size).toBe(28);
     expect(TOOL_NAMES.filter((n) => n.startsWith('novelcraft_map_atlas_')).length).toBe(6);
     expect(TOOL_NAMES.filter((n) => n.startsWith('novelcraft_workflow_')).length).toBe(4);
   });
@@ -120,7 +123,7 @@ describe('Skill/preset 工具名漂移校验', () => {
     }
   });
 
-  it('skill 与 preset 引用的 novelcraft_* 工具名都在 25 工具面内(无退役/拼写漂移)', () => {
+  it('skill 与 preset 引用的 novelcraft_* 工具名都在 28 工具面内(无退役/拼写漂移)', () => {
     const sources: Array<{ label: string; text: string }> = skillDirs().map((dir) => ({
       label: `skills/${dir}/SKILL.md`,
       text: readFileSync(path.join(skillsRoot, dir, 'SKILL.md'), 'utf8'),

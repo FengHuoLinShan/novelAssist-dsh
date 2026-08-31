@@ -70,9 +70,9 @@ const call = async (env: TestEnv, name: string, args: Record<string, unknown>) =
   (await tool(env, name).execute(args as never, env.exec as never)) as Record<string, unknown>;
 
 describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
-  it('注册: 共 25 个工具且 novelcraft_rag_embed 使用 closed success schema', async () => {
+  it('注册: 共 28 个工具且 novelcraft_rag_embed 使用 closed success schema', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(25); // 版本 + 审查闭环 + workflow 恢复面；信号仍只由确定性 producer 产生
+    expect(env.tools.length).toBe(28); // 版本 + 审查闭环 + workflow 恢复面 + book 书库；信号仍只由确定性 producer 产生
     const t = tool(env, 'novelcraft_rag_embed');
     const schema = t.output?.schema as { type: string; additionalProperties?: boolean };
     expect(schema.type).toBe('object');

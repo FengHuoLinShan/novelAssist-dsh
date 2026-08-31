@@ -330,17 +330,20 @@ const MATRIX: readonly MatrixEntry[] = [
   { name: 'novelcraft_workflow_resume', args: (root) => ({ root, workflow_id: 'w' }) },
   { name: 'novelcraft_workflow_start_new', args: (root) => ({ root, start_chapter: 1, end_chapter: 1 }) },
   { name: 'novelcraft_workflow_abandon', args: (root) => ({ root, kind: 'deep-import', workflow_id: 'w' }) },
+  { name: 'novelcraft_book_list', args: () => ({}) },
+  { name: 'novelcraft_book_create', args: () => ({ book: '新书' }) },
+  { name: 'novelcraft_book_open', args: () => ({ book: '某书' }) },
 ];
 
-describe('N34 全量工具矩阵(25 工具逐一 fail-closed)', () => {
+describe('N34 全量工具矩阵(28 工具逐一 fail-closed)', () => {
   it('矩阵覆盖全部注册工具(数量与名字一一对应, 新工具不得逃逸矩阵)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(25);
+    expect(env.tools.length).toBe(28);
     expect(MATRIX.map((e) => e.name).sort()).toEqual(env.tools.map((t) => t.name).sort());
     env.cleanup();
   });
 
-  it('无 agent → 25 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
+  it('无 agent → 28 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
     const env = await setup();
     const beforeA = snapshot(env.rootA);
     for (const entry of MATRIX) {
@@ -356,9 +359,11 @@ describe('N34 全量工具矩阵(25 工具逐一 fail-closed)', () => {
     env.cleanup();
   });
 
-  it('session 未绑定(有 id 无绑定)→ 25 工具全部拒绝', async () => {
+  it('session 未绑定(有 id 无绑定)→ 25 工具拒绝; book 组 3 工具例外(发现/创建/首绑入口, M11/N42)', async () => {
     const env = await setup();
     for (const entry of MATRIX) {
+      // book 组是「未绑定也可用」的入口(发现/创建第一本书/首次绑定), 不适用本例。
+      if (entry.name.startsWith('novelcraft_book_')) continue;
       const t = tool(env, entry.name);
       await expect(
         t.execute(entry.args(env.rootA), execOf(entry.name, agentUnbound)),
@@ -369,12 +374,12 @@ describe('N34 全量工具矩阵(25 工具逐一 fail-closed)', () => {
     env.cleanup();
   });
 
-  it('绑定 A 传 B root → 带 root 参数的 20 工具全部拒绝, B 零读写', async () => {
+  it('绑定 A 传 B root → 带 root 参数的工具全部拒绝, B 零读写', async () => {
     const env = await setup();
     const before = snapshot(env.rootB);
     for (const entry of MATRIX) {
-      // llm_step 是唯一 bindRoot='session' 的工具(无 root 参数), 不适用本例。
-      if (entry.name === 'novelcraft_llm_step') continue;
+      // llm_step(bindRoot='session')与 book/workflow 组外的无 root 参数工具不适用本例。
+      if (entry.name === 'novelcraft_llm_step' || entry.name.startsWith('novelcraft_book_')) continue;
       const t = tool(env, entry.name);
       await expect(
         t.execute(entry.args(env.rootB), execOf(entry.name, agentA)),
