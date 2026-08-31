@@ -162,9 +162,18 @@
     全修(N41): rename AND 语义、门禁位置、单测矩阵。
   - 后置独立增量(N40/N41 记录): B3 deep-import job 托管(ADR-0023)+B4 client 工作流卡;
     RAG change plan→fresh 零写; signal CAS 强化; 其余裸 commit 点门禁。
-- [ ] **M11 多书生命周期**(切片级): 书库 create/list/open/switch 公开化(capability 归位 +
-  工具 + client wire)、删 workspacePath fallback、book.yml/policy.yml 只公开有消费者字段;
-  回收站不做(§6.13.6)。
+- [x] **M11 多书生命周期**(2026-08-31 完成, N42 + review 修复): book 工具组 3(list→read;
+  create/open→adoptGuarded) + bindRoot:'none' 第三模式(未绑定可用的首绑入口) + client
+  workspacePath 旁路删除 + 守望生命周期驱动(binder deactivatedRoot + NodeRuntime 透传)。
+- [x] **M12 生成域与证据链接线**(2026-09-01 完成, N43-N47):
+  - M12-a: world_create/world_update 工具(N31 能力入口化, entity_type 白名单)。
+  - M12-b: outline preview/apply 拆分(core preview.ts 暂存 proposals 不写资产 → apply
+    审批后白名单透传 canonical 写) + 9 工具(outline×4 + world 生成中心×5, §6.17/6.18.2);
+    kind enums(object 层收紧 + imports 归一化缝合 deep-import 链) + slug 坍缩区分。
+  - M12-c: context 编译器进写作链(N45, Tier P0-P4 预算编译, review P0 空壳输入修复);
+    memory 读面接线(N46, dossier 按故事顺序投影; 写点按 §6.18.4 reserved 裁定回撤);
+    RAG typed result(N47, total/truncated/recall_capped + open_target)。
+  - 39 工具/16 包全绿; 各切片独立 review + 修复(P0×2/P1 若干全闭, 追记 N43-N47)。
 - [ ] **M12 生成域与证据链接线**(切片级, 依赖 M10-A): outline/world 生成中心工具组
   (preview→propose, apply→adoptGuarded)、世界书 draft→publish、memory/context 接线、
   RAG current-source typed result + open target、穿插体验迭代(交接 §7 条目 10)。
