@@ -2,7 +2,9 @@
   "name": "@novelcraft/writing",
   "version": "0.0.1",
   "private": true,
-  "engines": { "node": ">=24.11.0" },
+  "engines": {
+    "node": ">=24.11.0"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,9 +14,10 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@novelcraft/vault": "*",
-    "@novelcraft/store": "*",
+    "@novelcraft/context": "*",
     "@novelcraft/llm-step": "*",
-    "@novelcraft/outline": "*"
+    "@novelcraft/outline": "*",
+    "@novelcraft/store": "*",
+    "@novelcraft/vault": "*"
   }
 }

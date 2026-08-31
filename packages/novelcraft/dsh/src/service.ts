@@ -11,7 +11,6 @@ import * as rag from '@novelcraft/rag';
 import * as store from '@novelcraft/store';
 import { ensureVaultGitignore } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
-import * as memory from '@novelcraft/memory';
 import * as writing from '@novelcraft/writing';
 import { ApprovalGate } from './approval/gate.js';
 import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './capabilities.js';
@@ -310,30 +309,7 @@ export class NovelCraftService extends Service {
         action: '保存章节正文',
         summary: prepared.summary,
         items: [`chapter:${prepared.chapterIndex}`],
-      }, async () => {
-        const result = await writing.executePreparedChapterWrite(prepared);
-        // M12-c/N46: 写链事件 append(§6.18.4 镜像「发布快照已有事件」的最小版)——
-        // 保存成功后记录 manual_correction 型事件(幂等键 chapter+sequence=0;
-        // snapshot_after 为保存结果摘要, 不含正文)。append 失败不阻断保存(容错降级,
-        // 事件账本是派生真相可重建)。
-        try {
-          memory.appendEvent(root, {
-            chapter_index: prepared.chapterIndex,
-            sequence: 0,
-            event_type: 'manual_correction',
-            source: 'manual_edit',
-            snapshot_after: {
-              saved: true,
-              content_hash: result.contentHash,
-              commit: result.commit,
-              skipped: result.skipped,
-            },
-          });
-        } catch {
-          // 容错: 账本写失败不回滚已保存正文(文件是唯一真相, 账本可重建)
-        }
-        return result;
-      }));
+      }, () => writing.executePreparedChapterWrite(prepared)));
   }
 
   /** 旧 blob 恢复为新章节版本；审批前冻结当前 hash/HEAD/writeSet。 */

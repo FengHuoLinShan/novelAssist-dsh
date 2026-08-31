@@ -87,6 +87,13 @@ describe('chapterDossier memory 投影(N46)', () => {
     expect(d1.memory.events_through_chapter).toBe(1);
     expect(d1.memory.last_event_at).toBeTruthy();
   });
+
+  it('N46 review: 账本由显式 appendEvent 驱动 —— 保存/读取面不自动合成事件(manual_correction reserved, §6.18.4)', () => {
+    const root = makeRoot();
+    // 反复 dossier 读取不产生事件
+    chapterDossier(root, 1); chapterDossier(root, 1);
+    expect(chapterDossier(root, 1).memory.events_total).toBe(0);
+  });
 });
 
 describe("chapterDossier(章节档案, §17.5.1)", () => {
