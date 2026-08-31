@@ -142,3 +142,27 @@
   唯一收敛在 @novelcraft/dsh;
 - 旧引擎(novelAssist-dsh 侧)已退役, 归档 tag `old-engine`; ai-writing-assist main 的旧引擎保留 + 旧数据不迁移(D15); 新工作一律在 novelAssist-dsh 的 main 提交, push origin;
   **禁止反向改动父仓库 ai-writing-assist(含其 main, 用户指示, 2026-08-14)** —— 只读。
+
+## M10 起后续批次(2026-08-31 制定, 权威计划见 `后续开发计划.md`)
+
+排序依据台账 §6.24(按用户效果); 所有任务受 `后续开发计划.md` §0 插件边界纪律统领
+(core 只加法 / capability 三分归位 / 新工具走工具组插件 + 同步四处 / 模型可见⟺可回放)。
+
+- [ ] **M10 P0 收口轮**(任务级, 三 Track 可调序):
+  - Track A LLM 内容步 runtime 收口(§6.23): A1 宿主 response_format 能力探测(闸门,
+    先裁定注入模式)→ A2 promptBody 加法(core 新文件, 旧路径回退)→ A3 schema 首轮注入
+    +journal 断言 → A4 llm_step 回执去截断 → A5 exact-route readiness fail-closed →
+    A6 恢复指纹回执。
+  - Track B 长任务作者恢复面(§6.9/§6.6): B1 `tools/workflow.ts` 新工具组
+    (inspect→read; resume/abandon/start_new→adoptGuarded)→ B2 completed replay 显式化
+    → B3 deep-import 转 job 托管(ADR-0023)→ B4 service.ui 工作流卡 → B5 同步四处。
+  - Track C 写面收敛: C1 generate/upload 接 N32 事务 → C2 ingest writeSet+signal CAS →
+    C3 index cache 删写 + RAG change plan→fresh 零写。
+- [ ] **M11 多书生命周期**(切片级): 书库 create/list/open/switch 公开化(capability 归位 +
+  工具 + client wire)、删 workspacePath fallback、book.yml/policy.yml 只公开有消费者字段;
+  回收站不做(§6.13.6)。
+- [ ] **M12 生成域与证据链接线**(切片级, 依赖 M10-A): outline/world 生成中心工具组
+  (preview→propose, apply→adoptGuarded)、世界书 draft→publish、memory/context 接线、
+  RAG current-source typed result + open target、穿插体验迭代(交接 §7 条目 10)。
+- 明确不做: RP(D23)/对象图片(D19)/带批注 .docx(D20)/站内生图(ADR-0020)/多用户云同步/
+  统一 timeline service(§6.18.6)/回收站(§6.13.6)。
