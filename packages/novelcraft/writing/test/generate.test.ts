@@ -1,5 +1,5 @@
 // writing · 续写提案第二阶段行为契约(§17.5.3; writing_generate spec)。
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -99,6 +99,33 @@ describe("generateNextChapter(选定方向 → 正文候选)", () => {
 // 已证实候选覆盖修复: generateNextChapter / applyRevision 都写 chapters/pending/{NNN}.md,
 // 两侧写前目标已存在 → 抛清楚 CONFLICT; 不改旧文件、不新增 commit。双向覆盖测试:
 describe("pending 候选覆盖保护(双向)", () => {
+  it("M10-C1/N41 R17 门禁: 预存 staged 外部内容 → LLM 前 DIRTY_WORKSPACE(零 provider 零写)", async () => {
+    const root = makeRoot();
+    // 预存 staged 范围外文件(模拟崩溃事务残留/手动 stage)。
+    writeFileSync(join(root, "evil.md"), "e\n", "utf8");
+    const { gitAdd } = await import("@novelcraft/store");
+    gitAdd(root, ["evil.md"]);
+    const provider = new MockProvider({ responses: [{ text: "不应被调用" }] });
+    await expect(generateNextChapter(provider, root, 1, { proposalTitle: "t" }))
+      .rejects.toMatchObject({ code: "DIRTY_WORKSPACE" });
+    expect(provider.calls).toHaveLength(0); // LLM 前置拒绝, 零 provider 成本
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false); // 零写
+  });
+
+  it("M10-C1/N41 幂等重试: 上次残留的目标 staged 在豁免集内 → 放行", async () => {
+    const root = makeRoot();
+    // 上次 generate 在 gitAdd 后、commit 前崩溃: 目标候选已 staged。
+    const pending = join(root, "chapters", "pending");
+    mkdirSync(pending, { recursive: true });
+    writeFileSync(join(pending, "002.md"), "---\nchapter_index: 2\nstatus: candidate\n---\n旧候选");
+    const { gitAdd } = await import("@novelcraft/store");
+    gitAdd(root, ["chapters/pending/002.md"]);
+    const provider = new MockProvider({ responses: [{ text: "新候选正文" }] });
+    // 目标候选已存在(残留) → CONFLICT 先于门禁(wx 覆盖保护语义不变)。
+    await expect(generateNextChapter(provider, root, 1, { proposalTitle: "t" }))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
   it("generate 重跑 → 目标候选已存在 → CONFLICT, 不改旧文件不新增 commit", async () => {
     const root = makeRoot();
     const first = await generateNextChapter(new MockProvider({ responses: [{ text: "第二章正文候选" }] }), root, 1, { proposalTitle: "t" });

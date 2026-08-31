@@ -494,11 +494,9 @@ export class NovelCraftService extends Service {
 
   /** 便捷: 重建派生索引并把结果写入 domain 缓存(文件仍是唯一真相)。 */
   refreshIndex(root: string): store.VaultIndex {
-    const index = store.rebuildIndex(root);
-    void this.cache.putIndex(root, index.version, index).catch(() => {
-      // 缓存是派生数据; 失败不影响索引读取面(下次重建覆盖)。
-    });
-    return index;
+    // M10-C3: 删除无 consumer 的 index cache 写(putIndex 全仓零读取方, 死写)——
+    // 索引是纯派生数据, 文件是唯一真相, 每次全量重建返回; KV 不再囤积无人读的副本。
+    return store.rebuildIndex(root);
   }
 
   /** 便捷: 收件箱视图(新鲜信号, 风险前置)。 */

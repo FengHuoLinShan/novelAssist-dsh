@@ -6,7 +6,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
-import { gitAdd, gitCommit, relOf, StoreError } from "@novelcraft/store";
+import { gitAdd, gitCommit, hasStagedOutside, relOf, StoreError } from "@novelcraft/store";
 import { chapterBody } from "./review.js";
 import { compileProposalContext } from "./propose.js";
 import { contentHashOf } from "./ingest.js";
@@ -48,6 +48,14 @@ export async function generateNextChapter(
     );
   }
   const { contentHash } = chapterBody(root, chapterIndex);
+  // R17 门禁·前置(M10-C1/Track C review P1-2): LLM 调用之前拒绝 —— 预存 staged 场景
+  // 不白烧 provider 预算; commit 前近点复检防 LLM 等待窗口内新 stage(imports 双门禁形态)。
+  if (hasStagedOutside(root, [relOf(root, candidateFile)])) {
+    throw new StoreError(
+      "DIRTY_WORKSPACE",
+      "工作区存在范围外预存 staged, 拒绝生成候选(先提交或清理暂存区后重试; R17/M10-C1)",
+    );
+  }
   const direction = `【选定方向】${opts.proposalTitle}${opts.premise ? `: ${opts.premise}` : ""}`;
   const input = `${direction}\n\n${compileProposalContext(root, chapterIndex)}`;
 
@@ -88,6 +96,14 @@ export async function generateNextChapter(
   // 精确暂存(R17 范围语义): 只 stage 本次操作新写出的候选文件 —— 完整精确的
   // 相对 POSIX pathspec(relOf 保证 '/' 分隔), 绝不使用 -A; 用户无关的
   // 暂存/未暂存/未跟踪改动原样保留, 不被动卷入本 commit。
+  // R17 门禁(M10-C1/N41): 只挡 index 预存 staged(裸 commit 实际卷入面);
+  // untracked/unstaged 不会被精确 pathspec 卷入, 不拒绝(作者外部编辑正常态)。
+  if (hasStagedOutside(root, [relOf(root, candidateFile)])) {
+    throw new StoreError(
+      "DIRTY_WORKSPACE",
+      "工作区存在范围外未提交改动(含预存 staged), 拒绝生成候选提交以免卷入外部内容(R17/M10-C1)",
+    );
+  }
   gitAdd(root, [relOf(root, candidateFile)]);
   gitCommit(root, `generate candidate ch${next}`);
   return { ok: true, file: candidateFile };

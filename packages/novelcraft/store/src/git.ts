@@ -125,6 +125,27 @@ function isAllowedPath(p: string, allowed: readonly string[]): boolean {
 }
 
 /**
+ * index 中是否存在「不属于允许范围」的**预存 staged** 条目(M10-C1/N41 加法)。
+ * 与 hasUncommittedOutside 的区别: 只看 porcelain 第一列(index 列)非空且非 '?'
+ * —— 这是裸 `git commit` 会实际卷入的唯一部分; untracked/unstaged 不会被精确
+ * pathspec 的 git add 卷入, 不因此拒绝(作者外部编辑器的正常未提交改动不受影响)。
+ * 允许项支持 `:(literal)` pathspec 前缀(与业务写面的精确 pathspec 同形态, 剥离比较)。
+ */
+export function hasStagedOutside(repoDir: string, allowed: readonly string[]): boolean {
+  return gitStatusEntries(repoDir).some((e) => {
+    const indexCol = e.status[0];
+    if (indexCol === ' ' || indexCol === '?') return false; // 非 staged
+    const strip = (p: string) => (p.startsWith(':(literal)') ? p.slice(':(literal)'.length) : p);
+    // rename/copy 双端都落在允许范围才视为干净(与 hasUncommittedOutside 同 AND 语义,
+    // 单端豁免不得放行 —— 否则范围外源文件的删除会随 commit 卷入, Track C review P1-1)。
+    const inAllowed =
+      isAllowedPath(strip(e.path), allowed.map(strip))
+      && (e.fromPath === undefined ? true : isAllowedPath(strip(e.fromPath), allowed.map(strip)));
+    return !inAllowed;
+  });
+}
+
+/**
  * 工作区是否存在「不属于允许前缀范围」的未提交/未暂存改动(R17 范围语义:
  * store-rules.md "有未暂存/未提交变更(且不属于本次操作范围)→ 拒绝")。
  * 基于 gitStatusEntries(-z 结构化解析): staged/unstaged/untracked/rename 双路径

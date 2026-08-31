@@ -430,15 +430,14 @@ describe("写面 gitAdd 精确 pathspec(绝不 -A; 含删除; 保留无关 stage
     ]);
   });
 
-  it("writeAtlasRun: 只 stage run 文件; 无关 unstaged 不进 commit; 预暂存无关项不被 gitAdd 触碰", () => {
+  it("writeAtlasRun: 只 stage run 文件; 无关 unstaged 不进 commit 且不被 -A 扫入(M10-C1 后预暂存走拒绝专测)", () => {
     const root = makeRoot();
     const p = paths(root);
     // 无关 unstaged(untracked)。
     writeFileSync(join(root, "stray.txt"), "stray\n", "utf8");
-    // 无关 pre-staged(gitAdd 不得改写其索引状态; 其随 commit 走是全索引 gitCommit 的既有契约)。
-    const preStaged = p.world.objectFile("pre-staged");
-    writeFileSync(preStaged, "s\n", "utf8");
-    gitAdd(root, [preStaged]);
+    // 无关 pre-staged: M10-C1/N41 起为 fail-closed 拒绝面(裸 git commit 会把 index
+    // 预存 staged 一起提交 —— 旧「随 commit 走是既有契约」被判定为缺陷, 不再容忍);
+    // 本用例改为: 只留无关 untracked(不应触发拒绝), staged 拒绝行为由专测锁定。
 
     const run: AtlasRun = {
       schema_version: 1,
@@ -461,9 +460,37 @@ describe("写面 gitAdd 精确 pathspec(绝不 -A; 含删除; 保留无关 stage
 
     const head = lastCommitFiles(root);
     expect(head).toContain(relative(root, p.assistant.atlas.runFile("r1")));
-    expect(head).toContain(relative(root, preStaged)); // 预暂存项既存契约, 非本次 gitAdd 引入
     expect(head).not.toContain("stray.txt"); // 无关 unstaged 未被 -A 扫入
     expect(dirty(root)).toEqual(["?? stray.txt"]); // 无关 untracked 原样保留在工作区
+  });
+
+  it("writeAtlasRun: 预存 staged 外部内容 → R17 门禁拒绝(M10-C1/N41), 零提交且预存 staged 原样留 index", () => {
+    const root = makeRoot();
+    const p = paths(root);
+    const preStaged = p.world.objectFile("pre-staged");
+    writeFileSync(preStaged, "s\n", "utf8");
+    gitAdd(root, [preStaged]);
+    const run: AtlasRun = {
+      schema_version: 1,
+      id: "r2",
+      run_kind: "initial",
+      status: "planning",
+      options: { style_note: "", include_working_drafts: false, include_interiors: false, full_rebuild: false },
+      context_hash: "",
+      source_manifest: [],
+      spatial_evidence: {},
+      atlas_plan: { style_brief: "", nodes: [] },
+      planned_page_count: 0,
+      checkpoint: "spatial:2",
+      error_code: null,
+      error_message: null,
+      journal: [],
+      created_at: "2026-08-15T00:00:00.000Z",
+    };
+    expect(() => writeAtlasRun(root, run)).toThrow(/范围外未提交改动|R17/);
+    // 预存 staged 原样留在 index, run 文件未提交(零触碰)
+    expect(dirty(root).some((d) => d.includes("pre-staged"))).toBe(true);
+    expect(lastCommitFiles(root)).not.toContain(".assistant/atlas/runs");
   });
 
   it("writeAtlasCandidates: 单 commit 只含全部候选文件; 无关 unstaged 不进", () => {

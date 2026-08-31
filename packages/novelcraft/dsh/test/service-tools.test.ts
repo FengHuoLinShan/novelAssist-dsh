@@ -469,13 +469,14 @@ describe('NovelCraftService 端到端', () => {
     env.cleanup();
   });
 
-  it('索引: 文件 → rebuildIndex → domain 缓存(文件唯一真相)', async () => {
+  it('索引: 文件 → rebuildIndex 全量重建返回(M10-C3: 不再写无 consumer 的 domain 缓存)', async () => {
     const env = await setup();
     writePendingObject(env);
     const t = tool(env, 'novelcraft_store_index');
     const out = await t.execute({ root: env.root }, { ...env.exec, name: 'novelcraft_store_index' });
     expect(out).toMatchObject({ objects: 1, aliases: 0, chapters: 0 });
-    expect(env.service.cache.getIndex(env.root)).toMatchObject({ indexVersion: 1 });
+    // 死写已删(putIndex 全仓零读取方): 重建后 KV 无 index 记录, 文件是唯一真相。
+    expect(env.service.cache.getIndex(env.root)).toBeUndefined();
     env.cleanup();
   });
 

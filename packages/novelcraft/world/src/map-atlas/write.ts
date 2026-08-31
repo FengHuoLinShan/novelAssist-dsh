@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ensureVaultGitignore, guardPath, paths } from '@novelcraft/vault';
-import { gitAdd, gitCommit, serializeFrontmatter } from '@novelcraft/store';
+import { gitAdd, gitCommit, hasStagedOutside, serializeFrontmatter } from '@novelcraft/store';
 import type { AtlasNode, AtlasPage, AtlasRun } from './types.js';
 
 /** 候选页 content_hash(稳定字段确定性 sha256; adopt CAS/标注更新用; Phase 3/4 共享)。 */
@@ -54,13 +54,29 @@ function relPosixPathspec(root: string, abs: string): string {
   return `:(literal)${rel}`;
 }
 
+
+/**
+ * R17 洁净门禁(M10-C1): gitAdd/gitCommit 前确认范围外无未提交改动 —— 裸 git commit
+ * 会把 index 里预存的 staged 外部文件一起提交(imports 既有纪律, Track C 收口到全部
+ * 写面)。只挡 index 预存 staged(N41: untracked/unstaged 不被精确 pathspec 卷入,
+ * 作者外部编辑正常态不拒绝)。exempt = 本次操作将要 stage 的 pathspec 集。
+ */
+function assertCleanOutside(root: string, exempt: readonly string[]): void {
+  if (hasStagedOutside(root, exempt)) {
+    throw new Error(
+      'atlas: 工作区存在范围外未提交改动(含预存 staged), 拒绝提交以免卷入外部内容(R17/M10-C1)',
+    );
+  }
+}
+
 /** guardPath 校验 + 写文本 + git add/commit(单次原子提交)。 */
 function writeCommitted(root: string, absFile: string, content: string, message: string): void {
   const p = guardPath(root, absFile); // 防路径穿越(R9)。
   mkdirSync(path.dirname(p), { recursive: true });
   writeFileSync(p, content, 'utf8');
   // N35/ADR-0021 §6: 只 stage 本次写的这一个文件(完整精确相对 POSIX pathspec, 绝不 -A);
-  // 作者手改/编辑器自动保存等写面外改动不进本 commit。
+  // 作者手改/编辑器自动保存等写面外改动不进本 commit。R17 门禁防预存 staged 卷入(M10-C1)。
+  assertCleanOutside(root, [relPosixPathspec(root, p)]);
   gitAdd(root, [relPosixPathspec(root, p)]);
   gitCommit(root, message);
 }
@@ -165,6 +181,8 @@ export function writeAtlasRun(root: string, run: AtlasRun): void {
     }
   }
   // N35/ADR-0021 §6: 只 stage run 文件本身(完整精确相对 POSIX pathspec, 绝不 -A)。
+  // R17 门禁防预存 staged 卷入(M10-C1)。
+  assertCleanOutside(root, [relPosixPathspec(root, file)]);
   gitAdd(root, [relPosixPathspec(root, file)]);
   gitCommit(root, `atlas: write run ${run.id}`);
 }
@@ -202,6 +220,7 @@ export function writeAtlasCandidates(
   // 绝不 -A); 空写面 → 无任何 git 动作(空 pathspec 的 git add 是 no-op, 且 gitCommit
   // 会扫入索引中无关的预暂存项)。
   if (files.length === 0) return;
+  assertCleanOutside(root, files.map((f) => relPosixPathspec(root, f.abs)));
   gitAdd(root, files.map((f) => relPosixPathspec(root, f.abs)));
   gitCommit(root, message);
 }

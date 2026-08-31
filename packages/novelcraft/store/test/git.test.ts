@@ -8,6 +8,7 @@ import {
   gitStatusEntries,
   parsePorcelainV1Z,
   hasUncommittedChanges,
+  hasStagedOutside,
   hasUncommittedOutside,
   gitAdd,
   gitCommit,
@@ -112,6 +113,70 @@ describe('gitStatusEntries(-z 结构化解析, 不 trim)', () => {
     gitCommit(r, 'init');
     gitMove(r, 'old.md', 'new.md'); // staged rename
     expect(gitStatusEntries(r)).toEqual([{ status: 'R ', path: 'new.md', fromPath: 'old.md' }]);
+  });
+});
+
+
+describe('hasStagedOutside(M10-C1/N41: 只挡 index 预存 staged; untracked/unstaged 放行)', () => {
+  it('untracked/unstaged 不挡; staged 范围外挡', () => {
+    const r = repo();
+    fs.writeFileSync(path.join(r, 'base.md'), 'a');
+    gitAdd(r);
+    gitCommit(r, 'init');
+    // untracked + unstaged 均不挡(不会被精确 pathspec 卷入)。
+    fs.writeFileSync(path.join(r, 'stray.txt'), 's');
+    fs.writeFileSync(path.join(r, 'base.md'), 'b');
+    expect(hasStagedOutside(r, ['pending/new.md'])).toBe(false);
+    // staged 范围外 → 挡。
+    fs.writeFileSync(path.join(r, 'evil.md'), 'e');
+    gitAdd(r, ['evil.md']);
+    expect(hasStagedOutside(r, ['pending/new.md'])).toBe(true);
+    // staged 在豁免集内 → 放行(幂等重试面: 上次 gitAdd 后崩溃残留)。
+    expect(hasStagedOutside(r, ['evil.md'])).toBe(false);
+  });
+
+  it(":(literal) pathspec 前缀剥离: 豁免集带前缀也对上裸路径", () => {
+    const r = repo();
+    fs.writeFileSync(path.join(r, 'base.md'), 'a');
+    gitAdd(r);
+    gitCommit(r, 'init');
+    fs.mkdirSync(path.join(r, 'pending'), { recursive: true });
+    fs.writeFileSync(path.join(r, 'pending', '002.md'), 'c');
+    gitAdd(r, [':(literal)pending/002.md']);
+    expect(hasStagedOutside(r, [':(literal)pending/002.md'])).toBe(false);
+  });
+
+  it('rename 双端 AND 语义(Track C review P1-1): 单端豁免不放行', () => {
+    const r = repo();
+    fs.writeFileSync(path.join(r, 'old.md'), 'a');
+    gitAdd(r);
+    gitCommit(r, 'init');
+    gitMove(r, 'old.md', 'new.md');
+    expect(hasStagedOutside(r, ['new.md', 'old.md'])).toBe(false);
+    expect(hasStagedOutside(r, ['new.md'])).toBe(true); // 源端范围外 → 挡(删除侧卷入面)
+    expect(hasStagedOutside(r, ['old.md'])).toBe(true);
+  });
+
+  it('目录前缀豁免: "dir/" 放行其内 staged 残留(事务崩溃窗口形态)', () => {
+    const r = repo();
+    fs.mkdirSync(path.join(r, '.assistant', 'import-runs', 'run1'), { recursive: true });
+    fs.writeFileSync(path.join(r, '.assistant', 'import-runs', 'run1', 'manifest.json'), '{}');
+    gitAdd(r, ['.assistant/import-runs/run1/manifest.json']);
+    expect(hasStagedOutside(r, ['.assistant/import-runs/run1/'])).toBe(false);
+    expect(hasStagedOutside(r, ['.assistant/import-runs/run1'])).toBe(true); // 精确匹配不放行目录内
+  });
+
+  it('merge 冲突态(UU) → 挡(fail-closed)', () => {
+    const r = repo();
+    fs.writeFileSync(path.join(r, 'base.md'), 'a');
+    gitAdd(r);
+    gitCommit(r, 'init');
+    // 直接构造 porcelain 冲突态经 gitStatusEntries 真实路径较重; 以行为等价的
+    // staged-both-modified 近似: 双改文件 staged(X='M')已由前述用例覆盖; UU 的
+    // X='U' 同走非空非'?'分支, 判定逻辑同一行 —— 此处锁定该分支语义单测化。
+    fs.writeFileSync(path.join(r, 'both.md'), 'x');
+    gitAdd(r);
+    expect(hasStagedOutside(r, ['other.md'])).toBe(true);
   });
 });
 

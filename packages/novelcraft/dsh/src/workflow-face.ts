@@ -8,13 +8,13 @@
 //   completed run 的重放有了显式选择路径;
 // workflowAbandonGuarded: id 单段校验 + 枚举存在性(防路径穿越, Track B review P0)
 //   + 终态限制 + 审批(摘要明示 durable intent 孤儿风险)→ 清理 run 目录(+绑定
-//   checkpoint)→ R17 洁净门禁(hasUncommittedOutside)→ 精确 git 提交(返回 HEAD sha);
+//   checkpoint)→ R17 门禁(hasStagedOutside, 只挡预存 staged)→ 精确 git 提交(返回 HEAD sha);
 //   不触碰 canonical 创作资产(铁律 2: git 本身是回滚面, 资产撤销走 git revert/版本面)。
 // 纪律: 本文件不直接写 canonical; abandon 的 git 写只用 store 的精确 pathspec
 // (gitAdd/gitCommit), 与 check-git-writers 允许表一致。
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { gitAdd, gitCommit, hasUncommittedOutside } from '@novelcraft/store';
+import { gitAdd, gitCommit, hasStagedOutside } from '@novelcraft/store';
 import { assertSafePathSegment } from '@novelcraft/vault';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import * as imports from '@novelcraft/imports';
@@ -186,9 +186,12 @@ export async function workflowAbandonGuarded(
   const cpBound = args.kind === 'deep-import' && cp !== undefined && args.workflowId.endsWith(`-${cp.workflow_id}`);
   const removed: string[] = [`${runRoot}/${args.workflowId}`];
   if (cpBound) removed.push('.assistant/checkpoint.json');
-  // R17 洁净门禁(review P1-2): 预存 staged 外部内容会被裸 git commit 卷入 ——
-  // 范围外有任何未提交改动即 DIRTY_WORKSPACE fail-closed(removed 为豁免集)。
-  if (hasUncommittedOutside(root, removed)) {
+  // R17 门禁(review P1-2/N41): 预存 staged 外部内容会被裸 git commit 卷入 ——
+  // 只挡 index 预存 staged(untracked/unstaged 不被精确 pathspec 卷入, 不拒绝)。
+  // 豁免集用目录前缀(尾 /): run 目录内部文件的 staged 残留(事务崩溃窗口)不挡
+  // 自己的清理目标(Track C review P2-1); gitAdd 仍用原精确集合。
+  const gateExempt = removed.map((r) => (r.endsWith('.json') ? r : `${r}/`));
+  if (hasStagedOutside(root, gateExempt)) {
     throw new HarnessError(
       '工作区存在范围外未提交改动(含预存 staged), 拒绝 abandon 提交以免卷入外部内容(DIRTY_WORKSPACE, R17)',
       'WORKFLOW_DIRTY_WORKSPACE',
