@@ -148,16 +148,20 @@
 排序依据台账 §6.24(按用户效果); 所有任务受 `后续开发计划.md` §0 插件边界纪律统领
 (core 只加法 / capability 三分归位 / 新工具走工具组插件 + 同步四处 / 模型可见⟺可回放)。
 
-- [ ] **M10 P0 收口轮**(任务级, 三 Track 可调序):
-  - Track A LLM 内容步 runtime 收口(§6.23): A1 宿主 response_format 能力探测(闸门,
-    先裁定注入模式)→ A2 promptBody 加法(core 新文件, 旧路径回退)→ A3 schema 首轮注入
-    +journal 断言 → A4 llm_step 回执去截断 → A5 exact-route readiness fail-closed →
-    A6 恢复指纹回执。
-  - Track B 长任务作者恢复面(§6.9/§6.6): B1 `tools/workflow.ts` 新工具组
-    (inspect→read; resume/abandon/start_new→adoptGuarded)→ B2 completed replay 显式化
-    → B3 deep-import 转 job 托管(ADR-0023)→ B4 service.ui 工作流卡 → B5 同步四处。
-  - Track C 写面收敛: C1 generate/upload 接 N32 事务 → C2 ingest writeSet+signal CAS →
-    C3 index cache 删写 + RAG change plan→fresh 零写。
+- [x] **M10 P0 收口轮**(2026-08-31 完成, 三 Track 各附整批 review + 修复; 裁定 N38–N41):
+  - [x] Track A LLM 内容步 runtime 收口(§6.23, A1–A6 全 ☑): schema 文本注入(system 槽
+    OUTPUT_CONTRACT)+promptBody 加法+journal/回执指纹(promptHash/schemaInjection/
+    effective 参数)+DshProvider readiness(listProviders live 目录 fail-closed)。
+    review: 1×P1(工具零值吞没)+7×P2 全修(N39)。
+  - [x] Track B 长任务恢复面(§6.9/§6.6, B1/B2/B5 ☑): workflow 工具组 4 工具(inspect→
+    read; resume/start_new/abandon→adoptGuarded)+completed replay 显式化(force 时间戳
+    +随机熵)+同步四处(矩阵 25)。review: P0(abandon 路径穿越)+4×P1+6×P2 全修(N40):
+    单段校验+枚举存在性双门、R17 staged 门禁、resume 三重前置+执行后对账。
+  - [x] Track C 写面收敛(C1 ☑ / C2 ◐ / C3 半项): store 加法 hasStagedOutside(只挡预存
+    staged)+四处写面门禁(generate 双门禁)+refreshIndex 死写删除。review: 2×P1+6×P2
+    全修(N41): rename AND 语义、门禁位置、单测矩阵。
+  - 后置独立增量(N40/N41 记录): B3 deep-import job 托管(ADR-0023)+B4 client 工作流卡;
+    RAG change plan→fresh 零写; signal CAS 强化; 其余裸 commit 点门禁。
 - [ ] **M11 多书生命周期**(切片级): 书库 create/list/open/switch 公开化(capability 归位 +
   工具 + client wire)、删 workspacePath fallback、book.yml/policy.yml 只公开有消费者字段;
   回收站不做(§6.13.6)。
