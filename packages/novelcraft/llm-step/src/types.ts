@@ -114,9 +114,10 @@ export interface StepResult {
   error?: StepError;
   specRef: string;
   contractVersion: string;
-  /** 模型可见输入指纹(成功与失败均携带; M10-A3/A6, 模型可见⟺可回放) */
+  /** 模型可见输入指纹(成功与 provider/校验类失败路径携带; spec_not_found 与
+   *  budget_exceeded 发生在组装前/组装中, 不带; M10-A3/A6, 模型可见⟺可回放) */
   promptFingerprint?: StepPromptFingerprint;
-  /** 本次执行实际生效的调用参数(成功与失败均携带; M10-A6) */
+  /** 本次执行实际生效的调用参数(携带范围同 promptFingerprint; M10-A6) */
   effective?: StepEffectiveParams;
 }
 
@@ -131,6 +132,11 @@ export interface ProviderRequest {
   top_p?: number;
   maxTokens?: number;
   signal?: AbortSignal;
+  /** 本次请求 system 提示指纹(N38/M10-A review 加法): runStep 组装时填充,
+   *  供 trace 包装器(tracedProvider)透传进 llm_step 事件 —— 模型可见⟺可回放。 */
+  promptHash?: string;
+  /** 输出契约注入模式(同 JournalEntry.schemaInjection; runStep 填充)。 */
+  schemaInjection?: "text-contract" | "none";
 }
 
 export interface ProviderResponse {

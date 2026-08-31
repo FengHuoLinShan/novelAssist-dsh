@@ -119,10 +119,16 @@ function tracedProvider(provider: Provider, sink: TraceSink): Provider {
     async complete(req: ProviderRequest) {
       try {
         const resp = await provider.complete(req);
-        emit(sink, { type: "llm_step", ok: true, model: req.model });
+        emit(sink, {
+          type: "llm_step",
+          ok: true,
+          model: req.model,
+          ...(req.promptHash !== undefined ? { promptHash: req.promptHash } : {}),
+          ...(req.schemaInjection !== undefined ? { schemaInjection: req.schemaInjection } : {}),
+        });
         return resp;
       } catch (err) {
-        emit(sink, { type: "llm_step", ok: false, error: String((err as Error)?.message ?? err), model: req.model });
+        emit(sink, { type: "llm_step", ok: false, error: String((err as Error)?.message ?? err), model: req.model, ...(req.promptHash !== undefined ? { promptHash: req.promptHash } : {}), ...(req.schemaInjection !== undefined ? { schemaInjection: req.schemaInjection } : {}) });
         throw err;
       }
     },

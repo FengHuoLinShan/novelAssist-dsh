@@ -19,6 +19,9 @@ export interface LlmRoute {
   maxTokens?: number;
   /** 整个编排共享的累计 token 预算(1–1,000,000,000 整数)。 */
   workflowBudget?: number;
+  /** llm_step 工具回执正文上界(2,000–2,000,000; 缺省 65,536)——M10-A review:
+   *  去 8000 硬截断后的防失控上限, 超界截断并在尾部注记。 */
+  receiptMaxChars?: number;
 }
 
 export interface WatchConfig {
@@ -57,6 +60,9 @@ export const Config: z<Config> = z.object({
       timeoutMs: z.number().min(1_000).max(3_600_000),
       maxTokens: z.natural().min(1).max(200_000),
       workflowBudget: z.natural().min(1).max(1_000_000_000),
+      // llm_step 工具回执正文上界(M10-A review: 去 8000 硬截断后的防失控上限,
+      // 超界截断并在尾部注记; 可调参数走 Config)。
+      receiptMaxChars: z.natural().min(2_000).max(2_000_000).default(65_536),
     })
     .default({
       provider: 'deepseek',
@@ -64,6 +70,7 @@ export const Config: z<Config> = z.object({
       timeoutMs: undefined as unknown as number,
       maxTokens: undefined as unknown as number,
       workflowBudget: undefined as unknown as number,
+      receiptMaxChars: 65_536,
     }),
   vaultsDir: z.string().default('~/Novels'),
   watch: z

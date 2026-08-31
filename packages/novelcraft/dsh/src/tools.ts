@@ -135,15 +135,24 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           overrides: {
             ...(args.model ? { model: args.model } : {}),
             ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
-            ...(args.max_tokens ? { maxTokens: args.max_tokens } : {}),
-            ...(args.timeout_ms ? { timeoutMs: args.timeout_ms } : {}),
+            // 显式 undefined 判断(零值不吞): max_tokens=0 是「不限输出」的合法语义,
+            // timeout_ms=0 由 core deadline 检查响亮失败 —— 都不静默回退默认。
+            ...(args.max_tokens !== undefined ? { maxTokens: args.max_tokens } : {}),
+            ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
           },
           fixAttempts: args.fix_attempts ?? 1,
         }, run.root, run.signal);
         if (!result.ok) throw llmError(result.error?.kind, result.error?.message);
-        const text = result.result && typeof result.result === 'object'
+        let text = result.result && typeof result.result === 'object'
           ? JSON.stringify(result.result)
           : String(result.result ?? '');
+        // 回执尺寸上界(M10-A review 修复): 经 capabilities.read.receiptLimit 读
+        // Config.llm.receiptMaxChars(N39 ②; 工具不绕过 capability 面, N35);
+        // 超界截断并在尾部显式注记, 不静默丢内容。
+        const maxChars = run.service.capabilities.read.receiptLimit();
+        if (text.length > maxChars) {
+          text = `${text.slice(0, maxChars)}\n[回执截断: 原文 ${text.length} 字符, 上限 ${maxChars}(Config.llm.receiptMaxChars)]`;
+        }
         // M10-A4/N38: 回执不再截断正文, 且完整回传 journal 与模型可见指纹
         // (promptFingerprint: systemPromptHash/schemaInjection/outputSchemaHash)——
         // 模型可见⟺可回放, 调用方可审计实际发送的 system 提示与注入模式。

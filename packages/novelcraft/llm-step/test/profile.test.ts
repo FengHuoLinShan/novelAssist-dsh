@@ -714,8 +714,9 @@ describe("workflowBudget 累计 guard seam(N34 workflowBudget: 至少提供累�
         return { text: JSON.stringify({ entities: [] }) };
       },
     };
-    // 每次占用 = 估算输入(≈1) + 输出上限(override 10) = 11; 预算 15 → 首次够, 二次超支。
-    const budget = createWorkflowBudget(15);
+    // 每次占用 = 估算输入(≈1) + system 提示估算(N39: entity_extraction 含 schema
+    // 文本实测 ≈237) + 输出上限(override 10) ≈ 248; 预算 300 → 首次够(剩 52), 二次超支。
+    const budget = createWorkflowBudget(300);
     const r1 = await runStep(
       provider,
       { specRef: "entity_extraction", input: "x", overrides: { maxTokens: 10 } },
@@ -723,7 +724,7 @@ describe("workflowBudget 累计 guard seam(N34 workflowBudget: 至少提供累�
     );
     expect(r1.ok).toBe(true);
     expect(calls).toBe(1);
-    // 第二次调用: 剩余 4 < 11 → 超支, provider 不被调用(累计 guard 在 provider 前拦截)。
+    // 第二次调用: 剩余 52 < 248 → 超支, provider 不被调用(累计 guard 在 provider 前拦截)。
     const r2 = await runStep(
       provider,
       { specRef: "entity_extraction", input: "x", overrides: { maxTokens: 10 } },

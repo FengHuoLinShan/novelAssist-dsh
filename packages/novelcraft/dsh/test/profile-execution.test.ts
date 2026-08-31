@@ -24,7 +24,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { ingestChapter } from '@novelcraft/writing';
 import { readCheckpoint, resumeImport } from '@novelcraft/imports';
-import { estimateTokens, fingerprintExecutionProfile, parseExecutionProfile } from '@novelcraft/llm-step';
+import { composeSystemPrompt, estimateTokens, fingerprintExecutionProfile, loadSpec, parseExecutionProfile } from '@novelcraft/llm-step';
 import { paths as vaultPaths } from '@novelcraft/vault';
 import { ExecutionProfileError, type ExecutionProfile } from '../src/llm/execution-profile.js';
 import { NovelCraftService } from '../src/index.js';
@@ -314,8 +314,10 @@ describe('timeout/预算继承(N34: 内部 llm-step 统一继承 profile 默认,
     expect(r1.error?.kind).toBe('budget_exceeded');
     expect(r1.error?.message).toContain('工作流累计预算不足'); // 工作流级 budget(非 per-step)
     expect(env.h.adapter.requests).toHaveLength(0); // provider 前 fail-closed
-    // 预算恰好等于单次占用(估算输入)→ 相等放行(边界, trySpend 不部分消费)。
-    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), `workflow_budget: ${estimateTokens('正文')}\n`, 'utf8');
+    // 预算恰好等于单次占用(N39: 估算输入 + system 提示估算; semantic_review budgetTokens=0)
+    // → 相等放行(边界, trySpend 不部分消费)。
+    const srSpec = loadSpec('semantic_review')!;
+    writeFileSync(path.join(env.root, '.assistant', 'llm.yml'), `workflow_budget: ${estimateTokens('正文') + estimateTokens(composeSystemPrompt(srSpec).text)}\n`, 'utf8');
     const p2 = await env.service.resolveProfile(env.root);
     env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
     const r2 = await env.service.runStep(

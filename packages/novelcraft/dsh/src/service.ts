@@ -380,6 +380,12 @@ export class NovelCraftService extends Service {
     };
   }
 
+  /** llm_step 工具回执正文上界(M10-A review / N39 ②, read 声明表): Config.llm
+   *  .receiptMaxChars 显式缺省 65,536 —— 工具经 capabilities.read 读取, 不直读 config。 */
+  receiptLimit(): number {
+    return this.config.llm.receiptMaxChars ?? 65_536;
+  }
+
   /** 便捷: 消费当前会话已授权的图片收据(候选写入不过 approval, N29)。 */
   importAtlasImage(
     root: string,

@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { paths } from '@novelcraft/vault';
-import { estimateTokens, loadSpec } from '@novelcraft/llm-step';
+import { composeSystemPrompt, estimateTokens, loadSpec } from '@novelcraft/llm-step';
 import * as imports from '@novelcraft/imports';
 import type { RunStateTransaction } from '@novelcraft/imports';
 import { CrashSimulatedError, gitAdd, gitCommit } from '@novelcraft/store';
@@ -357,10 +357,12 @@ describe('deepImport(DSH 挂载)', () => {
 
   it('profile.workflowBudget → 全链共享累计 tracker: 预算只够首个内容步, 后续步骤 provider 前 fail-closed(审查项 3)', async () => {
     const env = await setup('allowed-once', ['allowed-once']);
-    // 预算恰好够 1 次 scene_slicing(估算输入 + 输出上限; spec budgetTokens=8192):
-    // slice ch1 成功(1 次 provider 调用), 之后所有内容步累计超支 → 不再调用 provider。
+    // 预算恰好够 1 次 scene_slicing(N39: 估算输入 + system 提示估算 + 输出上限;
+    // spec budgetTokens=8192): slice ch1 成功(1 次 provider 调用), 之后所有内容步
+    // 累计超支 → 不再调用 provider。
     const sliceSpec = loadSpec('scene_slicing')!;
-    const perCall = estimateTokens('【第 1 章正文】\n第一章正文。\n') + sliceSpec.budgetTokens;
+    const sliceInput = '【第 1 章正文】\n第一章正文。\n';
+    const perCall = estimateTokens(sliceInput) + estimateTokens(composeSystemPrompt(sliceSpec).text) + sliceSpec.budgetTokens;
     writeFileSync(paths(env.root).assistant.llm, `workflow_budget: ${perCall}\n`, 'utf8');
     gitAdd(env.root, ['.assistant/llm.yml']);
     gitCommit(env.root, 'test: configure workflow budget');

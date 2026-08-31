@@ -7,7 +7,7 @@ import { createNovelCraftCapabilities, NovelCraftService } from '../src/index.js
 function fakeService(): NovelCraftService {
   const service: Record<string, unknown> = { marker: 'bound' };
   const methods = [
-    'viewMapAtlas', 'inbox', 'ragSearch', 'chapterCurrent', 'chapterHistory', 'chapterDiff', 'chapterReview',
+    'viewMapAtlas', 'inbox', 'ragSearch', 'chapterCurrent', 'chapterHistory', 'chapterDiff', 'chapterReview', 'receiptLimit',
     'runStep', 'actOnSignal', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
     'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'ingestTextFile',
     'reviewChapter', 'reviseChapter', 'rejectChapterFinding', 'rejectChapterCandidate', 'scanHealth',

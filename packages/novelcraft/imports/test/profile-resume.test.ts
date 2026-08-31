@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
-import { MockProvider, createWorkflowBudget, estimateTokens, loadSpec } from "@novelcraft/llm-step";
+import { MockProvider, composeSystemPrompt, createWorkflowBudget, estimateTokens, loadSpec } from "@novelcraft/llm-step";
 import { gitAdd, gitCommit } from "@novelcraft/store";
 import { ingestChapter } from "@novelcraft/writing";
 import { DEGRADATION_CLAUSE, TraceRecorder } from "@novelcraft/trace";
@@ -171,10 +171,12 @@ describe("workflowBudget 共享累计 tracker(审查项 3: runDeepImport 全链�
     const plan = planImport(root, { startChapter: 1, endChapter: 2, confirmed: true });
     const rec = new TraceRecorder();
     const provider = new MockProvider({ responses: happyResponses() });
-    // 单次 slice 占用 = 估算输入 + scene_slicing 输出上限(spec budgetTokens=8192);
-    // 预算恰好够 1 次 → slice ch1 成功(1 次 provider), 此后全链(1b/1c/2a/2b/3)累计超支。
+    // 单次 slice 占用(N39: 估算输入 + system 提示估算 + scene_slicing 输出上限
+    // spec budgetTokens=8192); 预算恰好够 1 次 → slice ch1 成功(1 次 provider),
+    // 此后全链(1b/1c/2a/2b/3)累计超支。
     const sliceSpec = loadSpec("scene_slicing")!;
-    const perCall = estimateTokens("【第 1 章正文】\n克莱恩与苏婉同行。\n") + sliceSpec.budgetTokens;
+    const sliceInput = "【第 1 章正文】\n克莱恩与苏婉同行。\n";
+    const perCall = estimateTokens(sliceInput) + estimateTokens(composeSystemPrompt(sliceSpec).text) + sliceSpec.budgetTokens;
     const budget = createWorkflowBudget(perCall);
     const result = await runDeepImport(root, plan, {
       provider,

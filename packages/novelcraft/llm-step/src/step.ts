@@ -108,21 +108,27 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   const d = provider.executionDefaults;
   const overrides = req.overrides ?? {};
   const maxTokens = overrides.maxTokens ?? d?.maxTokens ?? spec.budgetTokens;
+  // 单步输入守卫: 保持旧口径(req.input 自身 ≤ maxTokens)——maxTokens 同时是输出
+  // 预算, N38 注入的 system(schema 文本)不计入, 避免输入上限与输出预算耦合误拒
+  // 小 maxTokens 的合法场景(M10-A review 修正, N39 ①)。
   const budget = checkBudget(req.input, maxTokens);
   if (!budget.allowed) {
     return fail(spec, req, "budget_exceeded", `输入估算 ${budget.estimatedInput} tokens 超过预算 ${maxTokens}`, [], { inputTokens: budget.estimatedInput, outputTokens: 0 }, fingerprint);
   }
 
-  // 工作流累计预算 guard seam: 在 provider 前按「估算输入 + 输出上限」占用,
-  // 超支 → budget_exceeded(不产生新的 provider 成本)。fix 重试不重复占用
-  // (输出上限只按首次调用口径, 保守为一次)。
+  // 工作流累计预算 guard seam: 在 provider 前按「真实输入成本(含 system 提示估算,
+  // N39)+ 输出上限」占用 —— N38 注入后 json spec 的 system 含完整 JSON Schema 文本,
+  // 累计口径按实际发给模型的内容估算, 不系统性低估。超支 → budget_exceeded
+  // (不产生新的 provider 成本)。fix 重试不重复占用(输出上限只按首次口径)。
   const workflowBudget = options?.budget ?? provider.workflowBudget;
-  if (workflowBudget && !workflowBudget.trySpend(budget.estimatedInput + (maxTokens > 0 ? maxTokens : 0))) {
+  const spendEstimate =
+    budget.estimatedInput + estimateTokens(composed.text) + (maxTokens > 0 ? maxTokens : 0);
+  if (workflowBudget && !workflowBudget.trySpend(spendEstimate)) {
     return fail(
       spec,
       req,
       "budget_exceeded",
-      `工作流累计预算不足(剩余 ${workflowBudget.remaining} tokens, 本次需 ${budget.estimatedInput + (maxTokens > 0 ? maxTokens : 0)})`,
+      `工作流累计预算不足(剩余 ${workflowBudget.remaining} tokens, 本次需 ${spendEstimate}(含 system 提示估算))`,
       [],
       { inputTokens: budget.estimatedInput, outputTokens: 0 },
       fingerprint,
@@ -190,6 +196,8 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
       const outcome = await raceWithTimeout(
         provider.complete({
           messages,
+          promptHash: sysHash,
+          schemaInjection: composed.schemaInjection,
           ...(providerRoute !== undefined ? { provider: providerRoute } : {}),
           model,
           temperature,

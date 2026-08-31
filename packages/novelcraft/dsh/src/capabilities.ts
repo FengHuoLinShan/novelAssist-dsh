@@ -18,6 +18,9 @@ const READ_METHODS = [
   'chapterHistory',
   'chapterDiff',
   'chapterReview',
+  // M10-A review(N39 ②): 工具回执上界读取走声明表 —— 工具不得直读 service.config
+  // (N35 源码扫描只放行 capabilities./vaults.)。
+  'receiptLimit',
 ] as const satisfies readonly MethodName[];
 
 const PROPOSE_METHODS = [

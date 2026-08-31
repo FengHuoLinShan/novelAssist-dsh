@@ -158,7 +158,13 @@ function tracedProvider(provider: Provider, sink: TraceSink): Provider {
     async complete(req) {
       try {
         const response = await provider.complete(req);
-        emit(sink, { type: "llm_step", ok: true, model: req.model });
+        emit(sink, {
+          type: "llm_step",
+          ok: true,
+          model: req.model,
+          ...(req.promptHash !== undefined ? { promptHash: req.promptHash } : {}),
+          ...(req.schemaInjection !== undefined ? { schemaInjection: req.schemaInjection } : {}),
+        });
         return response;
       } catch (error) {
         emit(sink, {
@@ -166,6 +172,8 @@ function tracedProvider(provider: Provider, sink: TraceSink): Provider {
           ok: false,
           model: req.model,
           error: String((error as Error)?.message ?? error),
+          ...(req.promptHash !== undefined ? { promptHash: req.promptHash } : {}),
+          ...(req.schemaInjection !== undefined ? { schemaInjection: req.schemaInjection } : {}),
         });
         throw error;
       }

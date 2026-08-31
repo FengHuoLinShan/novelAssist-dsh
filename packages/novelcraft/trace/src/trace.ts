@@ -133,6 +133,11 @@ export interface LlmStepEvent extends TraceEventBase {
   /** 失败时的错误消息(provider 层, 未分类) */
   error?: string;
   model?: string;
+  /** 本次请求 system 提示指纹(N38/M10-A review 加法): runStep 组装时填充,
+   *  tracedProvider 透传 —— 模型可见⟺可回放。 */
+  promptHash?: string;
+  /** 输出契约注入模式(text-contract | none)。 */
+  schemaInjection?: "text-contract" | "none";
 }
 
 export interface DegradationEvent extends TraceEventBase {

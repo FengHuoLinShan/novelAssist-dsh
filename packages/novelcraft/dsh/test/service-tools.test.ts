@@ -194,7 +194,7 @@ describe('NovelCraftService 端到端', () => {
 
   it('服务装配: 全部适配器暴露在 ctx.novelcraft', async () => {
     const env = await setup();
-    expect(env.service.config.llm).toEqual({ provider: 'fake', model: 'fake-model' });
+    expect(env.service.config.llm).toEqual({ provider: 'fake', model: 'fake-model', receiptMaxChars: 65_536 });
     expect(Object.keys(env.service.capabilities).sort()).toEqual(['adoptGuarded', 'propose', 'read']);
     expect('facades' in env.service).toBe(false);
     expect(env.tools.map((t) => t.name).sort()).toEqual([
@@ -421,7 +421,10 @@ describe('NovelCraftService 端到端', () => {
     const out = (await t.execute(
       { spec: 'semantic_review', input: '正文', model: 'fake-model-x', temperature: 0.2 },
       { ...env.exec, name: 'novelcraft_llm_step' },
-    )) as { effective_model: string; effective_temperature: number };
+    )) as { effective_model: string; effective_temperature: number; effective_provider: string };
+    // A6 缺省分支: 未传 provider override → Config.llm.provider('fake')经
+    // executionDefaults/merge 链填入 effective(防「回执空、实际走 Config 路由」失真)
+    expect(out.effective_provider).toBe('fake');
     expect(out.effective_model).toBe('fake-model-x');
     expect(out.effective_temperature).toBe(0.2);
     expect(env.h.adapter.requests).toHaveLength(1);

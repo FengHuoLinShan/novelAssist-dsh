@@ -11,7 +11,7 @@ import {
   registerSpec,
   runStep,
 } from "../src/index";
-import type { LlmStepSpec } from "../src/index";
+import type { LlmStepSpec, Provider, ProviderRequest } from "../src/index";
 
 const JSON_SPEC: LlmStepSpec = {
   specRef: "m10_probe_json",
@@ -51,8 +51,15 @@ describe("composeSystemPrompt 组装", () => {
     const composed = composeSystemPrompt(JSON_SPEC);
     expect(composed.source).toBe("legacy-summary");
     expect(composed.schemaInjection).toBe("text-contract");
-    // legacy 文本逐字节保留(golden: 与 M10 前路径一致)
-    expect(composed.text.startsWith(legacySystemPrompt(JSON_SPEC))).toBe(true);
+    // legacy 文本逐字节保留(golden: 内联硬编码字面量, 与被测函数解耦)
+    const legacyJsonGolden = [
+      "你是 NovelCraft 内容手。任务: 测试 json spec。",
+      "输入资料要求: 测试输入。",
+      "输出必须是合法 JSON, 严格符合给定的 JSON Schema, 不得输出额外文字。",
+      "降级条款(供上层决策, 不由你执行): 测试降级。",
+    ].join("\n");
+    expect(composed.text.startsWith(legacyJsonGolden + "\n\n")).toBe(true);
+    expect(legacySystemPrompt(JSON_SPEC)).toBe(legacyJsonGolden);
     // 输出契约注入: JSON Schema 文本进 system(模型可见)
     expect(composed.text).toContain("OUTPUT_CONTRACT");
     expect(composed.text).toContain(JSON.stringify(JSON_SPEC.outputSchema));
@@ -76,7 +83,14 @@ describe("composeSystemPrompt 组装", () => {
     const composed = composeSystemPrompt(TEXT_SPEC);
     expect(composed.schemaInjection).toBe("none");
     expect(composed.text).not.toContain("OUTPUT_CONTRACT");
-    expect(composed.text).toBe(legacySystemPrompt(TEXT_SPEC));
+    const legacyTextGolden = [
+      "你是 NovelCraft 内容手。任务: 测试 json spec。",
+      "输入资料要求: 测试输入。",
+      "输出必须是合法 JSON, 严格符合给定的 JSON Schema, 不得输出额外文字。",
+      "降级条款(供上层决策, 不由你执行): 测试降级。",
+    ].join("\n");
+    expect(composed.text).toBe(legacyTextGolden);
+    expect(legacySystemPrompt(TEXT_SPEC)).toBe(legacyTextGolden);
   });
 
   it("promptBody + text 形态: 正文 + 降级条款, 无契约", () => {
@@ -151,8 +165,11 @@ describe("runStep 模型可见性与 journal 指纹", () => {
   it("M10-A6: 生效参数回执 = spec < executionDefaults < overrides 合并终值, 成功/失败均携带", async () => {
     // spec: temperature 0.1 / timeoutMs 5000; defaults: temperature 0.7 / maxTokens 512 / model;
     // overrides: temperature 0(合法零值不被吞) + model 覆盖。
-    const provider = new MockProvider({ responses: [{ text: JSON.stringify({ answer: "ok" }) }] });
-    provider.executionDefaults = { temperature: 0.7, maxTokens: 512, model: "default-model" };
+    const inner = new MockProvider({ responses: [{ text: JSON.stringify({ answer: "ok" }) }] });
+    const provider: Provider = {
+      executionDefaults: { temperature: 0.7, maxTokens: 512, model: "default-model" },
+      complete: (req: ProviderRequest) => inner.complete(req),
+    };
     const res = await runStep(provider, {
       specRef: JSON_SPEC.specRef,
       input: "问题",
@@ -166,9 +183,9 @@ describe("runStep 模型可见性与 journal 指纹", () => {
       timeoutMs: 5000,
     });
     // provider 实际收到的请求与回执一致(可回放)
-    expect(provider.calls[0]?.temperature).toBe(0);
-    expect(provider.calls[0]?.model).toBe("req-model");
-    expect(provider.calls[0]?.maxTokens).toBe(512);
+    expect(inner.calls[0]?.temperature).toBe(0);
+    expect(inner.calls[0]?.model).toBe("req-model");
+    expect(inner.calls[0]?.maxTokens).toBe(512);
 
     // 失败路径也携带
     const bad = new MockProvider({ responses: [{ text: "坏" }] });
