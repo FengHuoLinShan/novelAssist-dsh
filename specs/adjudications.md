@@ -110,3 +110,11 @@
 | # | 裁定 | 决定 |
 |---|---|---|
 | N37 | Node 24 单版本运行时与 CI | 本仓库只支持 Node `>=24.11.0`；默认 profile 与显式 BGE profile 的 CI 均固定 Node `24.11.0`，不再维护 Node 22 兼容矩阵。默认 profile 已覆盖 `@novelcraft/rag`，BGE profile 只追加 `@novelcraft/rag-bge` 能力测试与 BGE audit，避免重复 gate。**本裁定仅取代 N34/N36 的 Node 版本与 CI matrix 条款**；session/watch、ExecutionProfile、源码分发、optional BGE、audit baseline 等其余约束继续有效。 |
+
+## 第十批(M10-A LLM 内容步 runtime 收口, 2026-08-31)
+
+依据: 后续开发计划.md §0(插件边界纪律)/§2.A-探测(A1 宿主能力探测报告) + 铁律 4(核心包只加法)/铁律 5(内容手受控) + 上游 deepseek-harness AGENTS.md("模型可见⟺可回放"、"Plugins, not loop changes")。
+
+| # | 裁定 | 决定 |
+|---|---|---|
+| N38 | schema 首轮注入采用 schema 文本注入; promptBody 加法组装; 回执不截断 | ①rc.8 `@deepseek-ai/dsh-llm` 的 `GenerateOptions` 无 response_format/json_schema 字段(A1 探测, types.d.ts:332), **不使用** `tools` 通道伪装 tool-call 承载结构化输出(超出宿主对该 seam 的文档化用途, 且需适配器新增 tool-call 块解析、污染 session log 工具语义), **不触碰**共享层加 response_format(ADR-0018 纪律, 能不触碰就不触碰)。②输出契约(OUTPUT_CONTRACT = JSON Schema 文本)注入 system 槽尾部, `outputFormat=text` 不注入; 组装在 core `llm-step` 完成(`prompt-body.ts` 加法导出: composeSystemPrompt/renderOutputContract/legacySystemPrompt/promptHash/outputSchemaHash), dsh DshProvider 只透传 system, 零适配器改动。③`LlmStepSpec.promptBody` 可选字段(加法): 存在时以其为 system 主体; 缺省回退 legacy description/inputNotes 摘要路径且**字节级不变**(golden 测试锁定)。缺 promptBody 的 json spec 自本裁定起同样注入输出契约(这是 M10-A 的目的性行为变更: 模型从此首轮即见 schema, 对齐源系统 OUTPUT_CONTRACT 语义)。④模型可见⟺可回放: 每次 attempt 的 journal 条目附 `promptHash`(sha256 前 16 hex)与 `schemaInjection` 模式; `StepResult.promptFingerprint`(systemPromptHash/schemaInjection/outputSchemaHash, 加法可选字段)成功与失败均携带。⑤`novelcraft_llm_step` 工具回执去 8000 字截断, 完整回传 text/journal(逐字段 JSON 投影)/spec_ref/contract_version/三指纹字段。去条件(重开须新裁定): 宿主 dsh-llm 契约新增 response_format/structured 字段时重新探测; 或实测文本注入结构遵循度不足且经产品裁决接受 tools 通道复杂度。 |

@@ -9,6 +9,12 @@ export interface LlmStepSpec {
   description: string;
   /** 输入资料说明(catalog 的「输入」) */
   inputNotes: string;
+  /**
+   * 真实 Prompt 正文(M10-A2/N38 加法): 逐字转录自源系统 prompt 契约的多行文本。
+   * 存在时 system 提示以本字段为主体组装; 缺省回退 description/inputNotes 摘要路径
+   * (字节级不变)。promptBody 与 outputSchema 共同构成模型可见输入, hash 进 journal。
+   */
+  promptBody?: string;
   /** 输出 JSON Schema(catalog 的输出 Schema 字段级; 未定字段放宽 additionalProperties) */
   outputSchema: ValidatorSchema;
   /** 输出形态: json(默认, 走 schema 校验) | text(正文类输出, 如 targeted_revision) */
@@ -72,6 +78,20 @@ export interface JournalEntry {
   usage?: Usage;
   errorKind?: StepErrorKind;
   errorMessage?: string;
+  /** 本次 attempt 实际发送 system 提示的 sha256 前 16 hex(M10-A3/N38: 模型可见⟺可回放) */
+  promptHash?: string;
+  /** 本次 attempt 的输出契约注入模式: text-contract = JSON Schema 文本注入 system; none = text 输出形态不注入 */
+  schemaInjection?: "text-contract" | "none";
+}
+
+/** 模型可见输入指纹(M10-A3/A6/N38 加法): 恢复/审计用, 不含正文与 Key。 */
+export interface StepPromptFingerprint {
+  /** 实际发送 system 提示的 sha256 前 16 hex(promptBody 优先组装后) */
+  systemPromptHash: string;
+  /** 输出契约注入模式(见 JournalEntry.schemaInjection) */
+  schemaInjection: "text-contract" | "none";
+  /** spec.outputSchema 规范化序列化的 sha256 前 16 hex */
+  outputSchemaHash: string;
 }
 
 export interface StepResult {
@@ -83,6 +103,8 @@ export interface StepResult {
   error?: StepError;
   specRef: string;
   contractVersion: string;
+  /** 模型可见输入指纹(成功与失败均携带; M10-A3/A6, 模型可见⟺可回放) */
+  promptFingerprint?: StepPromptFingerprint;
 }
 
 /** Provider 注入接口(真 DSH ctx.llm 适配留挂载阶段, 见 packages/novelcraft/README.md seam 契约) */

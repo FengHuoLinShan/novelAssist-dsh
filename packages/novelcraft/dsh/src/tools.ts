@@ -108,6 +108,12 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           input_tokens: { type: 'integer', required: true },
           output_tokens: { type: 'integer', required: true },
           error: { type: 'string', required: true },
+          spec_ref: { type: 'string', required: true },
+          contract_version: { type: 'string', required: true },
+          prompt_hash: { type: 'string', required: true },
+          schema_injection: { type: 'string', required: true },
+          output_schema_hash: { type: 'string', required: true },
+          journal: { type: 'array', required: true },
         },
       },
       timeoutMs: 300_000,
@@ -123,8 +129,8 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           overrides: {
             ...(args.model ? { model: args.model } : {}),
             ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
-            ...(args.max_tokens !== undefined ? { maxTokens: args.max_tokens } : {}),
-            ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
+            ...(args.max_tokens ? { maxTokens: args.max_tokens } : {}),
+            ...(args.timeout_ms ? { timeoutMs: args.timeout_ms } : {}),
           },
           fixAttempts: args.fix_attempts ?? 1,
         }, run.root, run.signal);
@@ -132,12 +138,36 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         const text = result.result && typeof result.result === 'object'
           ? JSON.stringify(result.result)
           : String(result.result ?? '');
+        // M10-A4/N38: 回执不再截断正文, 且完整回传 journal 与模型可见指纹
+        // (promptFingerprint: systemPromptHash/schemaInjection/outputSchemaHash)——
+        // 模型可见⟺可回放, 调用方可审计实际发送的 system 提示与注入模式。
+        // journal 逐字段投影为纯 JSON 对象(接口类型无 index signature, 直接透传不满足
+        // 工具 output 的 JsonValue 契约)。
+        const fp = result.promptFingerprint;
         return {
           ok: true,
-          text: text.slice(0, 8000),
+          text,
           input_tokens: result.usage.inputTokens,
           output_tokens: result.usage.outputTokens,
           error: result.error ? `${result.error.kind}: ${result.error.message}` : '',
+          spec_ref: result.specRef,
+          contract_version: result.contractVersion,
+          prompt_hash: fp?.systemPromptHash ?? '',
+          schema_injection: fp?.schemaInjection ?? '',
+          output_schema_hash: fp?.outputSchemaHash ?? '',
+          journal: result.journal.map((e) => ({
+            attempt: e.attempt,
+            startedAt: e.startedAt,
+            durationMs: e.durationMs,
+            ...(e.providerText !== undefined ? { providerText: e.providerText } : {}),
+            ...(e.usage !== undefined
+              ? { usage: { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens } }
+              : {}),
+            ...(e.errorKind !== undefined ? { errorKind: e.errorKind } : {}),
+            ...(e.errorMessage !== undefined ? { errorMessage: e.errorMessage } : {}),
+            ...(e.promptHash !== undefined ? { promptHash: e.promptHash } : {}),
+            ...(e.schemaInjection !== undefined ? { schemaInjection: e.schemaInjection } : {}),
+          })),
         };
       },
     }),

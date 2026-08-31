@@ -379,6 +379,40 @@ describe('NovelCraftService 端到端', () => {
     env.cleanup();
   });
 
+  it('工具 novelcraft_llm_step: M10-A4/N38 回执不截断且带 journal 与模型可见指纹', async () => {
+    const env = await setup();
+    env.h.adapter.enqueue({
+      deltas: ['{"findings":[],"verdict":"通过"}'],
+    });
+    const t = tool(env, 'novelcraft_llm_step');
+    const out = (await t.execute(
+      { spec: 'semantic_review', input: '正文' },
+      { ...env.exec, name: 'novelcraft_llm_step' },
+    )) as {
+      text: string; spec_ref: string; contract_version: string;
+      prompt_hash: string; schema_injection: string; output_schema_hash: string;
+      journal: Array<Record<string, unknown>>;
+    };
+    // 正文不截断(完整 JSON 结果)
+    expect(out.text.endsWith('}')).toBe(true);
+    expect(out.spec_ref).toBe('semantic_review');
+    expect(out.contract_version).toBeTruthy();
+    // 模型可见指纹: hash 16 hex + json 形态文本契约注入
+    expect(out.prompt_hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(out.schema_injection).toBe('text-contract');
+    expect(out.output_schema_hash).toMatch(/^[0-9a-f]{16}$/);
+    // journal 完整回传, 每条带指纹字段(N38: 模型可见⟺可回放)
+    expect(out.journal.length).toBeGreaterThanOrEqual(1);
+    for (const entry of out.journal) {
+      expect(entry.promptHash).toBe(out.prompt_hash);
+      expect(entry.schemaInjection).toBe('text-contract');
+    }
+    // 模型确实收到契约文本(adapter 记录的 GenerateOptions.system 槽)
+    const system = env.h.adapter.requests[0]?.system ?? '';
+    expect(system).toContain('OUTPUT_CONTRACT');
+    env.cleanup();
+  });
+
   it('工具 novelcraft_llm_step: exec.signal 捕获并贯通(已 abort → 宿主失败通道)', async () => {
     const env = await setup();
     env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
