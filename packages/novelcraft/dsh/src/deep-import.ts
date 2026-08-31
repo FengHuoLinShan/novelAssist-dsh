@@ -97,6 +97,12 @@ export interface DeepImportOptions {
   endChapter: number;
   /** 分片/批量策略覆盖(缺省 @novelcraft/trace loadPolicyDefaults)。 */
   policy?: DeepImportPolicy;
+  /**
+   * 强制新 run(M10-B1/B2/N40): 不复用同 scope 旧 run —— uniqueRunId 附加时间戳段,
+   * classification 恒为 new(全 scope 授权)。completed run 的结果重放从此成为
+   * 作者显式选择(workflow_start_new), 不再隐式发生。
+   */
+  force?: boolean;
 }
 
 /**
@@ -312,7 +318,10 @@ export async function deepImport(
     startChapter: opts.startChapter,
     endChapter: opts.endChapter,
     confirmed: true, // R40 授权快照: 范围/恢复授权放行后 confirmed 强制 true
-  }, new Date(), `imp-${opts.startChapter}-${opts.endChapter}`);
+  }, new Date(), opts.force
+    // force: unique 段附加时间戳 → 不同 workflowId → hasRun=false → 全 scope 新授权。
+    ? `imp-${opts.startChapter}-${opts.endChapter}-f${Date.now().toString(36)}`
+    : `imp-${opts.startChapter}-${opts.endChapter}`);
   const profileFingerprint = fingerprintExecutionProfile(resolved);
   const contractVersions = resolved.contractVersions ?? {};
   const inputFingerprint = imports.deepImportInputFingerprint(root, plan, loadPolicyDefaults(opts.policy), contractVersions);

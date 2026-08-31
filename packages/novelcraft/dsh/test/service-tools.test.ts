@@ -219,6 +219,10 @@ describe('NovelCraftService 端到端', () => {
       'novelcraft_rag_search',
       'novelcraft_store_adopt',
       'novelcraft_store_index',
+      'novelcraft_workflow_abandon',
+      'novelcraft_workflow_inspect',
+      'novelcraft_workflow_resume',
+      'novelcraft_workflow_start_new',
     ]);
     for (const definition of env.tools) {
       const schema = definition.output.schema as {

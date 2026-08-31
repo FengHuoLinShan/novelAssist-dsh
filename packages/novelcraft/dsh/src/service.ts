@@ -17,6 +17,7 @@ import { createNovelCraftCapabilities, type NovelCraftCapabilities } from './cap
 import { createNovelcraftClientFace, type NovelcraftUiFace } from './client-face.js';
 import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
+import * as workflowFace from './workflow-face.js';
 import { DshRadarJobHost, RadarScheduler } from './jobs/radar.js';
 import { ActiveVaultWatchScheduler, TransactionWatchStatePersistence } from './jobs/watch-state.js';
 import { NovelcraftNodeRuntime } from './lifecycle/node-runtime.js';
@@ -384,6 +385,40 @@ export class NovelCraftService extends Service {
    *  .receiptMaxChars 显式缺省 65,536 —— 工具经 capabilities.read 读取, 不直读 config。 */
   receiptLimit(): number {
     return this.config.llm.receiptMaxChars ?? 65_536;
+  }
+
+  /** 只读枚举 durable workflow runs + checkpoint 概要(M10-B1/N40, read 声明表)。 */
+  workflowInspect(root: string): ReturnType<typeof workflowFace.workflowInspect> {
+    return workflowFace.workflowInspect(root);
+  }
+
+  /** 恢复 deep-import run: checkpoint scope 续跑(授权只请求剩余, N33 P2 既有语义)。 */
+  async workflowResumeGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    root: string,
+    workflowId: string,
+    signal?: AbortSignal,
+  ) {
+    return workflowFace.workflowResumeGuarded(this, agent, root, workflowId, signal);
+  }
+
+  /** 显式新 run(force): 不复用同 scope 旧 run, 全 scope 授权(M10-B2: completed 重放显式化)。 */
+  async workflowStartNewGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    root: string,
+    opts: import('./deep-import.js').DeepImportOptions,
+    signal?: AbortSignal,
+  ) {
+    return workflowFace.workflowStartNewGuarded(this, agent, root, opts, signal);
+  }
+
+  /** 放弃 run: 审批 → 清理 run 目录(+绑定 checkpoint) → 精确 git 提交; 不动 canonical。 */
+  async workflowAbandonGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    root: string,
+    args: { kind: 'deep-import' | 'map-atlas'; workflowId: string },
+  ) {
+    return workflowFace.workflowAbandonGuarded(this, agent, root, args);
   }
 
   /** 便捷: 消费当前会话已授权的图片收据(候选写入不过 approval, N29)。 */

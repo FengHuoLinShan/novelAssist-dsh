@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { NovelCraftService } from '../src/index.js';
 import {
   NovelcraftMapAtlasPlugin,
+  NovelcraftWorkflowToolsPlugin,
   NovelcraftWritingToolsPlugin,
 } from '../src/internal.js';
 import { makeContext, type HarnessServices } from './helpers.js';
@@ -58,22 +59,30 @@ afterEach(() => {
 });
 
 describe('config.tools 工具组开关(profile 即产品)', () => {
-  it('缺省 → 21 个(15 写作/存储 + 6 地图册)', async () => {
+  it('缺省 → 25 个(15 写作/存储 + 6 地图册 + 4 workflow 恢复面, M10-B1/N40)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(21);
+    expect(env.tools.length).toBe(25);
     expect(env.tools.filter((t) => t.name.startsWith('novelcraft_map_atlas_')).length).toBe(6);
+    expect(env.tools.filter((t) => t.name.startsWith('novelcraft_workflow_')).length).toBe(4);
   });
 
-  it('mapAtlas=false → 只注册 15 个写作/存储工具(零 map_atlas 面)', async () => {
+  it('mapAtlas=false → 19 个(写作/存储 + workflow; 零 map_atlas 面)', async () => {
     const env = await setup({ tools: { mapAtlas: false } });
-    expect(env.tools.length).toBe(15);
+    expect(env.tools.length).toBe(19);
     expect(env.tools.every((t) => !t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
   });
 
-  it('writing=false → 只注册 6 个地图册工具', async () => {
+  it('writing=false → 10 个(地图册 + workflow)', async () => {
     const env = await setup({ tools: { writing: false } });
-    expect(env.tools.length).toBe(6);
-    expect(env.tools.every((t) => t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
+    expect(env.tools.length).toBe(10);
+    expect(env.tools.every((t) =>
+      t.name.startsWith('novelcraft_map_atlas_') || t.name.startsWith('novelcraft_workflow_'))).toBe(true);
+  });
+
+  it('workflow=false → 21 个(恢复面整组关闭)', async () => {
+    const env = await setup({ tools: { workflow: false } });
+    expect(env.tools.length).toBe(21);
+    expect(env.tools.every((t) => !t.name.startsWith('novelcraft_workflow_'))).toBe(true);
   });
 });
 
@@ -81,10 +90,10 @@ describe('工具组独立插件(inject novelcraft; 组合式 profile)', () => {
   it('NovelcraftMapAtlasPlugin 单独挂载 → 只注册 6 个地图册工具(与默认路径逐名一致)', async () => {
     const base = await setup();
     const env = await setup({ tools: { mapAtlas: false } });
-    expect(env.tools.length).toBe(15);
+    expect(env.tools.length).toBe(19);
     await env.h.ctx.plugin(NovelcraftMapAtlasPlugin);
-    expect(env.tools.length).toBe(21);
-    expect(env.tools.slice(15).every((t) => t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
+    expect(env.tools.length).toBe(25);
+    expect(env.tools.slice(19).every((t) => t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
     const atlasNames = (list: ToolDefinition[]) =>
       list.map((t) => t.name).filter((n) => n.startsWith('novelcraft_map_atlas_')).sort();
     expect(atlasNames(env.tools)).toEqual(atlasNames(base.tools));
@@ -95,8 +104,19 @@ describe('工具组独立插件(inject novelcraft; 组合式 profile)', () => {
     const env = await setup({ tools: { writing: false } });
     await env.h.ctx.plugin(NovelcraftWritingToolsPlugin);
     const writingNames = (list: ToolDefinition[]) =>
-      list.map((t) => t.name).filter((n) => !n.startsWith('novelcraft_map_atlas_')).sort();
+      list.map((t) => t.name)
+        .filter((n) => !n.startsWith('novelcraft_map_atlas_') && !n.startsWith('novelcraft_workflow_')).sort();
     expect(writingNames(env.tools)).toEqual(writingNames(base.tools));
+  });
+
+  it('NovelcraftWorkflowToolsPlugin 单独挂载 → 4 个恢复工具(与默认路径逐名一致, M10-B1)', async () => {
+    const base = await setup();
+    const env = await setup({ tools: { workflow: false } });
+    expect(env.tools.filter((t) => t.name.startsWith('novelcraft_workflow_'))).toHaveLength(0);
+    await env.h.ctx.plugin(NovelcraftWorkflowToolsPlugin);
+    const wfNames = (list: ToolDefinition[]) =>
+      list.map((t) => t.name).filter((n) => n.startsWith('novelcraft_workflow_')).sort();
+    expect(wfNames(env.tools)).toEqual(wfNames(base.tools));
   });
 
   it('服务缺失 → 插件等待不启动(inject 语义: 零注册、不炸宿主)', async () => {
@@ -118,22 +138,23 @@ describe('工具组独立插件(inject novelcraft; 组合式 profile)', () => {
     expect(() => new NovelcraftWritingToolsPlugin(ctx)).toThrow(/novelcraft 服务不可用/);
   });
 
-  it('MapAtlas 插件 dispose → 6 个地图册工具逐个注销, 默认路径 15 个保留', async () => {
+  it('MapAtlas 插件 dispose → 6 个地图册工具逐个注销, 默认路径 19 个保留', async () => {
     const env = await setup({ tools: { mapAtlas: false } });
-    expect(env.tools.length).toBe(15);
+    expect(env.tools.length).toBe(19);
     const fork = await env.h.ctx.plugin(NovelcraftMapAtlasPlugin);
-    expect(env.tools.length).toBe(21);
+    expect(env.tools.length).toBe(25);
     await fork.dispose();
-    expect(env.tools.length).toBe(15);
+    expect(env.tools.length).toBe(19);
     expect(env.tools.every((t) => !t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
   });
 
-  it('Writing 插件 dispose → 15 个写作/存储工具全部注销, 默认路径 6 个保留', async () => {
+  it('Writing 插件 dispose → 15 个写作/存储工具全部注销, 默认路径 10 个保留', async () => {
     const env = await setup({ tools: { writing: false } });
     const fork = await env.h.ctx.plugin(NovelcraftWritingToolsPlugin);
-    expect(env.tools.length).toBe(21);
+    expect(env.tools.length).toBe(25);
     await fork.dispose();
-    expect(env.tools.length).toBe(6);
-    expect(env.tools.every((t) => t.name.startsWith('novelcraft_map_atlas_'))).toBe(true);
+    expect(env.tools.length).toBe(10);
+    expect(env.tools.every((t) =>
+      t.name.startsWith('novelcraft_map_atlas_') || t.name.startsWith('novelcraft_workflow_'))).toBe(true);
   });
 });

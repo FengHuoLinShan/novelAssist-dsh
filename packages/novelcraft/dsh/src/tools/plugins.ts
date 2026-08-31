@@ -7,8 +7,9 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from '../ctx.js';
 import type { NovelCraftService } from '../service.js';
-import { buildTools, isMapAtlasTool } from '../tools.js';
+import { buildTools, isMapAtlasTool, isWorkflowTool } from '../tools.js';
 import { buildMapAtlasTools } from './map-atlas.js';
+import { buildWorkflowTools } from './workflow.js';
 
 /** 带逆序回滚的批量注册(与 registerNovelcraftTools 同语义, 供插件构造器复用)。 */
 export function registerToolList(
@@ -35,14 +36,14 @@ function resolveService(ctx: Context): NovelCraftService {
   return service;
 }
 
-/** 写作/存储工具组(15 个: novelcraft_ 前缀非 map_atlas 面)。 */
+/** 写作/存储工具组(15 个: novelcraft_ 前缀非 map_atlas/workflow 面)。 */
 export class NovelcraftWritingToolsPlugin {
   static name = 'novelcraft-writing-tools';
   static inject = ['novelcraft'] as const;
 
   constructor(ctx: Context) {
     const service = resolveService(ctx);
-    const definitions = buildTools(ctx, service).filter((tool) => !isMapAtlasTool(tool.name));
+    const definitions = buildTools(ctx, service).filter((tool) => !isMapAtlasTool(tool.name) && !isWorkflowTool(tool.name));
     const disposers = registerToolList(ctx, definitions);
     ctx.effect(() => () => {
       for (const dispose of disposers) {
@@ -60,6 +61,22 @@ export class NovelcraftMapAtlasPlugin {
   constructor(ctx: Context) {
     const service = resolveService(ctx);
     const disposers = registerToolList(ctx, buildMapAtlasTools(ctx, service));
+    ctx.effect(() => () => {
+      for (const dispose of disposers) {
+        try { dispose(); } catch { /* 卸载尽力而为 */ }
+      }
+    });
+  }
+}
+
+/** 长任务恢复工具组(4 个: novelcraft_workflow_ 前缀, M10-B1/N40)。 */
+export class NovelcraftWorkflowToolsPlugin {
+  static name = 'novelcraft-workflow-tools';
+  static inject = ['novelcraft'] as const;
+
+  constructor(ctx: Context) {
+    const service = resolveService(ctx);
+    const disposers = registerToolList(ctx, buildWorkflowTools(ctx, service));
     ctx.effect(() => () => {
       for (const dispose of disposers) {
         try { dispose(); } catch { /* 卸载尽力而为 */ }

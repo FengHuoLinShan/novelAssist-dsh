@@ -21,6 +21,8 @@ const READ_METHODS = [
   // M10-A review(N39 ②): 工具回执上界读取走声明表 —— 工具不得直读 service.config
   // (N35 源码扫描只放行 capabilities./vaults.)。
   'receiptLimit',
+  // M10-B1(N40): 长任务恢复只读面(durable run 枚举 + checkpoint 概要)。
+  'workflowInspect',
 ] as const satisfies readonly MethodName[];
 
 const PROPOSE_METHODS = [
@@ -53,6 +55,10 @@ const ADOPT_PAIRS = [
   ['deepImport', 'deepImport'],
   ['saveChapter', 'saveChapterGuarded'],
   ['restoreChapter', 'restoreChapterGuarded'],
+  // M10-B1(N40): 长任务恢复动作面(§6.9/§6.6)。
+  ['workflowResume', 'workflowResumeGuarded'],
+  ['workflowStartNew', 'workflowStartNewGuarded'],
+  ['workflowAbandon', 'workflowAbandonGuarded'],
 ] as const satisfies ReadonlyArray<readonly [string, MethodName]>;
 
 /** 自名方法列表 → 命名空间类型(键 = 方法名)。 */

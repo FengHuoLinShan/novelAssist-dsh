@@ -1,0 +1,216 @@
+// M10-B1/N40 行为契约: 长任务恢复面(workflow 工具组)。
+// 断言依据: 后续开发计划.md §2 Track B(B1/B2)、ADR-0022/N33(不可变 run + 逐批恢复)、
+// 铁律 3(abandon 审批 fail-closed)、铁律 2(不动 canonical, git 是回滚面)、
+// R12 目录容错(坏 manifest 仍列出)。
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { gitAdd, gitCommit } from '@novelcraft/store';
+import { NovelCraftService } from '../src/index.js';
+import { registerNovelcraftTools, buildTools, isWorkflowTool } from '../src/tools.js';
+import { makeContext } from './helpers.js';
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
+
+const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
+
+interface TestEnv {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  h: any;
+  service: NovelCraftService;
+  root: string;
+  tools: ToolDefinition[];
+  cleanup: () => void;
+}
+
+async function setup(opts: { approval: { outcome: 'allowed-once' | 'rejected' } }): Promise<TestEnv> {
+  const h = await makeContext(opts);
+  // FakeApproval.config 经基类(schemastery Service)构造链归一化会丢弃 outcome 键;
+  // 本文件以实例级 request 覆写固定 outcome(请求记录仍走原 push 逻辑, 断言不受影响)。
+  const recorded = h.approval.requests;
+  const outcome = opts.approval.outcome;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (h.approval as any).request = async (req: unknown) => {
+    recorded.push(req as never);
+    return outcome;
+  };
+  const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-wf-'));
+  const tools: ToolDefinition[] = [];
+  h.ctx.provide('tools', {
+    register(def: ToolDefinition) {
+      tools.push(def);
+      return () => {};
+    },
+  });
+  await h.ctx.plugin(NovelCraftService, {
+    llm: { provider: 'fake', model: 'fake-model' },
+    vaultsDir,
+    watch: { enabled: false, intervalMinutes: 60 },
+  });
+  const binding = h.ctx.novelcraft.vaults.ensureVault('测试书');
+  await h.ctx.novelcraft.vaults.bindSession('s1', binding);
+  const root = binding.root;
+  return {
+    h,
+    service: h.ctx.novelcraft,
+    root,
+    tools,
+    cleanup: () => rmSync(vaultsDir, { recursive: true, force: true }),
+  };
+}
+
+function writeRunManifest(root: string, workflowId: string, doc: Record<string, unknown>): void {
+  const dir = path.join(root, '.assistant', 'import-runs', workflowId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(doc), 'utf8');
+}
+
+function writeCheckpoint(root: string, planId: string, start: number, end: number): void {
+  mkdirSync(path.join(root, '.assistant'), { recursive: true });
+  writeFileSync(
+    path.join(root, '.assistant', 'checkpoint.json'),
+    JSON.stringify({ plan: { workflow_id: planId, authorization: { scope: { start_chapter: start, end_chapter: end } } } }),
+    'utf8',
+  );
+}
+
+const tool = (env: TestEnv, name: string): ToolDefinition => {
+  const t = env.tools.find((x) => x.name === name);
+  if (!t) throw new Error(`工具未注册: ${name}`);
+  return t;
+};
+
+const exec = (env: TestEnv, name: string, args: Record<string, unknown>) =>
+  tool(env, name).execute(args, { callId: 'c1', name, arguments: args, agent: fakeAgent, signal: new AbortController().signal });
+
+describe('workflow 工具组(M10-B1/N40)', () => {
+  it('注册面: 默认 25 工具(含 4 个 workflow); isWorkflowTool 前缀判定; workflow 开关过滤', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    expect(env.tools.filter((t) => isWorkflowTool(t.name)).map((t) => t.name)).toEqual([
+      'novelcraft_workflow_inspect',
+      'novelcraft_workflow_resume',
+      'novelcraft_workflow_start_new',
+      'novelcraft_workflow_abandon',
+    ]);
+    expect(env.tools).toHaveLength(25);
+    // 组开关(workflow:false → 21)在 tools-plugins.test.ts 的组契约中统一断言(此处同 ctx
+    // 不可重复 provide tools 服务; buildTools 全量即 25)。
+    env.cleanup();
+  });
+
+  it('inspect: 空 vault 空表; 有 run 时返回批次进度与指纹; 坏 manifest 容错列出', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    const empty = await exec(env, 'novelcraft_workflow_inspect', { root: env.root }) as { runs: unknown[] };
+    expect(empty.runs).toEqual([]);
+    expect(empty).toMatchObject({ ok: true, checkpoint_workflow_id: '' });
+
+    writeRunManifest(env.root, 'wf-abcdef0123456789-imp-1-2', {
+      status: 'running',
+      createdAt: '2026-08-31T00:00:00Z',
+      cursor: { phase: 'slice', ordinal: 3 },
+      batches: { b1: { state: 'completed' }, b2: { state: 'artifact_committed' }, b3: { state: 'waiting_approval' } },
+      inputFingerprint: 'aa'.repeat(32),
+      profileFingerprint: 'bb'.repeat(32),
+    });
+    writeRunManifest(env.root, 'imp-bad', {} as Record<string, unknown>);
+    writeFileSync(path.join(env.root, '.assistant', 'import-runs', 'imp-bad', 'manifest.json'), '{ 这不是 JSON', 'utf8');
+    mkdirSync(path.join(env.root, '.assistant', 'import-runs', 'imp-empty'), { recursive: true });
+    writeCheckpoint(env.root, 'imp-1-2', 1, 2);
+
+    const out = await exec(env, 'novelcraft_workflow_inspect', { root: env.root }) as {
+      runs: Array<Record<string, unknown>>; checkpoint_workflow_id: string; checkpoint_scope: string;
+    };
+    expect(out.runs).toHaveLength(3);
+    const good = out.runs.find((r) => r.status === 'running');
+    expect(good).toMatchObject({
+      kind: 'deep-import',
+      run_dir: '.assistant/import-runs/wf-abcdef0123456789-imp-1-2',
+      workflow_id: 'wf-abcdef0123456789-imp-1-2',
+      cursor: { phase: 'slice', ordinal: 3 },
+    });
+    expect(good?.batches).toEqual({ total: 3, completed: 2, other: 1 });
+    // 坏 manifest(缺 manifest.json)与结构异常 → 容错列出 corrupt
+    const bad = out.runs.find((r) => r.workflow_id === 'imp-bad');
+    expect(bad?.corrupt).toBeTruthy();
+    const empty2 = out.runs.find((r) => r.workflow_id === 'imp-empty');
+    expect(empty2?.corrupt).toContain('manifest.json 缺失');
+    // checkpoint 概要
+    expect(out.checkpoint_workflow_id).toBe('imp-1-2');
+    expect(out.checkpoint_scope).toBe('1-2');
+    env.cleanup();
+  });
+
+  it('resume fail-closed: 无 checkpoint / workflowId 不绑定 → 拒绝并指引, 零 provider 调用', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    writeRunManifest(env.root, 'wf-abcdef0123456789-imp-1-2', { status: 'running' });
+    // 无 checkpoint
+    await expect(exec(env, 'novelcraft_workflow_resume', { root: env.root, workflow_id: 'wf-abcdef0123456789-imp-1-2' }))
+      .rejects.toMatchObject({ code: 'WORKFLOW_RESUME_INVALID', message: expect.stringContaining('checkpoint 不可读') });
+    // checkpoint 指向别的 plan
+    writeCheckpoint(env.root, 'imp-9-9', 9, 9);
+    await expect(exec(env, 'novelcraft_workflow_resume', { root: env.root, workflow_id: 'wf-abcdef0123456789-imp-1-2' }))
+      .rejects.toMatchObject({ code: 'WORKFLOW_RESUME_INVALID', message: expect.stringContaining('不绑定') });
+    expect(env.h.adapter.requests).toHaveLength(0);
+    env.cleanup();
+  });
+
+  it('abandon: 审批拒绝 → 零清理; 放行 → 删 run 目录+绑定 checkpoint 并精确 git 提交', async () => {
+    // 拒绝路径
+    const rej = await setup({ approval: { outcome: 'rejected' } });
+    writeRunManifest(rej.root, 'wf-abcdef0123456789-imp-1-2', { status: 'failed' });
+    writeCheckpoint(rej.root, 'imp-1-2', 1, 2);
+    let rejErr: unknown;
+    try {
+      await exec(rej, 'novelcraft_workflow_abandon', {
+        root: rej.root, kind: 'deep-import', workflow_id: 'wf-abcdef0123456789-imp-1-2',
+      });
+    } catch (err) {
+      rejErr = err;
+    }
+    expect((rejErr as { code?: string }).code).toBe('WORKFLOW_ABANDON_REJECTED');
+    expect(existsSync(path.join(rej.root, '.assistant', 'import-runs', 'wf-abcdef0123456789-imp-1-2', 'manifest.json'))).toBe(true);
+    expect(existsSync(path.join(rej.root, '.assistant', 'checkpoint.json'))).toBe(true);
+    rej.cleanup();
+  });
+
+  it('abandon 放行: 删 run 目录+绑定 checkpoint 并精确 git 提交, 工作树干净', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    writeRunManifest(env.root, 'wf-abcdef0123456789-imp-1-2', { status: 'failed' });
+    writeCheckpoint(env.root, 'imp-1-2', 1, 2);
+    // 真实 run/checkpoint 由 persistence 提交入库; fixture 对齐(否则删除无 pathspec 可记)。
+    gitAdd(env.root, ['.assistant/import-runs/wf-abcdef0123456789-imp-1-2/manifest.json', '.assistant/checkpoint.json']);
+    gitCommit(env.root, 'test: seed run + checkpoint');
+    const out = await exec(env, 'novelcraft_workflow_abandon', {
+      root: env.root, kind: 'deep-import', workflow_id: 'wf-abcdef0123456789-imp-1-2',
+    }) as { abandoned: string[] };
+    expect(out.abandoned).toEqual(['.assistant/import-runs/wf-abcdef0123456789-imp-1-2', '.assistant/checkpoint.json']);
+    expect(existsSync(path.join(env.root, '.assistant', 'import-runs', 'wf-abcdef0123456789-imp-1-2'))).toBe(false);
+    expect(existsSync(path.join(env.root, '.assistant', 'checkpoint.json'))).toBe(false);
+    // 精确 git 提交: HEAD message 含 abandon; 工作树干净
+    const log = execFileSync('git', ['-C', env.root, 'log', '-1', '--pretty=%B'], { encoding: 'utf8' });
+    expect(log).toContain('abandon workflow run wf-abcdef0123456789-imp-1-2');
+    const status = execFileSync('git', ['-C', env.root, 'status', '--porcelain'], { encoding: 'utf8' });
+    expect(status.trim()).toBe('');
+    env.cleanup();
+  });
+
+  it('abandon: 不存在的 run 目录 → 拒绝(零审批零副作用)', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    await expect(exec(env, 'novelcraft_workflow_abandon', {
+      root: env.root, kind: 'map-atlas', workflow_id: 'no-such-run',
+    })).rejects.toMatchObject({ code: 'WORKFLOW_RUN_NOT_FOUND' });
+    expect(env.h.approval.requests).toHaveLength(0);
+    env.cleanup();
+  });
+
+  it('start_new 参数面: 非法范围在授权前拒绝(与 deep_import 同口径)', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    await expect(exec(env, 'novelcraft_workflow_start_new', {
+      root: env.root, start_chapter: 5, end_chapter: 1,
+    })).rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
+    expect(env.h.approval.requests).toHaveLength(0);
+    expect(env.h.adapter.requests).toHaveLength(0);
+    env.cleanup();
+  });
+});

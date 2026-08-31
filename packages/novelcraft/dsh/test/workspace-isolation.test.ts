@@ -298,7 +298,7 @@ describe('N34 工具工作区隔离(fail-closed)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// N34 全量工具矩阵: 上面的详测只抽查了 4 个工具; 这里对 21 个工具逐一验证
+// N34 全量工具矩阵: 上面的详测只抽查了 4 个工具; 这里对 25 个工具逐一验证
 // 「隔离先于一切服务调用」(define.ts 的 resolveBoundRoot 在 execute 之前),
 // 因此参数都是 schema 合法的哑值, 永远到达不了工具逻辑。
 // ---------------------------------------------------------------------------
@@ -326,17 +326,21 @@ const MATRIX: readonly MatrixEntry[] = [
   { name: 'novelcraft_map_atlas_review', args: (root) => ({ root, action: 'adopt' }) },
   { name: 'novelcraft_map_atlas_annotation', args: (root) => ({ root }) },
   { name: 'novelcraft_map_atlas_update_prompt', args: (root) => ({ root, page_ref: 'p', prompt: 'x' }) },
+  { name: 'novelcraft_workflow_inspect', args: (root) => ({ root }) },
+  { name: 'novelcraft_workflow_resume', args: (root) => ({ root, workflow_id: 'w' }) },
+  { name: 'novelcraft_workflow_start_new', args: (root) => ({ root, start_chapter: 1, end_chapter: 1 }) },
+  { name: 'novelcraft_workflow_abandon', args: (root) => ({ root, kind: 'deep-import', workflow_id: 'w' }) },
 ];
 
-describe('N34 全量工具矩阵(21 工具逐一 fail-closed)', () => {
+describe('N34 全量工具矩阵(25 工具逐一 fail-closed)', () => {
   it('矩阵覆盖全部注册工具(数量与名字一一对应, 新工具不得逃逸矩阵)', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(21);
+    expect(env.tools.length).toBe(25);
     expect(MATRIX.map((e) => e.name).sort()).toEqual(env.tools.map((t) => t.name).sort());
     env.cleanup();
   });
 
-  it('无 agent → 21 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
+  it('无 agent → 25 工具全部拒绝, 零审批/零 provider/零 vault 访问', async () => {
     const env = await setup();
     const beforeA = snapshot(env.rootA);
     for (const entry of MATRIX) {
@@ -352,7 +356,7 @@ describe('N34 全量工具矩阵(21 工具逐一 fail-closed)', () => {
     env.cleanup();
   });
 
-  it('session 未绑定(有 id 无绑定)→ 21 工具全部拒绝', async () => {
+  it('session 未绑定(有 id 无绑定)→ 25 工具全部拒绝', async () => {
     const env = await setup();
     for (const entry of MATRIX) {
       const t = tool(env, entry.name);

@@ -36,6 +36,8 @@ export interface ToolsConfig {
   writing?: boolean;
   /** 地图册工具组(6 个, novelcraft_map_atlas_ 前缀; 默认开) */
   mapAtlas?: boolean;
+  /** 长任务恢复工具组(4 个, novelcraft_workflow_ 前缀; M10-B1/N40, 默认开) */
+  workflow?: boolean;
 }
 
 export interface Config {

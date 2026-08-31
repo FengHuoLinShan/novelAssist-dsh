@@ -15,6 +15,7 @@ import type { NovelCraftService } from './service.js';
 import { novelcraftToolFactory } from './tools/define.js';
 import { buildMapAtlasTools } from './tools/map-atlas.js';
 import { buildWritingTools } from './tools/writing.js';
+import { buildWorkflowTools } from './tools/workflow.js';
 import { llmError } from './tools/shared.js';
 
 export { WorkspaceIsolationError } from './tools/shared.js';
@@ -23,11 +24,17 @@ export { WorkspaceIsolationError } from './tools/shared.js';
 export interface ToolGroupOptions {
   writing?: boolean;
   mapAtlas?: boolean;
+  workflow?: boolean;
 }
 
 /** 地图册工具组按名称前缀识别(novelcraft_map_atlas_*, 其余为写作/存储组)。 */
 export function isMapAtlasTool(name: string): boolean {
   return name.startsWith('novelcraft_map_atlas_');
+}
+
+/** workflow 工具组按名称前缀识别(novelcraft_workflow_*, M10-B1/N40)。 */
+export function isWorkflowTool(name: string): boolean {
+  return name.startsWith('novelcraft_workflow_');
 }
 
 /**
@@ -48,7 +55,9 @@ export function registerNovelcraftTools(
   const disposers: Array<() => void> = [];
   try {
     for (const tool of buildTools(ctx, service)) {
-      if (isMapAtlasTool(tool.name) ? groups.mapAtlas === false : groups.writing === false) continue;
+      if (isWorkflowTool(tool.name)) {
+        if (groups.workflow === false) continue;
+      } else if (isMapAtlasTool(tool.name) ? groups.mapAtlas === false : groups.writing === false) continue;
       disposers.push(registry.register(tool));
     }
     return disposers;
@@ -667,5 +676,6 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
     }),
     ...buildMapAtlasTools(ctx, service),
+    ...buildWorkflowTools(ctx, service),
   ];
 }
