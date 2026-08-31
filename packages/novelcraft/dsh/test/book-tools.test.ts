@@ -85,6 +85,36 @@ describe('book 工具组(M11/N42)', () => {
     env.cleanup();
   });
 
+  it('未绑定会话可用(review P0-1 修复): list/create/open 不被工厂拦截(首绑入口不死锁)', async () => {
+    const env = await setup();
+    // 未绑定的 agent(有 session id, 无 vault 绑定)
+    const unbound = { id: 'u1', session: { id: 'fresh-unbound' } } as never;
+    const listed = await exec(env, 'novelcraft_book_list', {}, unbound) as { books: Array<Record<string, unknown>> };
+    expect(listed.books.length).toBeGreaterThanOrEqual(1);
+    expect(listed.books.every((b) => b.current === false)).toBe(true); // 无绑定 → 无 current
+    const created = await exec(env, 'novelcraft_book_create', { book: '未绑定的第一本' }, unbound) as { created: boolean };
+    expect(created.created).toBe(true);
+    // open 把未绑定会话首绑到既有书
+    const opened = await exec(env, 'novelcraft_book_open', { book: '未绑定的第一本' }, unbound) as { activated: boolean };
+    expect(opened.activated).toBe(true);
+    const after = await exec(env, 'novelcraft_book_list', {}, unbound) as { books: Array<Record<string, unknown>> };
+    expect(after.books.find((b) => b.book === '未绑定的第一本')?.current).toBe(true);
+    env.cleanup();
+  });
+
+  it('书名穿越/非法名 → 零审批拒绝(review P2)', async () => {
+    const env = await setup();
+    for (const evil of ['../escape', 'a/b', '..', '.']) {
+      let err: unknown;
+      try {
+        await exec(env, 'novelcraft_book_create', { book: evil });
+      } catch (e) { err = e; }
+      expect((err as { code?: string }).code).toBeTruthy();
+    }
+    expect(env.h.approval.requests).toHaveLength(0); // 校验先于审批
+    env.cleanup();
+  });
+
   it('create: 审批通过后初始化新书(幂等); 拒绝时零初始化', async () => {
     const rej = await setup({ outcome: 'rejected' });
     let err: unknown;

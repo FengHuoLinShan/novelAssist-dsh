@@ -78,10 +78,13 @@ export async function bookCreateGuarded(
   agent: Parameters<NovelCraftService['deepImport']>[0],
   book: string,
 ): Promise<{ book: string; root: string; created: boolean }> {
+  // 校验先于审批(review P2-1): 非法书名零审批拒绝(rootForBook 内 validateBookDirName)。
+  service.vaults.rootForBook(book);
   const existed = service.vaults.readVault(service.vaults.rootForBook(book)) !== undefined;
   const decision = await service.approval.request(agent, {
     action: '创建新书',
-    summary: `在书库创建新书「${book}」(初始化 book.yml + 目录骨架 + git 仓库)`,
+    summary: `在书库创建新书「${book}」(初始化 book.yml + 目录骨架 + git 仓库)` +
+      (existed ? '; 注意: 同名书已存在, 将直接返回既有(幂等, 不动现有文件)' : ''),
     items: [`书名: ${book}`],
   });
   if (decision !== 'allowed-once') {
@@ -98,21 +101,29 @@ export async function bookOpenGuarded(
   sessionId: string,
   book: string,
 ): Promise<{ book: string; root: string; activated: boolean; count: number }> {
-  const decision = await service.approval.request(agent, {
-    action: '切换当前会话的书',
-    summary: `把当前会话的工作区绑定切换到书「${book}」(后续创作工具将作用于该书)`,
-    items: [`目标书: ${book}`],
-  });
-  if (decision !== 'allowed-once') {
-    throw new HarnessError(`切换书未获批准(${decision}), 绑定不变(fail-closed)`, 'BOOK_OPEN_REJECTED');
-  }
-  const binding = service.vaults.readVault(service.vaults.rootForBook(book));
-  if (binding === undefined) {
+  // 校验先于审批(review P2-1): 目标书不存在零审批拒绝; 摘要写明从哪本切到哪本。
+  const target = service.vaults.readVault(service.vaults.rootForBook(book));
+  if (target === undefined) {
     throw new HarnessError(
       `书不存在: ${book}(vaultsDir 下无此 book.yml)。请先 book_list 确认或 book_create 创建`,
       'BOOK_NOT_FOUND',
     );
   }
-  const transition = await service.vaults.bindSession(sessionId, binding);
-  return { book: binding.book, root: binding.root, ...transition };
+  const current = await service.vaults.resolve(sessionId).catch(() => undefined);
+  const decision = await service.approval.request(agent, {
+    action: '切换当前会话的书',
+    summary: `把当前会话的工作区绑定从「${current?.book ?? '未绑定'}」切换到「${book}」(后续创作工具将作用于该书)`,
+    items: [`当前: ${current?.book ?? '未绑定'}`, `目标书: ${book}`],
+  });
+  if (decision !== 'allowed-once') {
+    throw new HarnessError(`切换书未获批准(${decision}), 绑定不变(fail-closed)`, 'BOOK_OPEN_REJECTED');
+  }
+  const transition = await service.vaults.bindSession(sessionId, target);
+  // 切绑后驱动守望生命周期(review P1-1): 新书 0→1 激活、旧书 →0 停止 —— 与
+  // session/created|disposed 走同一 nodeRuntime 面(ADR-0023)。
+  if (transition.activated) await service.nodeRuntime.activate(target);
+  if (transition.deactivatedRoot !== undefined) {
+    await service.nodeRuntime.deactivate(transition.deactivatedRoot);
+  }
+  return { book: target.book, root: target.root, ...transition };
 }

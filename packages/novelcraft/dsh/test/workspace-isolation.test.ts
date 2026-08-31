@@ -362,7 +362,8 @@ describe('N34 全量工具矩阵(28 工具逐一 fail-closed)', () => {
   it('session 未绑定(有 id 无绑定)→ 25 工具拒绝; book 组 3 工具例外(发现/创建/首绑入口, M11/N42)', async () => {
     const env = await setup();
     for (const entry of MATRIX) {
-      // book 组是「未绑定也可用」的入口(发现/创建第一本书/首次绑定), 不适用本例。
+      // book 组(bindRoot='none', M11/N42)是「未绑定也可用」的发现/创建/首绑入口——
+      // 工厂不解析 root, 未绑定会话不在本例拦截范围(正例见 book-tools.test.ts)。
       if (entry.name.startsWith('novelcraft_book_')) continue;
       const t = tool(env, entry.name);
       await expect(
@@ -378,7 +379,7 @@ describe('N34 全量工具矩阵(28 工具逐一 fail-closed)', () => {
     const env = await setup();
     const before = snapshot(env.rootB);
     for (const entry of MATRIX) {
-      // llm_step(bindRoot='session')与 book/workflow 组外的无 root 参数工具不适用本例。
+      // 无 root 参数的工具不适用本例: llm_step(bindRoot='session')与 book 组(bindRoot='none')。
       if (entry.name === 'novelcraft_llm_step' || entry.name.startsWith('novelcraft_book_')) continue;
       const t = tool(env, entry.name);
       await expect(

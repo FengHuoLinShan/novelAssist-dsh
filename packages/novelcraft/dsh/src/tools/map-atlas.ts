@@ -3,6 +3,7 @@
 // 有意排除 afterMutation: atlas 页不在 radar/rag 语料面(§11 事件映射无 atlas 事件),
 // 维持现状零雷达零索引副作用; 若未来纳入语料, 在 EVENT_RADAR_MAP 加事件键即可。
 import type { Context } from '@deepseek-ai/cordis';
+import { requireRoot } from '../tools/shared.js';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import type { NovelCraftService } from '../service.js';
@@ -39,7 +40,7 @@ export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): To
       },
       timeoutMs: 3_600_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.propose.planMapAtlas(run.root, {
+        const result = await run.service.capabilities.propose.planMapAtlas(requireRoot(run), {
           run_kind: args.full_rebuild ? 'initial' : 'update',
           style_note: args.style_note,
           include_working_drafts: args.include_working_drafts,
@@ -101,7 +102,7 @@ export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): To
         },
       },
       async execute(args, run) {
-        const { tree, run: atlasRun } = run.service.capabilities.read.viewMapAtlas(run.root, args.run_id);
+        const { tree, run: atlasRun } = run.service.capabilities.read.viewMapAtlas(requireRoot(run), args.run_id);
         return {
           ok: true,
           adopted_nodes: tree.nodes.length,
@@ -138,7 +139,7 @@ export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): To
         },
       },
       async execute(args, run) {
-        const result = run.service.capabilities.propose.importAtlasImage(run.root, {
+        const result = run.service.capabilities.propose.importAtlasImage(requireRoot(run), {
           receiptId: args.receipt_id,
           sessionId: run.sessionId(),
         });
@@ -181,7 +182,7 @@ export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): To
       async execute(args, run) {
         const result = await run.service.capabilities.adoptGuarded.reviewMapAtlas(
           run.agent,
-          run.root,
+          requireRoot(run),
           { pageRef: args.page_ref, nodeRef: args.node_ref },
           args.action,
           { confirmConflicts: args.confirm_conflicts, expectedContentHash: args.expected_content_hash, note: args.note },
@@ -213,7 +214,7 @@ export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): To
         },
       },
       async execute(_args, run) {
-        const result = await run.service.capabilities.propose.authorEdit.annotations(run.root);
+        const result = await run.service.capabilities.propose.authorEdit.annotations(requireRoot(run));
         const status: 'complete' | 'partial' | 'no_change' = result.failed > 0
           ? 'partial'
           : result.files === 0 ? 'no_change' : 'complete';
@@ -252,7 +253,7 @@ export function buildMapAtlasTools(ctx: Context, service: NovelCraftService): To
       },
       async execute(args, run) {
         const page = await run.service.capabilities.propose.updateAtlasPrompt(
-          run.root,
+          requireRoot(run),
           args.page_ref,
           args.prompt,
           args.expected_content_hash,

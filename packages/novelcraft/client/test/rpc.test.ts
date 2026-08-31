@@ -154,7 +154,7 @@ describe('novelcraft RPC 处理器', () => {
     env.cleanup();
   });
 
-  it('watch/state: workspacePath 回退解析(无 sessionId)', async () => {
+  it('watch/state: workspacePath 回退已删(M11/N42)——无 sessionId 呈现未绑定态, 不再向上猜路径', async () => {
     const env = setup();
     pushSignal(env.root, {
       radar: 'suggest',
@@ -168,9 +168,9 @@ describe('novelcraft RPC 处理器', () => {
     const result = await h.watchState({ workspacePath: path.join(env.root, 'chapters') });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.bound?.book).toBe('测试书');
-      expect(result.value.open).toBe(1);
-      expect(result.value.attention).toBe(false); // 1 < 5 → 微光, 不触发待确认
+      // N42: 路径不再是绑定权威 → 未绑定(undefined), 由 UI 呈现未绑定态。
+      expect(result.value.bound).toBeNull();
+      expect(result.value.open).toBe(0);
     }
     env.cleanup();
   });

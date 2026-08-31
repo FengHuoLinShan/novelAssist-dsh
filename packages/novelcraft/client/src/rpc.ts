@@ -273,18 +273,15 @@ const EMPTY_DOSSIER: ChapterDossierAsset = {
   rhythm: { wordCount: 0, sceneCount: 0, avgSceneLength: 0 },
 };
 
-/** 解析 vault 根: sessionId 优先, 其次 workspacePath 向上找; 都不可用 → undefined。 */
+/** 解析 vault 根: 只认 sessionId(M11/N42: workspacePath 旁路已删——客户端路径不是绑定
+ *  权威, N34 会话绑定是唯一 root 解析面; 未绑定返回 undefined 由调用方呈现「未绑定」态)。 */
 async function resolveRoot(
   svc: NovelcraftHostService | undefined,
-  payload: { sessionId?: string; workspacePath?: string },
+  payload: { sessionId?: string },
 ): Promise<{ book: string; root: string } | undefined> {
   if (!svc) return undefined;
   if (payload.sessionId) {
-    const binding = await svc.vaults.resolve(payload.sessionId);
-    if (binding) return binding;
-  }
-  if (payload.workspacePath) {
-    return svc.vaults.resolveFromPath(payload.workspacePath);
+    return svc.vaults.resolve(payload.sessionId);
   }
   return undefined;
 }

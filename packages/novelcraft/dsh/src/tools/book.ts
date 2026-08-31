@@ -5,9 +5,8 @@
 // 不设 bindRoot(不接受模型提供的绝对路径, 目标书一律按书名经 rootForBook 防穿越)。
 import type { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { sessionIdOf } from './shared.js';
+import { requireAgentForBooks, sessionIdOf } from './shared.js';
 import { novelcraftToolFactory } from './define.js';
-import { requireAgentForBooks } from '../book-face.js';
 import type { NovelCraftService } from '../service.js';
 
 export function buildBookTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
@@ -28,6 +27,9 @@ export function buildBookTools(ctx: Context, service: NovelCraftService): ToolDe
         },
       },
       timeoutMs: 15_000,
+      // M11/N42: 未绑定也可用(发现/创建/首绑入口)——工厂不解析 root,
+      // 无 agent 由 requireAgentForBooks 拒(WORKSPACE_ISOLATION)。
+      bindRoot: 'none',
       async execute(_args, run) {
         requireAgentForBooks(run);
         const current = await run.service.vaults.resolve(sessionIdOf(run)).catch(() => undefined);
@@ -59,6 +61,7 @@ export function buildBookTools(ctx: Context, service: NovelCraftService): ToolDe
         },
       },
       timeoutMs: 60_000,
+      bindRoot: 'none',
       async execute(args, run) {
         requireAgentForBooks(run);
         const r = await run.service.capabilities.adoptGuarded.bookCreate(run.agent, args.book);
@@ -87,6 +90,7 @@ export function buildBookTools(ctx: Context, service: NovelCraftService): ToolDe
         },
       },
       timeoutMs: 30_000,
+      bindRoot: 'none',
       async execute(args, run) {
         requireAgentForBooks(run);
         const r = await run.service.capabilities.adoptGuarded.bookOpen(run.agent, sessionIdOf(run), args.book);

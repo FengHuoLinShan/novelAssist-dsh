@@ -42,7 +42,8 @@ export interface AfterMutationOptions {
  * (漏调一处 = 信号/索引静默过期)。顺序与既有工具一致: 先雷达(含推送)后 RAG。
  * 全部尽力而为: 任何异常不外抛, 不破坏主工具调用链(同 fireRadarHooks 纪律)。
  */
-export async function afterMutation(ctx: Context, root: string, opts: AfterMutationOptions): Promise<void> {
+export async function afterMutation(ctx: Context, root: string | undefined, opts: AfterMutationOptions): Promise<void> {
+  if (root === undefined) return; // bindRoot='none' 工具(M11/N42 book 组)无变更副作用入口。
   if (opts.radars !== undefined && opts.radars.length > 0) {
     // fireRadarHooks 内部在扫描后推送信号变化(含吞错)。
     await fireRadarHooks(ctx, root, opts.radars.flatMap((event) => [...EVENT_RADAR_MAP[event]]));

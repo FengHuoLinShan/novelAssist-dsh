@@ -27,7 +27,7 @@ export interface NovelcraftToolRun {
   /** exec.signal: 工具取消信号(内容手贯通, 与 llm-step timeout 合并)。 */
   readonly signal: AbortSignal | undefined;
   /** N34 隔离产出的绑定 vault 根(canonical; 一切读取/写入用它)。 */
-  readonly root: string;
+  readonly root: string | undefined;
   /** 当前 agent session id(收据消费类工具用)。 */
   sessionId(): string;
   /** 变更后副作用唯一入口(雷达/推送/RAG; 尽力而为不外抛)。 */
@@ -51,7 +51,14 @@ export interface NovelcraftToolSpec<S extends ParameterSchemaSpec, O extends Val
    * 绑定 root 解析方式: 'args'(缺省, 校验 args.root 与 session 绑定 canonical 一致) |
    * 'session'(llm_step: 无 root 参数, 直接取绑定根)。解析先于 execute 一切服务调用。
    */
-  readonly bindRoot?: 'args' | 'session';
+  /**
+   * 工作区 root 解析模式:
+   * - 'args'(缺省): 从 args.root 经 resolveBoundRoot(与 session 绑定 canonical 对账);
+   * - 'session': 无 root 参数, 直接取 session 绑定 root;
+   * - 'none'(M11/N42): 不解析 root —— 「未绑定也可用」的入口(书库发现/创建/首绑),
+   *   execute 自验 agent 存在; 未绑定会话不得在工厂层被拒(否则首绑死锁)。
+   */
+  readonly bindRoot?: 'args' | 'session' | 'none';
   /** toolError 兜底覆盖(缺省 NOVELCRAFT_TOOL_ERROR)。 */
   readonly errorFallback?: ToolErrorFallback;
   execute(args: InferArgs<S>, run: NovelcraftToolRun): Promise<InferValue<O>>;
@@ -83,9 +90,11 @@ export function novelcraftToolFactory(ctx: Context, service: NovelCraftService) 
       ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
       async execute(rawArgs: unknown, exec: ToolRunContext) {
         try {
-          const root = spec.bindRoot === 'session'
-            ? await resolveBoundRoot(service, exec)
-            : await resolveBoundRoot(service, exec, (rawArgs as { root?: string }).root);
+          const root = spec.bindRoot === 'none'
+            ? undefined
+            : spec.bindRoot === 'session'
+              ? await resolveBoundRoot(service, exec)
+              : await resolveBoundRoot(service, exec, (rawArgs as { root?: string }).root);
           const run: NovelcraftToolRun = {
             ctx,
             service,
@@ -94,7 +103,7 @@ export function novelcraftToolFactory(ctx: Context, service: NovelCraftService) 
             signal: exec.signal,
             root,
             sessionId: () => sessionIdOf(exec),
-            afterMutation: (opts) => afterMutation(ctx, root, opts),
+            afterMutation: (opts) => afterMutation(ctx, root, opts), // none 模式 root=undefined: book 组无 afterMutation
           };
           return await spec.execute(rawArgs as InferArgs<S>, run);
         } catch (err) {

@@ -7,7 +7,7 @@ import { chapterHistoryCardView } from '@novelcraft/store';
 import * as writing from '@novelcraft/writing';
 import type { NovelCraftService } from '../service.js';
 import { novelcraftToolFactory } from './define.js';
-import { llmError } from './shared.js';
+import { requireRoot, llmError } from './shared.js';
 
 function reviewFindingCards(findings: readonly writing.ReviewFinding[]): Array<Record<string, string>> {
   return findings.map((finding) => ({
@@ -43,7 +43,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.propose.proposeNextChapter(run.root, args.chapter, run.signal);
+        const result = await run.service.capabilities.propose.proposeNextChapter(requireRoot(run), args.chapter, run.signal);
         if (!result.ok || !result.proposal) {
           throw llmError(result.error?.kind, result.error?.message ?? '提案失败');
         }
@@ -84,7 +84,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.propose.generateNextChapter(run.root, args.chapter, {
+        const result = await run.service.capabilities.propose.generateNextChapter(requireRoot(run), args.chapter, {
           proposalTitle: args.proposal_title,
           ...(args.premise ? { premise: args.premise } : {}),
         }, run.signal);
@@ -152,7 +152,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           commit: '',
         };
         if (args.action === 'inspect') {
-          const review = run.service.capabilities.read.chapterReview(run.root, args.chapter, target, ref);
+          const review = run.service.capabilities.read.chapterReview(requireRoot(run), args.chapter, target, ref);
           return review
             ? {
                 ...blank,
@@ -166,7 +166,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         }
         if (args.action === 'review') {
           const result = await run.service.capabilities.propose.reviewChapter(
-            run.root,
+            requireRoot(run),
             args.chapter,
             target,
             target === 'candidate' ? ref : undefined,
@@ -186,7 +186,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           if (target !== 'current' || !Array.isArray(args.finding_ids) || args.finding_ids.length === 0) {
             throw new HarnessError('revise 只接受 current + 非空 finding_ids', 'INVALID_ARGUMENT');
           }
-          const result = await run.service.capabilities.propose.reviseChapter(run.root, args.chapter, args.finding_ids, run.signal);
+          const result = await run.service.capabilities.propose.reviseChapter(requireRoot(run), args.chapter, args.finding_ids, run.signal);
           if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '返修失败');
           await run.afterMutation({ radars: ['generate'] });
           return { ...blank, file: result.file ?? '', message: `第 ${args.chapter} 章返修候选已生成；采用前必须独立审查 candidate。` };
@@ -196,7 +196,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
             throw new HarnessError('reject_finding 缺少 current/review_id/finding_id/reason', 'INVALID_ARGUMENT');
           }
           await run.service.capabilities.propose.rejectChapterFinding(
-            run.root, args.chapter, args.review_id, args.finding_id, args.reason,
+            requireRoot(run), args.chapter, args.review_id, args.finding_id, args.reason,
           );
           return { ...blank, review_id: args.review_id, message: `已打回 finding ${args.finding_id} 并记录理由。` };
         }
@@ -205,7 +205,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
             throw new HarnessError('reject 缺少 candidate/reason/expected_content_hash', 'INVALID_ARGUMENT');
           }
           const result = await run.service.capabilities.propose.rejectChapterCandidate(
-            run.root, args.chapter, ref, args.expected_content_hash, args.reason,
+            requireRoot(run), args.chapter, ref, args.expected_content_hash, args.reason,
           );
           return {
             ...blank,
@@ -218,7 +218,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           if (target !== 'candidate') throw new HarnessError('adopt 只接受 candidate', 'INVALID_ARGUMENT');
           const result = await run.service.capabilities.adoptGuarded.storeAdopt(
             run.agent,
-            run.root,
+            requireRoot(run),
             'chapter_candidate',
             ref,
             args.expected_content_hash ? { expectedContentHash: args.expected_content_hash } : {},
@@ -278,7 +278,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           truncated: false,
         };
         if (args.action === 'inspect') {
-          const current = run.service.capabilities.read.chapterCurrent(run.root, args.chapter);
+          const current = run.service.capabilities.read.chapterCurrent(requireRoot(run), args.chapter);
           return {
             ...blank,
             content_hash: current.contentHash,
@@ -289,7 +289,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         }
         if (args.action === 'history') {
           // 映射走 store.chapterHistoryCardView 唯一事实源; 工具展示层补 title 空串回退。
-          const history = run.service.capabilities.read.chapterHistory(run.root, args.chapter)
+          const history = run.service.capabilities.read.chapterHistory(requireRoot(run), args.chapter)
             .map((entry) => {
               const card = chapterHistoryCardView(entry);
               return { ...card, title: card.title ?? '' };
@@ -302,7 +302,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         }
         if (args.action === 'diff') {
           if (!args.commit) throw new HarnessError('diff 缺少 commit', 'INVALID_ARGUMENT');
-          const diff = run.service.capabilities.read.chapterDiff(run.root, args.chapter, args.commit, args.compare_commit);
+          const diff = run.service.capabilities.read.chapterDiff(requireRoot(run), args.chapter, args.commit, args.compare_commit);
           return {
             ...blank,
             content_hash: diff.to.contentHash,
@@ -316,7 +316,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           if (!args.receipt_id) throw new HarnessError('save 缺少 receipt_id', 'INVALID_ARGUMENT');
           const result = await run.service.capabilities.adoptGuarded.saveChapter(
             run.agent,
-            run.root,
+            requireRoot(run),
             run.sessionId(),
             args.receipt_id,
           );
@@ -338,7 +338,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           }
           const result = await run.service.capabilities.adoptGuarded.restoreChapter(
             run.agent,
-            run.root,
+            requireRoot(run),
             args.chapter,
             args.commit,
             args.expected_content_hash,

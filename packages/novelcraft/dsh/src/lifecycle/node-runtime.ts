@@ -35,6 +35,18 @@ export class NovelcraftNodeRuntime {
     this.sessions.start();
   }
 
+  /**
+   * 显式激活/停用(M11 review P1-1: book_open 切绑驱动, 与 session 事件同一面):
+   * 语义 = onVaultActivated/onVaultDeactivated 回调的直接透传, 不引入第二套生命周期。
+   */
+  activate(binding: VaultBinding): Promise<void> | void {
+    return this.runtime.activate(binding);
+  }
+
+  deactivate(root: string): Promise<void> | void {
+    return this.runtime.deactivate(root);
+  }
+
   /** HMR/plugin disposal: stop every timer/job owned by this runtime instance. */
   async stop(): Promise<void> {
     const drained = this.sessions.stop(); // closes activation synchronously before its first await

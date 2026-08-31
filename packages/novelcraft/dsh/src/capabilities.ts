@@ -57,14 +57,15 @@ const ADOPT_PAIRS = [
   ['deepImport', 'deepImport'],
   ['saveChapter', 'saveChapterGuarded'],
   ['restoreChapter', 'restoreChapterGuarded'],
-  // M10-B1(N40): 长任务恢复动作面(§6.9/§6.6)。注: workflowAbandon 清理的是
-  // .assistant 机器状态(非 canonical adopt), 归 guarded 因其破坏性删除 + git 写面
-  // (ADR-0024 三分法的保守扩展, N40)。
-  ['bookCreate', 'bookCreateGuarded'],
-  ['bookOpen', 'bookOpenGuarded'],
+  // M10-B1(N40): 长任务恢复动作面(§6.9/§6.6)。
   ['workflowResume', 'workflowResumeGuarded'],
   ['workflowStartNew', 'workflowStartNewGuarded'],
+  // M10-B1(N40): workflowAbandon 清理的是 .assistant 机器状态(非 canonical adopt),
+  // 归 guarded 因其破坏性删除 + git 写面(ADR-0024 三分法的保守扩展)。
   ['workflowAbandon', 'workflowAbandonGuarded'],
+  // M11(N42): 书库生命周期 —— create/open 是显式作者动作(初始化工作区/切换绑定)。
+  ['bookCreate', 'bookCreateGuarded'],
+  ['bookOpen', 'bookOpenGuarded'],
 ] as const satisfies ReadonlyArray<readonly [string, MethodName]>;
 
 /** 自名方法列表 → 命名空间类型(键 = 方法名)。 */

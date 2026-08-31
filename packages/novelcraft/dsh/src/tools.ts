@@ -7,6 +7,7 @@
 // 工具一律经 novelcraftToolFactory 定义: schema 推断 args 类型、N34 隔离、
 // toolError 单点映射、afterMutation 副作用纪律由包装器结构性保证。
 import type { Context } from '@deepseek-ai/cordis';
+import { requireRoot } from './tools/shared.js';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from './ctx.js';
@@ -159,7 +160,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
             ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
           },
           fixAttempts: args.fix_attempts ?? 1,
-        }, run.root, run.signal);
+        }, requireRoot(run), run.signal);
         if (!result.ok) throw llmError(result.error?.kind, result.error?.message);
         let text = result.result && typeof result.result === 'object'
           ? JSON.stringify(result.result)
@@ -235,7 +236,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       async execute(_args, run) {
         // N34: 只读工具同样隔离——root 必须与 session 绑定完全一致(canonical)。
-        const index = run.service.capabilities.propose.refreshIndex(run.root);
+        const index = run.service.capabilities.propose.refreshIndex(requireRoot(run));
         return {
           ok: true,
           objects: index.objects.length,
@@ -278,7 +279,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       async execute(args, run) {
         const result = await run.service.capabilities.adoptGuarded.storeAdopt(
           run.agent,
-          run.root,
+          requireRoot(run),
           args.kind,
           args.ref,
           {
@@ -321,7 +322,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       async execute(args, run) {
         // N34: 只读工具同样隔离(绑定 root 校验在一切读取之前 → 零读 B)。
-        const signals = run.service.capabilities.read.inbox(run.root, args.content_hash);
+        const signals = run.service.capabilities.read.inbox(requireRoot(run), args.content_hash);
         return {
           ok: true,
           signals: signals.map((s) => ({
@@ -365,7 +366,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       async execute(args, run) {
         const descriptor = await run.service.capabilities.propose.actOnSignal(
-          run.root,
+          requireRoot(run),
           args.signal_id,
           args.action,
           {
@@ -425,7 +426,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 3_600_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.adoptGuarded.deepImport(run.agent, run.root, {
+        const result = await run.service.capabilities.adoptGuarded.deepImport(run.agent, requireRoot(run), {
           startChapter: args.start_chapter,
           endChapter: args.end_chapter,
         }, run.signal);
@@ -442,7 +443,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           skipped: result.skipped.length,
           conflicts: result.conflicts.length,
           rejected: result.rejected,
-          trace_file: importTraceFile(run.root),
+          trace_file: importTraceFile(requireRoot(run)),
           message: '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
         };
       },
@@ -474,7 +475,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         },
       },
       async execute(_args, run) {
-        const r = await run.service.capabilities.propose.scanHealth(run.root);
+        const r = await run.service.capabilities.propose.scanHealth(requireRoot(run));
         await run.afterMutation({ push: true });
         return {
           ok: true,
@@ -522,7 +523,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         message: err instanceof Error ? err.message : '导入失败',
       }),
       async execute(args, run) {
-        const report = run.service.capabilities.propose.ingestTextFile(run.root, {
+        const report = run.service.capabilities.propose.ingestTextFile(requireRoot(run), {
           receiptId: args.receipt_id,
           sessionId: run.sessionId(),
           ...(args.start_chapter !== undefined ? { startChapter: args.start_chapter } : {}),
@@ -578,7 +579,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       async execute(args, run) {
         const r = await run.service.capabilities.propose.radarSweep(
-          run.root,
+          requireRoot(run),
           args.radar ? [args.radar] : undefined,
         );
         await run.afterMutation({ push: true });
@@ -625,7 +626,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         },
       },
       async execute(args, run) {
-        const r = await run.service.capabilities.read.ragSearch(run.root, args.query, {
+        const r = await run.service.capabilities.read.ragSearch(requireRoot(run), args.query, {
           ...(args.top_k !== undefined ? { topK: args.top_k } : {}),
           ...(args.rerank !== undefined ? { rerank: args.rerank } : {}),
         });
@@ -672,7 +673,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         },
       },
       async execute(_args, run) {
-        const r = await run.service.capabilities.propose.ragEmbed(run.root);
+        const r = await run.service.capabilities.propose.ragEmbed(requireRoot(run));
         if (r.message !== undefined) {
           throw new HarnessError(r.message, 'RAG_EMBEDDING_UNAVAILABLE');
         }

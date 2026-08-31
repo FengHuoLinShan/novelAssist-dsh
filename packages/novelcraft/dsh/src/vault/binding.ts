@@ -104,17 +104,26 @@ export class SessionVaultBinder {
   }
 
   /** 绑定会话 → vault(内存 + domain 缓存); 返回原子捕获的 0→1 引用转换。 */
-  async bindSession(sessionId: string, binding: VaultBinding): Promise<{ activated: boolean; count: number }> {
+  async bindSession(
+    sessionId: string,
+    binding: VaultBinding,
+  ): Promise<{ activated: boolean; count: number; deactivatedRoot?: string }> {
     const previous = this.bySession.get(sessionId);
     const sameBinding = previous?.root === binding.root;
-    if (previous && !sameBinding) this.removeReference(sessionId, previous.root);
+    let deactivatedRoot: string | undefined;
+    if (previous && !sameBinding) {
+      const refsBefore = this.referenceCount(previous.root);
+      this.removeReference(sessionId, previous.root);
+      // 切走后旧 root 引用归零 → 守望应停(M11 review P1-1: 供 book_open 驱动生命周期)。
+      if (refsBefore === 1) deactivatedRoot = previous.root;
+    }
     const before = this.referenceCount(binding.root);
     this.bySession.set(sessionId, binding);
     let refs = this.sessionsByRoot.get(binding.root);
     if (!refs) this.sessionsByRoot.set(binding.root, (refs = new Set()));
     refs.add(sessionId);
     // 在任何 await 前捕获转换，避免 created/disposed 并发把“当前count=1”误判成二次激活。
-    const transition = { activated: !sameBinding && before === 0, count: refs.size };
+    const transition = { activated: !sameBinding && before === 0, count: refs.size, ...(deactivatedRoot !== undefined ? { deactivatedRoot } : {}) };
     if (this.cache) {
       // domain 只是可重建缓存；缓存失败不得撤销已验证的服务端生命周期绑定(N34)。
       await this.cache.bindSession(sessionId, binding.root, binding.book).catch(() => undefined);

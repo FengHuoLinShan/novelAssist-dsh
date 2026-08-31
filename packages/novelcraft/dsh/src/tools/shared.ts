@@ -61,6 +61,31 @@ export function sessionIdOf(exec: { agent?: unknown }): string {
   return sessionId;
 }
 
+
+/**
+ * 非 'none' 模式工具的 root 收窄(M11/N42): 工厂已解析/校验 root(bindRoot
+ * 'args'/'session'), 类型因 'none' 模式放宽为可选; 此处运行时断言非空并给
+ * 出工具名上下文(理论不可达, 到达即工厂与工具模式声明不一致, fail-closed)。
+ */
+export function requireRoot(run: { root?: string }): string {
+  if (run.root === undefined) {
+    throw new WorkspaceIsolationError(
+      '工具声明为需要工作区 root(bindRoot 非 none), 但工厂未解析 —— 模式声明不一致, fail-closed',
+    );
+  }
+  return run.root;
+}
+
+/**
+ * bindRoot='none' 工具的 agent 自验(M11/N42): 无会话上下文的书库状态操作一律拒绝
+ * (与 N34 同 code; 原 book-face 内实现迁移至此, 工具层纪律归工具层)。
+ */
+export function requireAgentForBooks(run: { agent?: unknown }): void {
+  if (!run.agent) {
+    throw new WorkspaceIsolationError('书库操作需要会话上下文(无 agent)');
+  }
+}
+
 /** 只允许当前 agent session 绑定的 canonical vault root。 */
 export async function resolveBoundRoot(
   service: NovelCraftService,
