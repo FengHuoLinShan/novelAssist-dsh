@@ -27,22 +27,26 @@ const proposal = {
   risk: "需先补「桥」的设定",
 };
 
-// M12-c/N45: context 编译器接线行为锁定。
+// M12-c/N45: context 编译器接线行为锁定(review P0 修复后: 正文渲染 + 预算附注)。
 describe('compileProposalContextBudgeted(N45: Tier P0-P4 预算编译进写作链)', () => {
-  it('输出含任务段与结构段; 空书时仍产出任务', () => {
+  it('正文含存活段落内容 + 尾部预算附注; 空书时仍有任务段', () => {
     const root = makeRoot();
+    ingestChapter(root, { chapterIndex: 1, text: '第一章结尾正文', source: 'paste' });
     const out = compileProposalContextBudgeted(root, 1);
-    expect(out).toContain('上下文共');
-    expect(typeof out).toBe('string');
-    expect(out.length).toBeGreaterThan(0);
+    expect(out).toContain('【任务】');          // P0 段名
+    expect(out).toContain('第一章结尾正文');    // P1 内容真正进输入(空壳回归锁定)
+    expect(out).toContain('[上下文共');         // 尾部预算附注
   });
 
-  it('超预算时低优先层被逐出(伏笔 P3 先于总纲 P2)', () => {
+  it('小预算驱动真驱逐: 更低优先层被淘汰, 高优先层保留', () => {
     const root = makeRoot();
-    ingestChapter(root, { chapterIndex: 1, text: '第一章正文'.repeat(200), source: 'paste' });
-    // 小预算下编译仍成功(截断/驱逐由 context 包保证, 此处锁定接线不抛、可消费)
-    const out = compileProposalContextBudgeted(root, 1);
-    expect(out.length).toBeGreaterThan(0);
+    ingestChapter(root, { chapterIndex: 1, text: '焦点章内容', source: 'paste' });
+    // 极小预算(只够 P0/P1) → P2 结构层即便存在也被逐出; 单书无结构资产时用大预算对照。
+    const small = compileProposalContextBudgeted(root, 1, { budget_tokens: 30 }); // 够 P0+P1, 不够追加结构层
+    expect(small).toContain('【任务】');
+    const large = compileProposalContextBudgeted(root, 1, { budget_tokens: 100000 });
+    expect(large).toContain('焦点章内容');
+    expect(large.length).toBeGreaterThanOrEqual(small.length);
   });
 });
 

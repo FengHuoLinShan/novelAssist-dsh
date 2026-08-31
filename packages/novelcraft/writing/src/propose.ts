@@ -71,7 +71,11 @@ export function compileProposalContext(root: string, chapterIndex: number): stri
  * core-only 无消费者」的缺口(台账 §6.12)。各段按语义归层: 任务指令 P0、焦点章结尾
  * P1、总纲/剧情线/篇章纲 P2、伏笔 P3。budget 缺省 CONTEXT_BUDGET_DEFAULT(4000)。
  */
-export function compileProposalContextBudgeted(root: string, chapterIndex: number): string {
+export function compileProposalContextBudgeted(
+  root: string,
+  chapterIndex: number,
+  opts?: { budget_tokens?: number },
+): string {
   const outline = readOutline(root);
   const map = storyMap(root);
   const sections: Array<{ tier: "P0" | "P1" | "P2" | "P3" | "P4"; name: string; content: string }> = [
@@ -91,10 +95,13 @@ export function compileProposalContextBudgeted(root: string, chapterIndex: numbe
     // 该章不存在则跳过(仍可基于总纲/结构提案)
   }
   const compiled = compileContext(
-    { task: `第 ${chapterIndex + 1} 章续写提案`, scope: "chapter" },
+    { task: `第 ${chapterIndex + 1} 章续写提案`, scope: "chapter", ...(opts?.budget_tokens !== undefined ? { budget_tokens: opts.budget_tokens } : {}) },
     { sections },
   );
-  return contextSummary(compiled);
+  // M12-c review P0 修复: 正文 = 渲染存活 sections(预算淘汰后的实际内容),
+  // contextSummary 只是尾部预算附注(作者语言成本预告, 不能充当 LLM 输入)。
+  const body = compiled.sections.map((sec) => `【${sec.name}】\n${sec.content}`).join("\n\n");
+  return `${body}\n\n[${contextSummary(compiled)}]`;
 }
 
 /**
