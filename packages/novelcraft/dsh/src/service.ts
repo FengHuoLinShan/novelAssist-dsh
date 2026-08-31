@@ -417,8 +417,9 @@ export class NovelCraftService extends Service {
     agent: Parameters<NovelCraftService['deepImport']>[0],
     root: string,
     args: { kind: 'deep-import' | 'map-atlas'; workflowId: string },
+    signal?: AbortSignal,
   ) {
-    return workflowFace.workflowAbandonGuarded(this, agent, root, args);
+    return workflowFace.workflowAbandonGuarded(this, agent, root, args, signal);
   }
 
   /** 便捷: 消费当前会话已授权的图片收据(候选写入不过 approval, N29)。 */

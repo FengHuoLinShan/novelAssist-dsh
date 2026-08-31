@@ -392,7 +392,8 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         '深度导入: 执行前先请求范围授权(授权将调用 LLM 并产出候选; 拒绝则零副作用, fail-closed); ' +
         '放行后按章节范围顺序跑六阶段(切分/补全/融合/Scene 采用/实体/别名关系/结构)。' +
         'Scene 采用与 2b 别名/关系写入分别过独立审批(fail-closed); 全程 trace 事件落 .assistant/import-trace.jsonl。' +
-        '多章为长任务, 建议由编排层分批触发; 本工具同步执行并返回摘要。',
+        '多章为长任务, 建议由编排层分批触发; 本工具同步执行并返回摘要。' +
+        '同范围已存在 completed run 时本工具会走续跑语义(全部批次已完成则零授权重收尾); 显式重放/重开请改用 workflow_inspect 与 workflow_start_new',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         start_chapter: { type: 'integer', required: true, description: '起始章节(1 起)' },

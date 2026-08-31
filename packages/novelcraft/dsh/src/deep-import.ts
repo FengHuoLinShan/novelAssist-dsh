@@ -17,6 +17,7 @@
 //    allowed-once 不复用(每次等待拿新 decision, 不落盘、不重放, ADR-0022 §7);
 //  - 任何授权仅 allowed-once 放行, rejected/cancelled/unavailable 一律 fail-closed
 //    (零 provider 调用、零 plan/checkpoint/trace 文件与 canonical 写)。
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { appendFileSync, lstatSync } from 'node:fs';
 import { guardPath, paths } from '@novelcraft/vault';
@@ -319,8 +320,9 @@ export async function deepImport(
     endChapter: opts.endChapter,
     confirmed: true, // R40 授权快照: 范围/恢复授权放行后 confirmed 强制 true
   }, new Date(), opts.force
-    // force: unique 段附加时间戳 → 不同 workflowId → hasRun=false → 全 scope 新授权。
-    ? `imp-${opts.startChapter}-${opts.endChapter}-f${Date.now().toString(36)}`
+    // force: unique 段附加时间戳+随机熵(Track B review P2-8: 同毫秒两次 force 不得同 id)
+    // → 不同 workflowId → hasRun=false → 全 scope 新授权。
+    ? `imp-${opts.startChapter}-${opts.endChapter}-f${Date.now().toString(36)}${randomUUID().replaceAll('-', '').slice(0, 8)}`
     : `imp-${opts.startChapter}-${opts.endChapter}`);
   const profileFingerprint = fingerprintExecutionProfile(resolved);
   const contractVersions = resolved.contractVersions ?? {};

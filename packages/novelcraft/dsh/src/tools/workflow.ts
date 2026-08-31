@@ -13,7 +13,7 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
     tool({
       name: 'novelcraft_workflow_inspect',
       description:
-        '枚举本书的全部 durable 工作流 run(深度导入 + 地图册)与恢复选项: 每个返回 kind/' +
+        '枚举本书的全部 durable manifest 工作流 run(深度导入 + 地图册目录形态)与恢复选项: 每个返回 kind/' +
         'workflow_id/status(含 completed/running/provider_outcome_unknown)/批次进度(cursor/' +
         'completed/other)/指纹与 checkpoint 概要。用于回答「有哪些进行中或已完成的导入/地图册 ' +
         'run、各自到什么程度、能否恢复」。只读, 零审批。',
@@ -58,7 +58,8 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
     tool({
       name: 'novelcraft_workflow_resume',
       description:
-        '恢复中断的深度导入 run: 从 checkpoint 读原范围(与 workflow_id 绑定校验, 不匹配拒绝)' +
+        '恢复中断的深度导入 run: 前置校验(枚举存在/非 start_new 强制 run/checkpoint 绑定)后' +
+        '从 checkpoint 读原范围续跑(与 workflow_id 绑定校验, 不匹配拒绝; 执行后对账 identity)' +
         '并续跑 —— 已完成批次跳过, 只对剩余批次请求范围/成本授权(authorize_deep_import_resume)。' +
         '注意: 同步执行, 大范围导入可能耗时较长; 中断后可再次 resume(幂等)。',
       parameters: {
@@ -138,7 +139,8 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
     tool({
       name: 'novelcraft_workflow_abandon',
       description:
-        '放弃一个 durable run(审批后执行): 删除其 .assistant 下的 run 目录与绑定的 ' +
+        '放弃一个已终止(completed/failed/provider_outcome_unknown/损坏)的 durable run(审批后执行): ' +
+        '删除其 .assistant 下的 run 目录与绑定的 ' +
         'checkpoint 并精确 git 提交。已应用的创作资产(Scene/实体/别名/结构)不受影响 —— ' +
         '撤销资产请走 git 历史或章节版本面。适合清理失败/过时的 run 恢复状态。',
       parameters: {

@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { NovelCraftService } from '../src/index.js';
@@ -160,6 +161,9 @@ describe('workflow 工具组(M10-B1/N40)', () => {
     const rej = await setup({ approval: { outcome: 'rejected' } });
     writeRunManifest(rej.root, 'wf-abcdef0123456789-imp-1-2', { status: 'failed' });
     writeCheckpoint(rej.root, 'imp-1-2', 1, 2);
+    // fixture 先提交(洁净门禁在审批之前, 未提交 fixture 会先撞 DIRTY)。
+    gitAdd(rej.root, ['.assistant/import-runs/wf-abcdef0123456789-imp-1-2/manifest.json', '.assistant/checkpoint.json']);
+    gitCommit(rej.root, 'test: seed');
     let rejErr: unknown;
     try {
       await exec(rej, 'novelcraft_workflow_abandon', {
@@ -201,6 +205,79 @@ describe('workflow 工具组(M10-B1/N40)', () => {
       root: env.root, kind: 'map-atlas', workflow_id: 'no-such-run',
     })).rejects.toMatchObject({ code: 'WORKFLOW_RUN_NOT_FOUND' });
     expect(env.h.approval.requests).toHaveLength(0);
+    env.cleanup();
+  });
+
+  it('Track B review 修复: 穿越 workflow_id 与不存在 id 一律零审批零删除(P0)', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    writeRunManifest(env.root, 'wf-abcdef0123456789-imp-1-2', { status: 'failed' });
+    writeCheckpoint(env.root, 'imp-1-2', 1, 2);
+    gitAdd(env.root, ['.assistant/import-runs/wf-abcdef0123456789-imp-1-2/manifest.json', '.assistant/checkpoint.json']);
+    gitCommit(env.root, 'test: seed');
+    const victim = join(env.root, 'chapters');
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, 'victim.txt'), '正文');
+    for (const evil of ['../../chapters', '..', '.', 'wf-abcdef0123456789-imp-1-2/../../chapters', 'no-such-run']) {
+      let err: unknown;
+      try {
+        await exec(env, 'novelcraft_workflow_abandon', { root: env.root, kind: 'deep-import', workflow_id: evil });
+      } catch (e) {
+        err = e;
+      }
+      expect((err as { code?: string }).code).toBe('WORKFLOW_RUN_NOT_FOUND');
+    }
+    expect(env.h.approval.requests).toHaveLength(0); // 全部零审批
+    expect(existsSync(join(victim, 'victim.txt'))).toBe(true); // 零删除
+    env.cleanup();
+  });
+
+  it('Track B review 修复: 进行中状态不可 abandon(先 resume 终结)', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    writeRunManifest(env.root, 'wf-abcdef0123456789-imp-3-4', { status: 'running' });
+    gitAdd(env.root, ['.assistant/import-runs/wf-abcdef0123456789-imp-3-4/manifest.json']);
+    gitCommit(env.root, 'test: seed running');
+    let err: unknown;
+    try {
+      await exec(env, 'novelcraft_workflow_abandon', { root: env.root, kind: 'deep-import', workflow_id: 'wf-abcdef0123456789-imp-3-4' });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as { code?: string }).code).toBe('WORKFLOW_ABANDON_NOT_TERMINAL');
+    expect(env.h.approval.requests).toHaveLength(0);
+    env.cleanup();
+  });
+
+  it('Track B review 修复: 预存 staged 外部内容 → R17 洁净门禁拒绝, 零审批零删除', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    writeRunManifest(env.root, 'wf-abcdef0123456789-imp-1-2', { status: 'failed' });
+    gitAdd(env.root, ['.assistant/import-runs/wf-abcdef0123456789-imp-1-2/manifest.json']);
+    gitCommit(env.root, 'test: seed');
+    // 预存 staged 外部文件(模拟崩溃事务残留/手动 stage)
+    writeFileSync(join(env.root, 'chapters', 'ch1.md'), '---\ntitle: 外部\n---\n正文');
+    mkdirSync(join(env.root, 'chapters'), { recursive: true });
+    writeFileSync(join(env.root, 'chapters', 'ch1.md'), '正文');
+    gitAdd(env.root, ['chapters/ch1.md']);
+    let err: unknown;
+    try {
+      await exec(env, 'novelcraft_workflow_abandon', { root: env.root, kind: 'deep-import', workflow_id: 'wf-abcdef0123456789-imp-1-2' });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as { code?: string }).code).toBe('WORKFLOW_DIRTY_WORKSPACE');
+    expect(env.h.approval.requests).toHaveLength(0);
+    expect(existsSync(join(env.root, '.assistant', 'import-runs', 'wf-abcdef0123456789-imp-1-2'))).toBe(true);
+    env.cleanup();
+  });
+
+  it('inspect: atlas namespace 目录 run 同样枚举(kind=map-atlas)', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    const dir = join(env.root, '.assistant', 'atlas', 'runs', 'atlas-abcdef0123456789-p1');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ status: 'completed', batches: { b1: { state: 'completed' } } }));
+    const out = await exec(env, 'novelcraft_workflow_inspect', { root: env.root }) as { runs: Array<Record<string, unknown>> };
+    const atlas = out.runs.find((r) => r.kind === 'map-atlas');
+    expect(atlas).toMatchObject({ workflow_id: 'atlas-abcdef0123456789-p1', status: 'completed' });
+    expect(atlas?.batches).toEqual({ total: 1, completed: 1, other: 0 });
     env.cleanup();
   });
 

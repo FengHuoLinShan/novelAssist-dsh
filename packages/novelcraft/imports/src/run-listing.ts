@@ -43,7 +43,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 function readListedManifest(nsRoot: string, runId: string): Record<string, unknown> | string {
   const manifestPath = join(nsRoot, runId, "manifest.json");
-  if (!existsSync(manifestPath)) return "manifest.json 缺失(bootstrap intent 未提交, 尚无完成批)";
+  if (!existsSync(manifestPath)) return "manifest.json 缺失(run 尚未完成 bootstrap 提交, 或为非目录残留)";
   let text: string;
   try {
     text = readFileSync(manifestPath, "utf8");
