@@ -435,6 +435,9 @@ export const SCHEMAS: Record<AssetKind, AssetSchema> = {
     required: ['id', 'kind', 'name', 'status'],
     fields: OBJECT_FIELDS,
     statusValues: ['draft', 'candidate', 'canonical', 'merged', 'ignored', 'deprecated'],
+    // M12-b/N44(review P1): kind 收紧到 ENTITY_TYPES 白名单 —— 非法串此前静默写入并被
+    // relations 判定悄悄排除(功能降级不显式失败); enums 使其在写/校验时 fail-closed。
+    enums: { kind: ENTITY_TYPES },
   },
   pending: {
     required: ['id', 'status'],

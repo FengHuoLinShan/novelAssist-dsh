@@ -19,6 +19,7 @@ import { Config, type Config as ConfigType } from './config.js';
 import { deepImport, type DeepImportOptions } from './deep-import.js';
 import * as workflowFace from './workflow-face.js';
 import * as bookFace from './book-face.js';
+import * as outlineFace from './outline-face.js';
 import { DshRadarJobHost, RadarScheduler } from './jobs/radar.js';
 import { ActiveVaultWatchScheduler, TransactionWatchStatePersistence } from './jobs/watch-state.js';
 import { NovelcraftNodeRuntime } from './lifecycle/node-runtime.js';
@@ -404,6 +405,67 @@ export class NovelCraftService extends Service {
     book: string,
   ): ReturnType<typeof bookFace.bookCreateGuarded> {
     return bookFace.bookCreateGuarded(this, agent, book);
+  }
+
+  /** 总纲 preview(M12-b/N44, propose): 暂存 .assistant/proposals/, 不写结构资产。 */
+  outlinePreview(root: string, input: string): ReturnType<typeof outlineFace.outlinePreview> {
+    return outlineFace.outlinePreview(this, root, input);
+  }
+
+  /** P20 当前层 preview(M12-b/N44, propose): 暂存 proposals, 不写 thread/arc。 */
+  outlineItemPreview(
+    root: string,
+    target: 'plot_thread' | 'outline_arc',
+    input: string,
+  ): ReturnType<typeof outlineFace.outlineItemPreview> {
+    return outlineFace.outlineItemPreview(this, root, target, input);
+  }
+
+  /** apply 总纲 preview(审批内 canonical 写; M12-b/N44)。 */
+  outlineApplyGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    root: string,
+    runId: string,
+  ): ReturnType<typeof outlineFace.outlineApplyGuarded> {
+    return outlineFace.outlineApplyGuarded(this, agent, root, runId);
+  }
+
+  /** apply P20 preview(审批内 canonical 写; M12-b/N44)。 */
+  outlineItemApplyGuarded(
+    agent: Parameters<NovelCraftService['deepImport']>[0],
+    root: string,
+    runId: string,
+  ): ReturnType<typeof outlineFace.outlineItemApplyGuarded> {
+    return outlineFace.outlineItemApplyGuarded(this, agent, root, runId);
+  }
+
+  /** world 生成中心·共创聊天(M12-b/N44, propose: 纯 LLM 零写)。 */
+  worldGenChat(root: string, input: string): ReturnType<typeof outlineFace.worldGenChat> {
+    return outlineFace.worldGenChat(this, root, input);
+  }
+
+  /** world 生成中心·只读收束(propose)。 */
+  worldGenConverge(root: string, input: string): ReturnType<typeof outlineFace.worldGenConverge> {
+    return outlineFace.worldGenConverge(this, root, input);
+  }
+
+  /** world 生成中心·一跳探索(propose: 不创建资产)。 */
+  worldGenExplore(root: string, input: string): ReturnType<typeof outlineFace.worldGenExplore> {
+    return outlineFace.worldGenExplore(this, root, input);
+  }
+
+  /** world 生成中心·页面检修(propose: findings 供复核)。 */
+  worldGenInspect(root: string, input: string): ReturnType<typeof outlineFace.worldGenInspect> {
+    return outlineFace.worldGenInspect(this, root, input);
+  }
+
+  /** world 生成中心·世界书页面建议(propose: 落 bible/ draft, 采用另走 store_adopt)。 */
+  worldGenBibleSuggest(
+    root: string,
+    input: string,
+    opts: { isNewPage?: boolean },
+  ): ReturnType<typeof outlineFace.worldGenBibleSuggest> {
+    return outlineFace.worldGenBibleSuggest(this, root, input, opts);
   }
 
   /** 切换会话绑定到既有书(审批后, binder 原子改绑; M11/N42)。 */

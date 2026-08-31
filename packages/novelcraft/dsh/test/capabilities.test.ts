@@ -15,6 +15,8 @@ function fakeService(): NovelCraftService {
     'worldCreateGuarded', 'worldUpdateGuarded', 'reviewMapAtlasGuarded', 'deepImport',
     'saveChapterGuarded', 'restoreChapterGuarded',
     'workflowInspect', 'workflowResumeGuarded', 'workflowStartNewGuarded', 'workflowAbandonGuarded',
+    'outlinePreview', 'outlineItemPreview', 'outlineApplyGuarded', 'outlineItemApplyGuarded',
+    'worldGenChat', 'worldGenConverge', 'worldGenExplore', 'worldGenInspect', 'worldGenBibleSuggest',
     'bookList', 'bookCreateGuarded', 'bookOpenGuarded',
   ];
   for (const name of methods) service[name] = vi.fn(function (this: Record<string, unknown>) { return this.marker; });
@@ -73,7 +75,8 @@ describe('createNovelCraftCapabilities', () => {
     const capabilities = createNovelCraftCapabilities(fakeService());
     expect(Object.keys(capabilities.propose.authorEdit)).toEqual(['annotations']);
     expect(Object.keys(capabilities.adoptGuarded).sort()).toEqual([
-      'bookCreate', 'bookOpen', 'deepImport', 'restoreChapter', 'reviewMapAtlas', 'saveChapter', 'storeAdopt',
+      'bookCreate', 'bookOpen', 'deepImport', 'outlineApply', 'outlineItemApply', 'restoreChapter',
+      'reviewMapAtlas', 'saveChapter', 'storeAdopt',
       'workflowAbandon', 'workflowResume', 'workflowStartNew', 'worldCreate', 'worldUpdate',
     ]);
   });

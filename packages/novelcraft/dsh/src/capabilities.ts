@@ -41,6 +41,13 @@ const PROPOSE_METHODS = [
   'reviseChapter',
   'rejectChapterFinding',
   'rejectChapterCandidate',
+  'outlinePreview',
+  'outlineItemPreview',
+  'worldGenChat',
+  'worldGenConverge',
+  'worldGenExplore',
+  'worldGenInspect',
+  'worldGenBibleSuggest',
   'scanHealth',
   'radarSweep',
   'refreshIndex',
@@ -64,6 +71,8 @@ const ADOPT_PAIRS = [
   // 归 guarded 因其破坏性删除 + git 写面(ADR-0024 三分法的保守扩展)。
   ['workflowAbandon', 'workflowAbandonGuarded'],
   // M11(N42): 书库生命周期 —— create/open 是显式作者动作(初始化工作区/切换绑定)。
+  ['outlineApply', 'outlineApplyGuarded'],
+  ['outlineItemApply', 'outlineItemApplyGuarded'],
   ['bookCreate', 'bookCreateGuarded'],
   ['bookOpen', 'bookOpenGuarded'],
 ] as const satisfies ReadonlyArray<readonly [string, MethodName]>;

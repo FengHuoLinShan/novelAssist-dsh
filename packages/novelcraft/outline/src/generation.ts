@@ -29,6 +29,22 @@ export async function generateStoryOutline(
   return { ok: true };
 }
 
+/** P20 生成输出 → 结构资产 frontmatter 的确定性映射(2.2 与 preview apply 共用同一语义)。 */
+export function outlineItemFrontmatter(content: Record<string, unknown>): Record<string, unknown> {
+  const fm: Record<string, unknown> = {
+    title: String(content.title ?? content.name ?? "未命名"),
+    summary: String(content.summary ?? content.trajectory ?? ""),
+    confidence: typeof content.confidence === "number" ? content.confidence : 0.8,
+  };
+  if (typeof content.name === "string" && content.name) fm.name = content.name;
+  if (typeof content.thread_type === "string" && content.thread_type) fm.thread_type = content.thread_type;
+  if (typeof content.target_type === "string" && content.target_type) fm.target_type = content.target_type;
+  if (typeof content.target_id === "string" && content.target_id) fm.target_id = content.target_id;
+  if (typeof content.secret_summary === "string" && content.secret_summary) fm.secret_summary = content.secret_summary;
+  if (Array.isArray(content.relations)) fm.relations = content.relations;
+  return fm;
+}
+
 /** 2.2 P20 当前层创作 → 对应结构资产目录(thread/arc)。 */
 export async function generateOutlineItem(
   provider: Provider,
@@ -42,20 +58,8 @@ export async function generateOutlineItem(
   if (!r.ok) return { ok: false, error: r.error };
   const content = (r.result as { content?: Record<string, unknown> }).content ?? (r.result as Record<string, unknown>);
   const kind = target === "plot_thread" ? "thread" : "arc";
-  const fm: Record<string, unknown> = {
-    title: String(content.title ?? content.name ?? "未命名"),
-    summary: String(content.summary ?? content.trajectory ?? ""),
-    confidence: typeof content.confidence === "number" ? content.confidence : 0.8,
-  };
-  // B3: 生成输出结构映射(additionalProperties: true), 结构资产 schema 必填/常用字段透传。
-  if (typeof content.name === "string" && content.name) fm.name = content.name;
-  if (typeof content.thread_type === "string" && content.thread_type) fm.thread_type = content.thread_type;
-  // reveal 必填三件套(frontmatter.ts:508): 从生成输出透传, 不虚构语义。
-  if (typeof content.target_type === "string" && content.target_type) fm.target_type = content.target_type;
-  if (typeof content.target_id === "string" && content.target_id) fm.target_id = content.target_id;
-  if (typeof content.secret_summary === "string" && content.secret_summary) fm.secret_summary = content.secret_summary;
-  // ADR-0019 P3: 新工作流写 relations 有向对(不再散写 related_*_ids)。
-  if (Array.isArray(content.relations)) fm.relations = content.relations;
+  // 映射逻辑抽为 outlineItemFrontmatter(与 preview apply 共用同一语义, M12-b/N44)。
+  const fm = outlineItemFrontmatter(content);
   const slug = writeStructureAsset(root, kind, fm, opts);
   return { ok: true, slug };
 }

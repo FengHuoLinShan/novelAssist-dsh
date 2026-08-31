@@ -216,6 +216,10 @@ describe('NovelCraftService 端到端', () => {
       'novelcraft_map_atlas_update_prompt',
       'novelcraft_map_atlas_upload',
       'novelcraft_map_atlas_view',
+      'novelcraft_outline_apply',
+      'novelcraft_outline_item_apply',
+      'novelcraft_outline_item_preview',
+      'novelcraft_outline_preview',
       'novelcraft_propose_next_chapter',
       'novelcraft_radar_sweep',
       'novelcraft_rag_embed',
@@ -226,7 +230,12 @@ describe('NovelCraftService 端到端', () => {
       'novelcraft_workflow_inspect',
       'novelcraft_workflow_resume',
       'novelcraft_workflow_start_new',
+      'novelcraft_world_bible_suggest',
+      'novelcraft_world_chat',
+      'novelcraft_world_converge',
       'novelcraft_world_create',
+      'novelcraft_world_explore',
+      'novelcraft_world_inspect',
       'novelcraft_world_update',
     ]);
     for (const definition of env.tools) {

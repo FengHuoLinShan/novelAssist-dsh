@@ -143,7 +143,14 @@ export function prepareCreateObject(
   if (!input.name.trim()) throw new Error("name 必填");
   const slug = slugify(`obj-${input.name}`); // 前缀保证非空; 旧 Date.now() 兜底为不可达死代码已删(M12-a review)
   const file = guardedFile(root, paths(root).world.objects, `${slug}.md`); // R9: 写面与读面同 gate。
-  if (existsSync(file)) throw new Error(`对象已存在: ${slug}`);
+  if (existsSync(file)) {
+    // 坍缩语义提示(M12-b/N44): 不同名字可折同一 slug(空白/特殊字符折叠), 报错须可分辨。
+    throw new Error(
+      slug === slugify(`obj-${input.name}`)
+        ? `对象已存在: ${slug}(同名对象); 换名或先处理既有对象`
+        : `slug 坍缩冲突: 名字「${input.name}」折为 ${slug} 与既有对象同名; 请换一个名字`,
+    );
+  }
   const fm: Record<string, unknown> = {
     id: slug, // N23/M7-C: object schema required 含 id(frontmatter.ts:417), 落盘即带
     name: input.name.trim(),

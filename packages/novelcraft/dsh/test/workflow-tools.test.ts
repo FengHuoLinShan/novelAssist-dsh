@@ -86,7 +86,7 @@ const exec = (env: TestEnv, name: string, args: Record<string, unknown>) =>
   tool(env, name).execute(args, { callId: 'c1', name, arguments: args, agent: fakeAgent, signal: new AbortController().signal });
 
 describe('workflow 工具组(M10-B1/N40)', () => {
-  it('注册面: 默认 30 工具(含 4 个 workflow); isWorkflowTool 前缀判定', async () => {
+  it('注册面: 默认 39 工具(含 4 个 workflow); isWorkflowTool 前缀判定', async () => {
     const env = await setup({ approval: { outcome: 'allowed-once' } });
     expect(env.tools.filter((t) => isWorkflowTool(t.name)).map((t) => t.name)).toEqual([
       'novelcraft_workflow_inspect',
@@ -94,7 +94,7 @@ describe('workflow 工具组(M10-B1/N40)', () => {
       'novelcraft_workflow_start_new',
       'novelcraft_workflow_abandon',
     ]);
-    expect(env.tools).toHaveLength(30);
+    expect(env.tools).toHaveLength(39);
     // 组开关(workflow:false → 21)在 tools-plugins.test.ts 的组契约中统一断言(此处同 ctx
     // 不可重复 provide tools 服务; buildTools 全量即 25)。
     env.cleanup();

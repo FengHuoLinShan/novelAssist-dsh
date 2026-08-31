@@ -2,3 +2,4 @@
 export * from "./specs-outline.js";
 export * from "./structure.js";
 export * from "./generation.js";
+export * from "./preview.js";
