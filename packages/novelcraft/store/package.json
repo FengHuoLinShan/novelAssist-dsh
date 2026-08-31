@@ -2,7 +2,9 @@
   "name": "@novelcraft/store",
   "version": "0.0.1",
   "private": true,
-  "engines": { "node": ">=24.11.0" },
+  "engines": {
+    "node": ">=24.11.0"
+  },
   "description": "NovelCraft M4 R1 kernel: frontmatter validation, adopt+commit, CAS, merge/split/attach_alias, index rebuild",
   "type": "module",
   "main": "dist/index.js",
@@ -22,6 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@novelcraft/memory": "*",
     "@novelcraft/vault": "*",
     "yaml": "^2.5.0"
   }

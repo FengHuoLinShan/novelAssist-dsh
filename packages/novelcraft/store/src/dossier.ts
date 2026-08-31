@@ -10,6 +10,7 @@
 // rebuildIndex 对坏 frontmatter 上抛为既有行为, 故 storyMap 失败时降级为目录级容错自组装。
 
 import path from "node:path";
+import { readEvents, projectWorldState } from '@novelcraft/memory';
 import { paths } from "@novelcraft/vault";
 import { parseFrontmatter } from "./frontmatter.js";
 import { exists, listFilesRecursive, readText } from "./fs.js";
@@ -28,6 +29,15 @@ export interface DossierScene {
   must_not_happen?: string;
   narrative_tag?: string;
   pov_character_id?: string;
+}
+
+export interface ChapterDossierMemory {
+  events_total: number;
+  events_through_chapter: number;
+  broken_lines: number;
+  entities_tracked: number;
+  relations_tracked: number;
+  last_event_at?: string;
 }
 
 export interface ChapterDossier {
@@ -59,6 +69,8 @@ export interface ChapterDossier {
   referencedObjects: Array<{ slug: string; name: string; kind: string }>;
   /** wordCount = 正文去空白字符数; avgSceneLength = wordCount/sceneCount(0 除 → 0, 取整)。 */
   rhythm: { wordCount: number; sceneCount: number; avgSceneLength: number };
+  /** 记忆投影读面(M12-c/N46, §6.18.4)。 */
+  memory: ChapterDossierMemory;
 }
 
 function str(v: unknown): string | undefined {
@@ -182,6 +194,33 @@ function readChapterMeta(
 }
 
 /** 组装章节档案(§17.5.1)。 */
+/** 记忆投影读面(N46): 故事顺序过滤(chapter_index ≤ N) → projectWorldState。 */
+function memoryProjection(root: string, chapterIndex: number): {
+  events_total: number;
+  events_through_chapter: number;
+  broken_lines: number;
+  entities_tracked: number;
+  relations_tracked: number;
+  last_event_at?: string;
+} {
+  try {
+    const { events, brokenLines } = readEvents(root);
+    const through = events.filter((e) => e.chapter_index <= chapterIndex);
+    const projection = projectWorldState(through);
+    return {
+      events_total: events.length,
+      events_through_chapter: through.length,
+      broken_lines: brokenLines,
+      entities_tracked: projection.entities.size,
+      relations_tracked: projection.relations.length,
+      ...(projection.lastEventAt !== undefined ? { last_event_at: projection.lastEventAt } : {}),
+    };
+  } catch {
+    // 账本不可读(坏文件/权限) → 空投影, 不阻断 dossier 主读面(容错降级)。
+    return { events_total: 0, events_through_chapter: 0, broken_lines: 0, entities_tracked: 0, relations_tracked: 0 };
+  }
+}
+
 export function chapterDossier(root: string, chapterIndex: number): ChapterDossier {
   const want = String(chapterIndex);
 
@@ -271,5 +310,8 @@ export function chapterDossier(root: string, chapterIndex: number): ChapterDossi
     reveals: revealList.map(toRef),
     referencedObjects,
     rhythm: { wordCount, sceneCount, avgSceneLength },
+    // M12-c/N46: 记忆事件账本投影读面(§6.18.4)—— 按故事顺序(chapter_index ≤ 本章)
+    // 过滤后投影世界状态; 本章事件数与坏行数供连续性参考。账本不存在时为空投影。
+    memory: memoryProjection(root, chapterIndex),
   };
 }

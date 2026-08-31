@@ -4,6 +4,7 @@
 // narrative_tag/pov_character_id/chapter_ids, scene_index 排序键);
 // specs/assets/writing.md「章节正文字段」(chapter_index/status/content_hash/title)。
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendEvent } from '@novelcraft/memory';
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -72,6 +73,21 @@ function writeFixture(root: string): void {
     secret_summary: "苏婉是遗孤", chapter_range: [3],
   });
 }
+
+// M12-c/N46: dossier 的记忆投影读面(§6.18.4 按故事顺序)。
+describe('chapterDossier memory 投影(N46)', () => {
+  it('无账本 → 空投影; 有事件 → 按章过滤统计', () => {
+    const root = makeRoot();
+    const empty = chapterDossier(root, 1);
+    expect(empty.memory).toMatchObject({ events_total: 0, events_through_chapter: 0, entities_tracked: 0 });
+    appendEvent(root, { chapter_index: 1, sequence: 0, event_type: 'manual_correction', snapshot_after: { saved: true }, source: 'manual_edit' });
+    appendEvent(root, { chapter_index: 2, sequence: 0, event_type: 'manual_correction', snapshot_after: { saved: true }, source: 'manual_edit' });
+    const d1 = chapterDossier(root, 1);
+    expect(d1.memory.events_total).toBe(2);
+    expect(d1.memory.events_through_chapter).toBe(1);
+    expect(d1.memory.last_event_at).toBeTruthy();
+  });
+});
 
 describe("chapterDossier(章节档案, §17.5.1)", () => {
   it("第 2 章档案: 章节元 + Scene 分解 + 人物/POV + 伏笔种下 + 设定引用 + 节奏", () => {
