@@ -20,10 +20,12 @@ import type { Provider } from "@novelcraft/llm-step";
 
 export interface RagSearchResult {
   hits: RagChunk[];
-  /** 召回总数(截断前; M12-c/N47 §6.12.6: total/truncated 让调用方可信判断截断)。 */
+  /** topK 截断前的召回集大小(受 recall 上限约束; N47 review 措辞收紧)。 */
   total?: number;
   /** topK 截断标记(total > hits.length 时 true)。 */
   truncated?: boolean;
+  /** 召集触顶 recall 上限(全书匹配数 ≥ recall, total 是下界非全量; N47 review)。 */
+  recall_capped?: boolean;
   ranking: "bm25" | "llm_rerank" | "vector";
   degraded?: string;
 }
@@ -113,7 +115,9 @@ export async function searchRag(
   // 不再把「8 条结果」误读为「只有 8 条」)。
   const total = recalled.length;
   const truncated = total > topK;
-  const totals = { total, truncated }; // N47: truncated 恒为布尔(缺省 false), 调用方免判 undefined
+  // N47 review: total 受 recall 上限约束 —— 触顶时 total=recall 是下界非全量。
+  const recallCapped = total >= recall;
+  const totals = { total, truncated, ...(recallCapped ? { recall_capped: true as const } : {}) };
 
   // N47: open_target 确定性派生(不改落盘): 章正文 → chapters/NNN.md + 偏移;
   // 其余 source_type → 结构化资产目录约定(无偏移)。坏数据缺 chapter_index 跳过。

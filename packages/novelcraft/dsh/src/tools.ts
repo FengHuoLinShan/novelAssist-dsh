@@ -663,7 +663,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
             : '; 嵌入失败, 已回退文本检索'
           : '';
         const message = hits.length > 0
-          ? `命中 ${hits.length}/${r.total ?? hits.length} 条(${rankingLabel}${degradedNote}${r.truncated ? '; 结果截断, 可提高 top_k 或缩小查询' : ''})。`
+          ? `命中 ${hits.length}/${r.total ?? hits.length} 条(${rankingLabel}${degradedNote}${r.truncated ? '; 结果截断, 可提高 top_k 或缩小查询' : ''}${r.recall_capped ? `; 召回已达上限窗口(全书匹配 ≥ ${r.total}), total 为下界非全量` : ''})。`
           : '无命中或索引为空, 可先文本入库/采用资产后重试。';
         return {
           ok: true, hits, total: r.total ?? hits.length, truncated: r.truncated === true,

@@ -28,8 +28,9 @@ export interface RagChunk {
   embedding_error?: string;
   /**
    * 可定位引用(M12-c/N47 §6.12.6「来源重开」的最小读面): 章正文 chunk 给出
-   * chapters/NNN.md 相对路径 + 偏移; 其余 source_type 给资产相对路径(无偏移)。
-   * 由 chunk 字段确定性派生(不改落盘格式)。
+   * chapters/NNN.md 相对路径; start/end 偏移当前**无生产者**(chunkChapterText 不写
+   * 偏移, N47 review 确认为死管道——字段为前向占位, 有生产者前不承诺定位精度);
+   * 其余 source_type 给资产相对路径(无偏移)。由 chunk 字段确定性派生(不改落盘)。
    */
   open_target?: { path: string; start_offset?: number; end_offset?: number };
 
