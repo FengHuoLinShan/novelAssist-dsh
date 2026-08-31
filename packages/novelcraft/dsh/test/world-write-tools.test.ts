@@ -64,7 +64,57 @@ describe('world 写工具(M12-a/N43)', () => {
     env.cleanup();
   });
 
-  it('update: 审批后改 name/tags(整组替换), 保留其余 frontmatter; 未知 slug 拒绝', async () => {
+  let seeded2Placeholder = ''; void seeded2Placeholder;
+  it('P1(review): 非白名单 entity_type 零审批拒绝; 空 patch 早拒', async () => {
+    const env = await setup();
+    await expect(exec(env, 'novelcraft_world_create', { root: env.root, name: 'x', entity_type: '大反派' }))
+      .rejects.toMatchObject({ code: 'LLM_SCHEMA_VIOLATION' });
+    await expect(exec(env, 'novelcraft_world_update', { root: env.root, slug: 'obj-x' }))
+      .rejects.toMatchObject({ code: 'LLM_SCHEMA_VIOLATION' });
+    expect(env.h.approval.requests).toHaveLength(0);
+    env.cleanup();
+  });
+
+  it('update: 审批拒绝零写; description 整段替换; tags 已有组被整组替换', async () => {
+    const rej = await setup({ outcome: 'rejected' });
+    void seeded2Placeholder;
+    rej.cleanup();
+
+    const seed = await setup();
+    const seeded2 = await exec(seed, 'novelcraft_world_create', {
+      root: seed.root, name: '有标签对象', tags: ['旧1', '旧2'], description: '旧正文。',
+    }) as { slug: string };
+    const before = readFileSync(path.join(seed.root, 'world', 'objects', `${seeded2.slug}.md`), 'utf8');
+    seed.cleanup();
+
+    const rejEnv = await setup({ outcome: 'rejected' });
+    // 直接在 rejected 环境重建种子(审批覆写只影响 request 返回; 用 allowed 种子不可行)——
+    // 改为: rejected 环境下手工写对象文件模拟既有对象。
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(path.join(rejEnv.root, 'world', 'objects'), { recursive: true });
+    writeFileSync(path.join(rejEnv.root, 'world', 'objects', `${seeded2.slug}.md`), before, 'utf8');
+    await expect(exec(rejEnv, 'novelcraft_world_update', { root: rejEnv.root, slug: seeded2.slug, name: '新名' }))
+      .rejects.toMatchObject({ code: 'APPROVAL_REJECTED' });
+    expect(readFileSync(path.join(rejEnv.root, 'world', 'objects', `${seeded2.slug}.md`), 'utf8')).toBe(before);
+    rejEnv.cleanup();
+
+    const env = await setup();
+    const created = await exec(env, 'novelcraft_world_create', {
+      root: env.root, name: '替换对象', tags: ['旧1', '旧2'], description: '旧正文。',
+    }) as { slug: string };
+    const up = await exec(env, 'novelcraft_world_update', {
+      root: env.root, slug: created.slug, tags: ['新组'], description: '新正文。',
+    }) as { ok: boolean };
+    expect(up.ok).toBe(true);
+    const raw = readFileSync(path.join(env.root, 'world', 'objects', `${created.slug}.md`), 'utf8');
+    expect(raw).toContain('新正文。');
+    expect(raw).not.toContain('旧正文。');
+    expect(raw).toContain('新组');
+    expect(raw).not.toContain('旧1');
+    env.cleanup();
+  });
+
+  it('update: 审批后改 name/tags(整组替换), 保留其余 frontmatter; 未知 slug 零审批拒绝', async () => {
     const env = await setup();
     const created = await exec(env, 'novelcraft_world_create', { root: env.root, name: '旧名' }) as { slug: string };
     const out = await exec(env, 'novelcraft_world_update', {
@@ -74,9 +124,11 @@ describe('world 写工具(M12-a/N43)', () => {
     const raw = readFileSync(path.join(env.root, 'world', 'objects', `${created.slug}.md`), 'utf8');
     expect(raw).toContain('name: 新名');
     expect(raw).not.toContain('name: 旧名');
-    // 未知 slug → store 读面错误(零审批内 prepare 抛)
-    await expect(exec(env, 'novelcraft_world_update', { root: env.root, slug: 'obj-不存在' }))
+    // 未知 slug → prepare 期抛(readObject), 零审批请求
+    const requestsBefore = env.h.approval.requests.length;
+    await expect(exec(env, 'novelcraft_world_update', { root: env.root, slug: 'obj-不存在', name: 'x' }))
       .rejects.toThrow();
+    expect(env.h.approval.requests).toHaveLength(requestsBefore);
     env.cleanup();
   });
 });

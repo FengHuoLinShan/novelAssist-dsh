@@ -141,7 +141,7 @@ export function prepareCreateObject(
   opts: { tx?: TransactionOptions } = {},
 ): PreparedWorldCreate {
   if (!input.name.trim()) throw new Error("name 必填");
-  const slug = slugify(`obj-${input.name}`) || `obj-${Date.now()}`;
+  const slug = slugify(`obj-${input.name}`); // 前缀保证非空; 旧 Date.now() 兜底为不可达死代码已删(M12-a review)
   const file = guardedFile(root, paths(root).world.objects, `${slug}.md`); // R9: 写面与读面同 gate。
   if (existsSync(file)) throw new Error(`对象已存在: ${slug}`);
   const fm: Record<string, unknown> = {

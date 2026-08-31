@@ -714,6 +714,14 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 60_000,
       async execute(args, run) {
+        // P1(review): entity_type 白名单 fail-fast —— core object schema 对 kind 只有
+        // 类型检查无 enums(非法串会静默写成 kind 并被 relations 判定排除, 功能悄悄
+        // 降级); 工具层先拒, core enums 补齐记 M12-b(N43 追记)。
+        const KINDS = ['object', 'character', 'location', 'faction', 'item', 'event', 'rule', 'concept'] as const;
+        if (args.entity_type !== undefined && !KINDS.includes(args.entity_type as typeof KINDS[number])) {
+          throw llmError('schema_violation',
+            `entity_type 必须是白名单 ${KINDS.join('/')}(收到: ${args.entity_type}; core kind enums 缺口记 M12-b)`);
+        }
         // schema 面数组是 JsonValue[]; 字符串化校验后收窄(schema type:array 元素未细化为
         // string, 运行时逐项校验 fail-closed, 不静默丢弃非字符串项)。
         const strList = (v: readonly unknown[] | undefined, what: string): string[] | undefined => {
@@ -730,8 +738,8 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           {
             name: args.name,
             entityType: args.entity_type ?? 'object',
-            ...(strList(args.aliases, 'aliases') ? { aliases: strList(args.aliases, 'aliases') } : {}),
-            ...(strList(args.tags, 'tags') ? { tags: strList(args.tags, 'tags') } : {}),
+            ...((): { aliases?: string[] } => { const v = strList(args.aliases, 'aliases'); return v ? { aliases: v } : {}; })(),
+            ...((): { tags?: string[] } => { const v = strList(args.tags, 'tags'); return v ? { tags: v } : {}; })(),
             ...(args.description ? { description: args.description } : {}),
           },
           args.note,
@@ -742,7 +750,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
     tool({
       name: 'novelcraft_world_update',
       description:
-        '修改世界对象(审批后执行): 按对象名或 slug 定位 world/objects/ 内对象, 更新' +
+        '修改世界对象(审批后执行): 按对象 slug 定位 world/objects/ 内对象, 更新' +
         'name/tags/正文描述(经 N32 事务, 保留其余 frontmatter 与正文语义)。审批冻结' +
         '写前字节与 HEAD, 写前重验(并发修改 CAS 拒绝)。',
       parameters: {
@@ -765,6 +773,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       async execute(args, run) {
         const patch: { name?: string; description?: string; tags?: string[] } = {};
         if (args.name !== undefined) patch.name = args.name;
+        if (args.name === undefined && args.tags === undefined && args.description === undefined) {
+          throw llmError('schema_violation', '至少提供 name/tags/description 之一(空 patch 拒绝, 避免无意义审批+重排提交)');
+        }
         if (args.tags !== undefined) {
           patch.tags = args.tags.map((x) => {
             if (typeof x !== 'string') throw llmError('schema_violation', 'tags 必须是字符串数组');
