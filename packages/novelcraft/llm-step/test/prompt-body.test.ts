@@ -147,4 +147,33 @@ describe("runStep 模型可见性与 journal 指纹", () => {
     expect(failed.promptFingerprint?.schemaInjection).toBe("text-contract");
     expect(failed.promptFingerprint?.systemPromptHash).toBe(promptHash(composeSystemPrompt(JSON_SPEC).text));
   });
+
+  it("M10-A6: 生效参数回执 = spec < executionDefaults < overrides 合并终值, 成功/失败均携带", async () => {
+    // spec: temperature 0.1 / timeoutMs 5000; defaults: temperature 0.7 / maxTokens 512 / model;
+    // overrides: temperature 0(合法零值不被吞) + model 覆盖。
+    const provider = new MockProvider({ responses: [{ text: JSON.stringify({ answer: "ok" }) }] });
+    provider.executionDefaults = { temperature: 0.7, maxTokens: 512, model: "default-model" };
+    const res = await runStep(provider, {
+      specRef: JSON_SPEC.specRef,
+      input: "问题",
+      overrides: { temperature: 0, model: "req-model" },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.effective).toEqual({
+      model: "req-model",
+      temperature: 0,
+      maxTokens: 512,
+      timeoutMs: 5000,
+    });
+    // provider 实际收到的请求与回执一致(可回放)
+    expect(provider.calls[0]?.temperature).toBe(0);
+    expect(provider.calls[0]?.model).toBe("req-model");
+    expect(provider.calls[0]?.maxTokens).toBe(512);
+
+    // 失败路径也携带
+    const bad = new MockProvider({ responses: [{ text: "坏" }] });
+    const failed = await runStep(bad, { specRef: JSON_SPEC.specRef, input: "问题", fixAttempts: 0 });
+    expect(failed.ok).toBe(false);
+    expect(failed.effective?.timeoutMs).toBe(5000);
+  });
 });

@@ -114,6 +114,12 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           schema_injection: { type: 'string', required: true },
           output_schema_hash: { type: 'string', required: true },
           journal: { type: 'array', required: true },
+          // M10-A6: 生效调用参数(合并链终值; 未定字段空串/0)
+          effective_provider: { type: 'string', required: true },
+          effective_model: { type: 'string', required: true },
+          effective_temperature: { type: 'number', required: true },
+          effective_max_tokens: { type: 'integer', required: true },
+          effective_timeout_ms: { type: 'integer', required: true },
         },
       },
       timeoutMs: 300_000,
@@ -155,6 +161,13 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
           prompt_hash: fp?.systemPromptHash ?? '',
           schema_injection: fp?.schemaInjection ?? '',
           output_schema_hash: fp?.outputSchemaHash ?? '',
+          // M10-A6: 生效调用参数回执(spec < executionDefaults < overrides 合并终值;
+          // 未定字段空串/0)。
+          effective_provider: result.effective?.provider ?? '',
+          effective_model: result.effective?.model ?? '',
+          effective_temperature: result.effective?.temperature ?? 0,
+          effective_max_tokens: result.effective?.maxTokens ?? 0,
+          effective_timeout_ms: result.effective?.timeoutMs ?? 0,
           journal: result.journal.map((e) => ({
             attempt: e.attempt,
             startedAt: e.startedAt,

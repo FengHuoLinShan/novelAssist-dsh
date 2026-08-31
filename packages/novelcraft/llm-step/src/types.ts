@@ -94,6 +94,17 @@ export interface StepPromptFingerprint {
   outputSchemaHash: string;
 }
 
+/** 本次执行实际生效的调用参数(M10-A6/N38 加法): spec < provider.executionDefaults < 请求
+ *  overrides 合并后的最终值; 未定字段省略。不含输入正文与 Key。 */
+export interface StepEffectiveParams {
+  provider?: string;
+  model?: string;
+  temperature?: number;
+  top_p?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
+}
+
 export interface StepResult {
   /** 校验通过的结构化输出 */
   result: unknown;
@@ -105,6 +116,8 @@ export interface StepResult {
   contractVersion: string;
   /** 模型可见输入指纹(成功与失败均携带; M10-A3/A6, 模型可见⟺可回放) */
   promptFingerprint?: StepPromptFingerprint;
+  /** 本次执行实际生效的调用参数(成功与失败均携带; M10-A6) */
+  effective?: StepEffectiveParams;
 }
 
 /** Provider 注入接口(真 DSH ctx.llm 适配留挂载阶段, 见 packages/novelcraft/README.md seam 契约) */

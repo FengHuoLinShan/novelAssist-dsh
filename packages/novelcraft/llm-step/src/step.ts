@@ -9,7 +9,7 @@
 import { checkBudget, estimateTokens, type WorkflowBudget } from "./budget.js";
 import { composeSystemPrompt, outputSchemaHash, promptHash } from "./prompt-body.js";
 import { loadSpec } from "./specs.js";
-import type { LlmStepSpec, Provider, StepErrorKind, StepPromptFingerprint, StepRequest, StepResult } from "./types.js";
+import type { LlmStepSpec, Provider, StepEffectiveParams, StepErrorKind, StepPromptFingerprint, StepRequest, StepResult } from "./types.js";
 import { validateSchema } from "./validator.js";
 
 function extractJson(text: string): string {
@@ -136,6 +136,17 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   const providerRoute = overrides.provider ?? d?.provider;
   const fixAttempts = req.fixAttempts ?? 1;
 
+  // M10-A6(N38): 合并链终值的生效参数回执(spec < provider.executionDefaults <
+  // 请求 overrides), 成功与失败均携带; 未定字段省略, 不含输入正文与 Key。
+  const effective: StepEffectiveParams = {
+    ...(providerRoute !== undefined ? { provider: providerRoute } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(top_p !== undefined ? { top_p } : {}),
+    ...(maxTokens > 0 ? { maxTokens } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  };
+
   const journal: StepResult["journal"] = [];
   // journal 统一入口: 每条 attempt 记录附模型可见指纹(promptHash + 注入模式, N38)。
   const pushEntry = (entry: StepResult["journal"][number]) => {
@@ -158,7 +169,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         attempt: i + 1, startedAt, durationMs: Date.now() - t0,
         errorKind: "timeout", errorMessage: "预算超时(重试前已耗尽)",
       });
-      return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint);
+      return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint, effective);
     }
     const controller = new AbortController();
 
@@ -194,7 +205,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
           errorKind: "timeout", errorMessage: "超时",
         });
-        return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint);
+        return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint, effective);
       }
       const resp = outcome.value;
       lastUsage = resp.usage ?? lastUsage;
@@ -212,6 +223,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
           specRef: spec.specRef,
           contractVersion: spec.contractVersion,
           promptFingerprint: fingerprint,
+          effective,
         };
       }
 
@@ -251,6 +263,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         specRef: spec.specRef,
         contractVersion: spec.contractVersion,
         promptFingerprint: fingerprint,
+        effective,
       };
     } catch (err) {
       if (controller.signal.aborted) {
@@ -258,7 +271,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
           errorKind: "timeout", errorMessage: "超时",
         });
-        return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint);
+        return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint, effective);
       }
       const { retryable, message } = classifyError(err);
       if (!retryable) {
@@ -266,7 +279,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
           errorKind: "provider_fatal", errorMessage: message,
         });
-        return fail(spec, req, "provider_fatal", message, journal, lastUsage, fingerprint);
+        return fail(spec, req, "provider_fatal", message, journal, lastUsage, fingerprint, effective);
       }
       pushEntry({
         attempt: i + 1, startedAt, durationMs: Date.now() - t0,
@@ -280,9 +293,9 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   // 尝试耗尽: 按最后一次失败分类。schema 解析/校验耗尽 → schema_violation;
   // retryable provider 耗尽 → provider_retryable + 最后 message(而非固定 schema_violation)。
   if (lastFailure?.kind === "provider_retryable") {
-    return fail(spec, req, "provider_retryable", lastFailure.message, journal, lastUsage, fingerprint);
+    return fail(spec, req, "provider_retryable", lastFailure.message, journal, lastUsage, fingerprint, effective);
   }
-  return fail(spec, req, "schema_violation", `经 ${attempts} 次尝试仍未通过输出校验`, journal, lastUsage, fingerprint);
+  return fail(spec, req, "schema_violation", `经 ${attempts} 次尝试仍未通过输出校验`, journal, lastUsage, fingerprint, effective);
 }
 
 function fail(
@@ -293,6 +306,7 @@ function fail(
   journal: StepResult["journal"],
   usage: StepResult["usage"],
   fingerprint?: StepPromptFingerprint,
+  effective?: StepEffectiveParams,
 ): StepResult {
   return {
     result: null,
@@ -303,6 +317,7 @@ function fail(
     specRef: spec.specRef,
     contractVersion: spec.contractVersion,
     ...(fingerprint !== undefined ? { promptFingerprint: fingerprint } : {}),
+    ...(effective !== undefined ? { effective } : {}),
   };
 }
 

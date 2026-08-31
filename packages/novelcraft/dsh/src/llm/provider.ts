@@ -90,6 +90,21 @@ export class DshProvider implements Provider {
       throw err;
     }
 
+    // M10-A5(§6.23.6): exact-route readiness fail-closed —— 发请求前核对 provider
+    // 路由已在宿主 live 目录(listProviders)注册。selected(预设/请求选定)≠ready(路由
+    // 已注册可派发); dormant 可配置项未激活或路由名拼错时提前拒绝并回传 live 目录,
+    // 不把请求扔进流层拿模糊错误(失败要响; 错误不可重试, 在 llm.stream 之前抛出)。
+    const route = req.provider ?? provider;
+    const liveRoutes = llm.listProviders().map((p) => p.id);
+    if (!liveRoutes.includes(route)) {
+      const err = new Error(
+        `LLM provider 路由未就绪: 「${route}」不在宿主 live 目录 [${liveRoutes.join(', ') || '空'}]` +
+          '(selected≠ready; 请在宿主设置连接/激活该 provider 或修正路由名)',
+      );
+      (err as Error & { retryable: boolean }).retryable = false;
+      throw err;
+    }
+
     let system: string | undefined;
     const messages: Message[] = [];
     for (const m of req.messages) {

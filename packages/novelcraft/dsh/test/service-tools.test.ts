@@ -413,6 +413,39 @@ describe('NovelCraftService 端到端', () => {
     env.cleanup();
   });
 
+  it('M10-A5/A6: 已注册路由通过且回执带生效参数; 未注册路由 fail-closed 零请求', async () => {
+    // A5 正例 + A6: 已注册路由(fake)通过; 回执 effective 含 model/temperature 覆盖值
+    const env = await setup();
+    env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
+    const t = tool(env, 'novelcraft_llm_step');
+    const out = (await t.execute(
+      { spec: 'semantic_review', input: '正文', model: 'fake-model-x', temperature: 0.2 },
+      { ...env.exec, name: 'novelcraft_llm_step' },
+    )) as { effective_model: string; effective_temperature: number };
+    expect(out.effective_model).toBe('fake-model-x');
+    expect(out.effective_temperature).toBe(0.2);
+    expect(env.h.adapter.requests).toHaveLength(1);
+    env.cleanup();
+
+    // A5 负例: overrides.provider 走未注册路由(与工具同一条 propose.runStep 路径)
+    //   → llm.stream 之前 fail-closed(provider_fatal, 消息含路由名与 live 目录),
+    //   adapter 零请求。capability 面返回 ok:false 的 StepResult, 工具层再映射
+    //   LLM_PROVIDER_FATAL。
+    const env2 = await setup();
+    env2.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
+    const r = await env2.service.capabilities.propose.runStep({
+      specRef: 'semantic_review',
+      input: '正文',
+      overrides: { provider: 'no-such-route' },
+    }, env2.root);
+    expect(r.ok).toBe(false);
+    expect(r.error?.kind).toBe('provider_fatal');
+    expect(r.error?.message).toContain('no-such-route');
+    expect(r.error?.message).toContain('fake');
+    expect(env2.h.adapter.requests).toHaveLength(0);
+    env2.cleanup();
+  });
+
   it('工具 novelcraft_llm_step: exec.signal 捕获并贯通(已 abort → 宿主失败通道)', async () => {
     const env = await setup();
     env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
