@@ -408,8 +408,8 @@ export class NovelCraftService extends Service {
   }
 
   /** 总纲 preview(M12-b/N44, propose): 暂存 .assistant/proposals/, 不写结构资产。 */
-  outlinePreview(root: string, input: string): ReturnType<typeof outlineFace.outlinePreview> {
-    return outlineFace.outlinePreview(this, root, input);
+  outlinePreview(root: string, input: string, signal?: AbortSignal): ReturnType<typeof outlineFace.outlinePreview> {
+    return outlineFace.outlinePreview(this, root, input, signal);
   }
 
   /** P20 当前层 preview(M12-b/N44, propose): 暂存 proposals, 不写 thread/arc。 */
@@ -417,8 +417,9 @@ export class NovelCraftService extends Service {
     root: string,
     target: 'plot_thread' | 'outline_arc',
     input: string,
+    signal?: AbortSignal,
   ): ReturnType<typeof outlineFace.outlineItemPreview> {
-    return outlineFace.outlineItemPreview(this, root, target, input);
+    return outlineFace.outlineItemPreview(this, root, target, input, signal);
   }
 
   /** apply 总纲 preview(审批内 canonical 写; M12-b/N44)。 */
@@ -440,23 +441,23 @@ export class NovelCraftService extends Service {
   }
 
   /** world 生成中心·共创聊天(M12-b/N44, propose: 纯 LLM 零写)。 */
-  worldGenChat(root: string, input: string): ReturnType<typeof outlineFace.worldGenChat> {
-    return outlineFace.worldGenChat(this, root, input);
+  worldGenChat(root: string, input: string, signal?: AbortSignal): ReturnType<typeof outlineFace.worldGenChat> {
+    return outlineFace.worldGenChat(this, root, input, signal);
   }
 
   /** world 生成中心·只读收束(propose)。 */
-  worldGenConverge(root: string, input: string): ReturnType<typeof outlineFace.worldGenConverge> {
-    return outlineFace.worldGenConverge(this, root, input);
+  worldGenConverge(root: string, input: string, signal?: AbortSignal): ReturnType<typeof outlineFace.worldGenConverge> {
+    return outlineFace.worldGenConverge(this, root, input, signal);
   }
 
   /** world 生成中心·一跳探索(propose: 不创建资产)。 */
-  worldGenExplore(root: string, input: string): ReturnType<typeof outlineFace.worldGenExplore> {
-    return outlineFace.worldGenExplore(this, root, input);
+  worldGenExplore(root: string, input: string, signal?: AbortSignal): ReturnType<typeof outlineFace.worldGenExplore> {
+    return outlineFace.worldGenExplore(this, root, input, signal);
   }
 
   /** world 生成中心·页面检修(propose: findings 供复核)。 */
-  worldGenInspect(root: string, input: string): ReturnType<typeof outlineFace.worldGenInspect> {
-    return outlineFace.worldGenInspect(this, root, input);
+  worldGenInspect(root: string, input: string, signal?: AbortSignal): ReturnType<typeof outlineFace.worldGenInspect> {
+    return outlineFace.worldGenInspect(this, root, input, signal);
   }
 
   /** world 生成中心·世界书页面建议(propose: 落 bible/ draft, 采用另走 store_adopt)。 */
@@ -464,8 +465,9 @@ export class NovelCraftService extends Service {
     root: string,
     input: string,
     opts: { isNewPage?: boolean },
+    signal?: AbortSignal,
   ): ReturnType<typeof outlineFace.worldGenBibleSuggest> {
-    return outlineFace.worldGenBibleSuggest(this, root, input, opts);
+    return outlineFace.worldGenBibleSuggest(this, root, input, opts, signal);
   }
 
   /** 切换会话绑定到既有书(审批后, binder 原子改绑; M11/N42)。 */

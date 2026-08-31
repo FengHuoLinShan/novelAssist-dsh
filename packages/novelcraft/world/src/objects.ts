@@ -144,11 +144,20 @@ export function prepareCreateObject(
   const slug = slugify(`obj-${input.name}`); // 前缀保证非空; 旧 Date.now() 兜底为不可达死代码已删(M12-a review)
   const file = guardedFile(root, paths(root).world.objects, `${slug}.md`); // R9: 写面与读面同 gate。
   if (existsSync(file)) {
-    // 坍缩语义提示(M12-b/N44): 不同名字可折同一 slug(空白/特殊字符折叠), 报错须可分辨。
+    // 坍缩语义区分(M12-b review P1-1 修复): 比对既有对象的 name —— 同名冲突 vs
+    // 不同名字折叠为同一 slug(空白/特殊字符折叠), 报错可分辨(旧实现恒真不可达)。
+    const existingName = (() => {
+      try {
+        return parseFrontmatter(readFileSync(file, "utf8")).data?.name;
+      } catch {
+        return undefined;
+      }
+    })();
+    const sameName = typeof existingName === "string" && existingName === input.name.trim();
     throw new Error(
-      slug === slugify(`obj-${input.name}`)
-        ? `对象已存在: ${slug}(同名对象); 换名或先处理既有对象`
-        : `slug 坍缩冲突: 名字「${input.name}」折为 ${slug} 与既有对象同名; 请换一个名字`,
+      sameName
+        ? `对象已存在: ${slug}(同名对象「${input.name}»); 换名或先处理既有对象`
+        : `slug 坍缩冲突: 名字「${input.name}」折为 ${slug}, 与既有对象「${String(existingName ?? "?")}»同名; 请换一个名字`,
     );
   }
   const fm: Record<string, unknown> = {

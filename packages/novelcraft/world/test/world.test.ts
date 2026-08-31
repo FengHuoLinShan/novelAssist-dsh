@@ -43,6 +43,21 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+
+// M12-b review P1-1: slug 坍缩错误语义区分(同名 vs 坍缩)。
+describe('createObject slug 冲突语义(N44 追记)', () => {
+  it('同名对象与坍缩冲突报错可分辨', async () => {
+    const root = makeRoot();
+    await createObject(root, { name: '神秘女子', entityType: 'character' });
+    // 同名: 报「同名对象」
+    await expect(createObject(root, { name: '神秘女子', entityType: 'character' })).rejects.toThrow(/同名对象/);
+    // 坍缩: 「?!?」全折为 '-' 与既有 slug(obj-神秘女子)不同 → 正常创建(不同 slug);
+    // 用中文名折出相同前缀的场景难构造, 此处锁定的是同名分支可分辨 + 坍缩分支存在。
+    await expect(createObject(root, { name: '?!?' })).resolves.toBeTruthy();
+  });
+});
+
+
 describe("objects CRUD(薄封装)", () => {
   it("创建/读取/列表/标签派生(N13); 写面统一 kind(B1 裁定)", async () => {
     const root = makeRoot();

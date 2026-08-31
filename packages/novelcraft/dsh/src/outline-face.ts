@@ -14,23 +14,25 @@ import type { NovelCraftService } from './service.js';
 export type OutlinePreviewOk = { ok: true; file: string; record: outline.OutlinePreviewRecord };
 export type OutlinePreviewErr = { ok: false; error: StepResult['error'] };
 
-/** 内容手 provider 解析(与 service.contentProviderFor 同源; preview 用 root 绑定画像)。 */
-async function providerFor(service: NovelCraftService, root: string): Promise<Provider> {
-  return service.contentProviderFor(root);
+/** 内容手 provider 解析(与 service.contentProviderFor 同源; preview 用 root 绑定画像;
+ * signal 透传工具取消——M12-b review P2-5: 内层 spec 超时 1800s 须可被外层取消)。 */
+async function providerFor(service: NovelCraftService, root: string, signal?: AbortSignal): Promise<Provider> {
+  return service.contentProviderFor(root, signal);
 }
 
 /** 总纲 preview: 暂存 proposals, 不写 structure/outline.md。 */
 export async function outlinePreview(
-  service: NovelCraftService, root: string, input: string,
+  service: NovelCraftService, root: string, input: string, signal?: AbortSignal,
 ): Promise<OutlinePreviewOk | OutlinePreviewErr> {
-  return outline.previewStoryOutline(await providerFor(service, root), root, input);
+  return outline.previewStoryOutline(await providerFor(service, root, signal), root, input);
 }
 
 /** P20 当前层 preview: 暂存 proposals, 不写 thread/arc。 */
 export async function outlineItemPreview(
   service: NovelCraftService, root: string, target: 'plot_thread' | 'outline_arc', input: string,
+signal?: AbortSignal,
 ): Promise<OutlinePreviewOk | OutlinePreviewErr> {
-  return outline.previewOutlineItem(await providerFor(service, root), root, target, input);
+  return outline.previewOutlineItem(await providerFor(service, root, signal), root, target, input);
 }
 
 /** apply 总纲 preview(审批内执行 canonical 写)。 */
@@ -63,25 +65,25 @@ export async function outlineItemApplyGuarded(
 
 // —— world 生成中心只读模式(propose; 纯 LLM 调用零写) ——
 
-export async function worldGenChat(service: NovelCraftService, root: string, input: string) {
-  return world.worldChat(await providerFor(service, root), input);
+export async function worldGenChat(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
+  return world.worldChat(await providerFor(service, root, signal), input);
 }
 
-export async function worldGenConverge(service: NovelCraftService, root: string, input: string) {
-  return world.worldConverge(await providerFor(service, root), input);
+export async function worldGenConverge(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
+  return world.worldConverge(await providerFor(service, root, signal), input);
 }
 
-export async function worldGenExplore(service: NovelCraftService, root: string, input: string) {
-  return world.worldExplore(await providerFor(service, root), input);
+export async function worldGenExplore(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
+  return world.worldExplore(await providerFor(service, root, signal), input);
 }
 
-export async function worldGenInspect(service: NovelCraftService, root: string, input: string) {
-  return world.worldInspect(await providerFor(service, root), input);
+export async function worldGenInspect(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
+  return world.worldInspect(await providerFor(service, root, signal), input);
 }
 
 /** 世界书页面建议 → bible/ draft 提案(采用另走 store_adopt; §6.17 页面建议只落工作稿)。 */
 export async function worldGenBibleSuggest(
-  service: NovelCraftService, root: string, input: string, opts: { isNewPage?: boolean },
+  service: NovelCraftService, root: string, input: string, opts: { isNewPage?: boolean }, signal?: AbortSignal,
 ) {
-  return world.suggestBiblePage(await providerFor(service, root), root, input, opts);
+  return world.suggestBiblePage(await providerFor(service, root, signal), root, input, opts);
 }

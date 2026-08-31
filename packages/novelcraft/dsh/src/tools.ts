@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { requireRoot } from './tools/shared.js';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
+import { ENTITY_TYPES } from '@novelcraft/store';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from './ctx.js';
 import { importTraceFile } from './deep-import.js';
@@ -96,6 +97,14 @@ const ADOPTABLE_KINDS = [
 const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
 
 const RADARS = ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'] as const;
+
+/** 回执正文上界(N39② 延伸, M12-b review P2-6): 与 llm_step 同 receiptLimit 口径。 */
+function capReceipt(run: { service: { capabilities: { read: { receiptLimit(): number } } } }, text: string): string {
+  const max = run.service.capabilities.read.receiptLimit();
+  return text.length > max
+    ? `${text.slice(0, max)}\n[回执截断: 原文 ${text.length} 字符, 上限 ${max}(Config.llm.receiptMaxChars)]`
+    : text;
+}
 
 /** 全量 21 工具定义(写作/存储 15 与地图册 6 的固定交错序; 工具组插件复用)。 */
 export function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
@@ -717,10 +726,10 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         // P1(review): entity_type 白名单 fail-fast —— core object schema 对 kind 只有
         // 类型检查无 enums(非法串会静默写成 kind 并被 relations 判定排除, 功能悄悄
         // 降级); 工具层先拒, core enums 补齐记 M12-b(N43 追记)。
-        const KINDS = ['object', 'character', 'location', 'faction', 'item', 'event', 'rule', 'concept'] as const;
-        if (args.entity_type !== undefined && !KINDS.includes(args.entity_type as typeof KINDS[number])) {
+        // 白名单与 core ENTITY_TYPES 同源(store 导出, 20 类; M12-b review P2-2 回收本地硬编码)。
+        if (args.entity_type !== undefined && !(ENTITY_TYPES as readonly string[]).includes(args.entity_type)) {
           throw llmError('schema_violation',
-            `entity_type 必须是白名单 ${KINDS.join('/')}(收到: ${args.entity_type}; core kind enums 缺口记 M12-b)`);
+            `entity_type 必须是 ENTITY_TYPES 白名单之一(收到: ${args.entity_type})`);
         }
         // schema 面数组是 JsonValue[]; 字符串化校验后收窄(schema type:array 元素未细化为
         // string, 运行时逐项校验 fail-closed, 不静默丢弃非字符串项)。
@@ -815,9 +824,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.outlinePreview(requireRoot(run), args.input);
+        const r = await run.service.capabilities.propose.outlinePreview(requireRoot(run), args.input, run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, run_id: r.record.run_id, result_json: JSON.stringify(r.record.result), error: '' };
+        return { ok: true, run_id: r.record.run_id, result_json: capReceipt(run, JSON.stringify(r.record.result)), error: '' };
       },
     }),
     tool({
@@ -863,9 +872,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         if (args.target !== 'plot_thread' && args.target !== 'outline_arc') {
           throw llmError('schema_violation', "target 必须是 'plot_thread' 或 'outline_arc'");
         }
-        const r = await run.service.capabilities.propose.outlineItemPreview(requireRoot(run), args.target, args.input);
+        const r = await run.service.capabilities.propose.outlineItemPreview(requireRoot(run), args.target, args.input, run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, run_id: r.record.run_id, result_json: JSON.stringify(r.record.result), error: '' };
+        return { ok: true, run_id: r.record.run_id, result_json: capReceipt(run, JSON.stringify(r.record.result)), error: '' };
       },
     }),
     tool({
@@ -901,9 +910,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenChat(requireRoot(run), args.input);
+        const r = await run.service.capabilities.propose.worldGenChat(requireRoot(run), args.input, run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, reply: r.reply ?? '', error: '' };
+        return { ok: true, reply: capReceipt(run, r.reply ?? ''), error: '' };
       },
     }),
     tool({
@@ -919,9 +928,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenConverge(requireRoot(run), args.input);
+        const r = await run.service.capabilities.propose.worldGenConverge(requireRoot(run), args.input, run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: JSON.stringify(r.result), error: '' };
+        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
       },
     }),
     tool({
@@ -937,9 +946,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenExplore(requireRoot(run), args.input);
+        const r = await run.service.capabilities.propose.worldGenExplore(requireRoot(run), args.input, run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: JSON.stringify(r.result), error: '' };
+        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
       },
     }),
     tool({
@@ -955,9 +964,9 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenInspect(requireRoot(run), args.input);
+        const r = await run.service.capabilities.propose.worldGenInspect(requireRoot(run), args.input, run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: JSON.stringify(r.result), error: '' };
+        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
       },
     }),
     tool({
@@ -977,7 +986,7 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
       timeoutMs: 300_000,
       async execute(args, run) {
         const r = await run.service.capabilities.propose.worldGenBibleSuggest(
-          requireRoot(run), args.input, { ...(args.is_new_page ? { isNewPage: true } : {}) },
+          requireRoot(run), args.input, { ...(args.is_new_page ? { isNewPage: true } : {}) }, run.signal,
         );
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
         return { ok: true, slug: r.slug ?? '', error: '' };

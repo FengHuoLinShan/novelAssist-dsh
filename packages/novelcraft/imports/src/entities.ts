@@ -6,7 +6,7 @@ import path from "node:path";
 import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider, WorkflowBudget } from "@novelcraft/llm-step";
-import { dedupeByEntityKey, findExactEntity, gitAdd, gitCommit, parseFrontmatter } from "@novelcraft/store";
+import { dedupeByEntityKey, normalizeEntityType, findExactEntity, gitAdd, gitCommit, parseFrontmatter } from "@novelcraft/store";
 import { assertImportWorkspaceClean } from "./workspace.js";
 import { registerImportSpecs } from "./specs-imports.js";
 import { readChapterText } from "./stages.js";
@@ -101,8 +101,16 @@ export async function planEntityBatch(
     for (const e of parsed.entities ?? []) {
       const draft: EntityDraft = {
         name: String(e.name ?? ""),
-        entity_type: String(e.entity_type ?? "object"),
-        kind: String(e.entity_type ?? "object"),
+        // M12-b review P1-2/N44 追记: object schema kind 已收紧为 ENTITY_TYPES 枚举,
+        // LLM 原始类型经 normalizeEntityType 归一(白名单外回落 'object'), 原始值进
+        // evidence 注记不丢失 —— 否则 deep-import 候选永远无法通过 adopt 校验。
+        ...((): { entity_type: string; kind: string; note?: string } => {
+          const raw = String(e.entity_type ?? "object");
+          const normalized = normalizeEntityType(raw) ?? "object";
+          return normalized === raw
+            ? { entity_type: normalized, kind: normalized }
+            : { entity_type: normalized, kind: normalized, note: `entity_type 归一: ${raw} → ${normalized}(不在 20 类白名单)` };
+        })(),
         aliases: Array.isArray(e.aliases) ? e.aliases.map(String) : undefined,
         description: typeof e.description === "string" ? e.description : undefined,
         evidence: Array.isArray(e.evidence) ? e.evidence.map(String) : [],

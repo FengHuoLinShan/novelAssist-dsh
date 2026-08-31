@@ -22,6 +22,20 @@ import {
 import { dedupeByEntityKey, findExactEntity, l0ExactGroups, shouldAutoPromote } from '../src/index';
 import { filterActive } from '../src/index';
 
+// M12-b/N44(review P1-2): object kind enums 收紧的行为锁定。
+describe('object kind enums(N44: 非法 kind 写面 fail-closed)', () => {
+  it('非法 kind → INVALID_ENUM 拒写; 合法 20 类通过', () => {
+    const bad = validateFrontmatter('object', {
+      id: 'obj-x', name: 'x', kind: '大反派', status: 'canonical',
+    });
+    expect(bad.some((i) => i.path === 'kind' && i.code === 'INVALID_ENUM')).toBe(true);
+    const good = validateFrontmatter('object', {
+      id: 'obj-x', name: 'x', kind: 'character', status: 'canonical',
+    });
+    expect(good).toEqual([]);
+  });
+});
+
 describe('frontmatter parse/serialize', () => {
   it('round-trips a nested frontmatter + body deterministically', () => {
     const fm = {

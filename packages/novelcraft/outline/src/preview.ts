@@ -8,7 +8,7 @@
 // 暂存记录带 promptFingerprint(模型可见⟺可回放)与 input 摘要 hash, apply 时校验
 // 记录完整性; 记录是 .assistant 机器态, 不经审批(与 proposals 先例同口径)。
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { paths } from "@novelcraft/vault";
 import { runStep, type Provider, type StepResult } from "@novelcraft/llm-step";
 import { registerOutlineSpecs } from "./specs-outline.js";
@@ -53,11 +53,13 @@ function writePreview(root: string, record: OutlinePreviewRecord): string {
 function readPreview(root: string, kind: OutlinePreviewRecord["kind"], runId: string): OutlinePreviewRecord {
   const dir = paths(root).assistant.proposals;
   // 按命名约定定位(run_id 是 p<base36 ts> 段, 匹配唯一)。
-  const prefix = kind === "story_outline" ? `outline-${runId}` : `outline-item-`;
+  // 匹配带 target(review P2-3): outline_item 的匹配含 target 段, 消除不同 target
+  // 同 run_id 时宽匹配选错记录的歧义; proposalFile 对 target 的 slug 化保持 ASCII 安全。
   const dirEntries = existsSync(dir) ? listProposalFiles(dir) : [];
-  const match = dirEntries.find((n) =>
-    kind === "story_outline" ? n === `${prefix}.json` : n.startsWith(prefix) && n.includes(`-${runId}.json`),
-  );
+  const match =
+    kind === "story_outline"
+      ? dirEntries.find((n) => n === `outline-${runId}.json`)
+      : dirEntries.find((n) => n.startsWith("outline-item-") && n.includes(`-${runId}.json`));
   if (match === undefined) {
     throw new Error(
       `preview 记录不存在: ${kind}/${runId}。请先生成 preview(.assistant/proposals/ 下无对应记录)`,
@@ -81,7 +83,9 @@ function listProposalFiles(dir: string): string[] {
 }
 
 function runIdOf(now: Date): string {
-  return `p${now.getTime().toString(36)}`;
+  // 时间戳+随机熵(M12-b review P2-3): 同毫秒并发 preview 不得同 run_id(文件静默覆盖/
+  // 宽匹配歧义); 熵段 6 hex 足够单毫秒内去重。
+  return `p${now.getTime().toString(36)}${randomUUID().replaceAll("-", "").slice(0, 6)}`;
 }
 
 /** 总纲 preview: 生成 → 暂存 .assistant/proposals/, 不写 structure/outline.md。 */
@@ -154,7 +158,13 @@ export function applyStoryOutlinePreview(
   opts: { workflowId?: string; override?: Record<string, unknown> } = {},
 ): void {
   const record = readPreview(root, "story_outline", runId);
-  const merged = { ...record.result, ...(opts.override ?? {}) };
+  // 白名单透传(review P2-4): 被编辑过的暂存不得注入任意未知 frontmatter 键/覆盖 status。
+  const r = record.result;
+  const allowed: Record<string, unknown> = {};
+  for (const key of ["title", "creative_core", "major_storylines", "macro_movements", "open_decisions", "outline_markdown"]) {
+    if (r[key] !== undefined) allowed[key] = r[key];
+  }
+  const merged = { ...allowed, ...(opts.override ?? {}) };
   writeOutline(root, merged, { workflowId: opts.workflowId, message: `outline: apply preview ${runId}` });
 }
 
