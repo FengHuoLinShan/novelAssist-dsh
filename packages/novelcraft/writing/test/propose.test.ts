@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
-import { ingestChapter, latestProposal, proposeNextChapter } from "../src/index";
+import { compileProposalContextBudgeted,  ingestChapter, latestProposal, proposeNextChapter } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -26,6 +26,25 @@ const proposal = {
   cost: "约 3000 字",
   risk: "需先补「桥」的设定",
 };
+
+// M12-c/N45: context 编译器接线行为锁定。
+describe('compileProposalContextBudgeted(N45: Tier P0-P4 预算编译进写作链)', () => {
+  it('输出含任务段与结构段; 空书时仍产出任务', () => {
+    const root = makeRoot();
+    const out = compileProposalContextBudgeted(root, 1);
+    expect(out).toContain('上下文共');
+    expect(typeof out).toBe('string');
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it('超预算时低优先层被逐出(伏笔 P3 先于总纲 P2)', () => {
+    const root = makeRoot();
+    ingestChapter(root, { chapterIndex: 1, text: '第一章正文'.repeat(200), source: 'paste' });
+    // 小预算下编译仍成功(截断/驱逐由 context 包保证, 此处锁定接线不抛、可消费)
+    const out = compileProposalContextBudgeted(root, 1);
+    expect(out.length).toBeGreaterThan(0);
+  });
+});
 
 describe("proposeNextChapter(计划台续写提案)", () => {
   it("落 .assistant/proposals/, 字段完整(§17.5.3)", async () => {

@@ -8,7 +8,7 @@ import { runStep } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import { gitAdd, gitCommit, hasStagedOutside, relOf, StoreError } from "@novelcraft/store";
 import { chapterBody } from "./review.js";
-import { compileProposalContext } from "./propose.js";
+import { compileProposalContextBudgeted } from "./propose.js";
 import { contentHashOf } from "./ingest.js";
 import { chapterBodyText } from "./ingest.js";
 
@@ -57,7 +57,7 @@ export async function generateNextChapter(
     );
   }
   const direction = `【选定方向】${opts.proposalTitle}${opts.premise ? `: ${opts.premise}` : ""}`;
-  const input = `${direction}\n\n${compileProposalContext(root, chapterIndex)}`;
+  const input = `${direction}\n\n${compileProposalContextBudgeted(root, chapterIndex)}`;
 
   const r = await runStep(provider, { specRef: "writing_generate", input });
   if (!r.ok) return { ok: false, error: { kind: r.error?.kind, message: r.error?.message } };

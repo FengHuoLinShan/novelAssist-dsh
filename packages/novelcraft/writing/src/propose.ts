@@ -7,6 +7,7 @@ import { paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider, StepResult } from "@novelcraft/llm-step";
 import { storyMap } from "@novelcraft/store";
+import { compileContext, contextSummary } from "@novelcraft/context";
 import { readOutline } from "@novelcraft/outline";
 import { chapterBody } from "./review.js";
 
@@ -65,6 +66,38 @@ export function compileProposalContext(root: string, chapterIndex: number): stri
 }
 
 /**
+ * M12-c/N45: 上下文编译器接线 —— propose/generate 的输入经 @novelcraft/context
+ * 的 Tier P0-P4 预算淘汰(超预算先截 P4 再逐层驱逐), 消费「context compiler 仍是
+ * core-only 无消费者」的缺口(台账 §6.12)。各段按语义归层: 任务指令 P0、焦点章结尾
+ * P1、总纲/剧情线/篇章纲 P2、伏笔 P3。budget 缺省 CONTEXT_BUDGET_DEFAULT(4000)。
+ */
+export function compileProposalContextBudgeted(root: string, chapterIndex: number): string {
+  const outline = readOutline(root);
+  const map = storyMap(root);
+  const sections: Array<{ tier: "P0" | "P1" | "P2" | "P3" | "P4"; name: string; content: string }> = [
+    { tier: "P0", name: "任务", content: `为第 ${chapterIndex + 1} 章生成 2-3 个续写方向提案。` },
+  ];
+  if (outline && typeof outline.outline_markdown === "string" && outline.outline_markdown.trim()) {
+    sections.push({ tier: "P2", name: "总纲", content: outline.outline_markdown.trim().slice(0, 4000) });
+  }
+  if (map.threads.length) sections.push({ tier: "P2", name: "剧情线", content: assetLines(map.threads) });
+  if (map.arcs.length) sections.push({ tier: "P2", name: "篇章纲", content: assetLines(map.arcs) });
+  if (map.foreshadowing.length) sections.push({ tier: "P3", name: "已种伏笔", content: assetLines(map.foreshadowing) });
+  try {
+    const { body } = chapterBody(root, chapterIndex);
+    const tail = body.trim().slice(-1500);
+    if (tail) sections.push({ tier: "P1", name: `第 ${chapterIndex} 章结尾`, content: tail });
+  } catch {
+    // 该章不存在则跳过(仍可基于总纲/结构提案)
+  }
+  const compiled = compileContext(
+    { task: `第 ${chapterIndex + 1} 章续写提案`, scope: "chapter" },
+    { sections },
+  );
+  return contextSummary(compiled);
+}
+
+/**
  * 生成下一章 2–3 条续写方向。provider 失败/无输出 → ok:false, 不落盘。
  * 微工作流「续写提案」阶段函数(D7): chapterIndex = 当前最后一章。
  */
@@ -74,7 +107,8 @@ export async function proposeNextChapter(
   chapterIndex: number,
   now: Date = new Date(),
 ): Promise<ProposeResult> {
-  const input = compileProposalContext(root, chapterIndex);
+  // M12-c/N45: 输入经 Tier 预算编译(超预算逐层淘汰), 旧拼接版保留为导出兼容。
+  const input = compileProposalContextBudgeted(root, chapterIndex);
   const r = await runStep(provider, { specRef: "next_chapter_proposal", input });
   if (!r.ok) return { ok: false, error: r.error };
 
