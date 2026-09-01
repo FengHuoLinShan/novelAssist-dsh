@@ -6,11 +6,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
+import { estimateContextTokens } from "@novelcraft/context";
 import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { ingestChapter } from "@novelcraft/writing";
 import {
-  aliasRelationBatch, analyzeStructure, applyDedup, dedupReport, extractEntityBatch,
-  planAliasRelationChanges, planImport, proposeAliasRelations, resumeImport, writeCheckpoint,
+  aliasRelationBatch, analyzeStructure, applyDedup, buildStructureContext, dedupReport, extractEntityBatch,
+  planAliasRelationChanges, planImport, planStructureAnalysisWithSources, proposeAliasRelations, resumeImport, writeCheckpoint,
 } from "../src/index";
 import type { DedupReport } from "../src/index";
 
@@ -297,6 +298,78 @@ describe("planAliasRelationChanges(canonical 端点校验: propose 快照过期 
 });
 
 describe("analyzeStructure(3, ≥0.96 落 draft 待采用, N31)", () => {
+  it("显式来源闭包：Scene 元数据、去重章节、候选与 canonical 进入唯一预算输入，其他 workflow 不泄漏", async () => {
+    const root = makeRoot();
+    const scene = (slug: string) => ({
+      relativePath: `scenes/${slug}.md`,
+      bytes: `---\nid: ${slug}\nstatus: draft\nchapter_ids: [1]\nworkflow: w\ntitle: ${slug}\n---\n`,
+    });
+    const pending = {
+      relativePath: "world/pending/obj-candidate.md",
+      bytes: "---\nid: obj-candidate\nname: 候选人物\nkind: character\nstatus: candidate\nworkflow: w\n---\n候选证据",
+    };
+    writeFileSync(
+      join(root, "world", "objects", "obj-canonical.md"),
+      "---\nid: obj-canonical\nname: 已采用人物\nkind: character\nstatus: canonical\n---\n正史证据",
+    );
+    writeFileSync(
+      join(root, "world", "pending", "other.md"),
+      "---\nid: other\nname: 其他流程\nkind: character\nstatus: candidate\nworkflow: other\n---\nDO_NOT_INCLUDE",
+    );
+    gitAdd(root); gitCommit(root, "structure sources");
+
+    const input = {
+      workflowId: "w",
+      scenes: [scene("s001"), scene("s002")],
+      pendingEntities: [pending],
+      reusedEntitySlugs: ["obj-canonical"],
+      budgetTokens: 2_000,
+    } as const;
+    const context = buildStructureContext(root, input);
+    expect(context.status).toBe("ready");
+    expect(estimateContextTokens(context.rendered_text)).toBeLessThanOrEqual(2_000);
+    expect(context.rendered_text).toContain("克莱恩与苏婉同行。");
+    expect(context.rendered_text.match(/克莱恩与苏婉同行。/g)).toHaveLength(1); // 同章只送一次
+    expect(context.rendered_text).toContain("候选证据");
+    expect(context.rendered_text).toContain("正史证据");
+    expect(context.rendered_text).not.toContain("DO_NOT_INCLUDE");
+    expect(context.source_manifest.map((source) => source.source_type)).toEqual([
+      "structure_task", "scene_metadata", "scene_metadata", "chapter_text", "pending_entity", "canonical_entity",
+    ]);
+    expect(context.source_manifest.every((source) => source.source_hash.length === 64 && source.included_content_hash.length === 64)).toBe(true);
+
+    const provider = new MockProvider({ responses: [{ text: JSON.stringify({ threads: [], arcs: [], foreshadowing: [], reveals: [] }) }] });
+    const planned = await planStructureAnalysisWithSources(provider, root, input);
+    expect(planned.context.context_hash).toBe(context.context_hash);
+    expect(provider.calls[0].messages[1].content).toBe(context.rendered_text);
+  });
+
+  it("无 retained evidence → typed insufficient_sources 且 provider 调用为零", async () => {
+    const root = makeRoot();
+    const provider = new MockProvider({ responses: [] });
+    const planned = await planStructureAnalysisWithSources(provider, root, {
+      workflowId: "w",
+      scenes: [],
+      pendingEntities: [],
+      reusedEntitySlugs: [],
+    });
+    expect(planned.status).toBe("insufficient_sources");
+    expect(planned.files).toEqual([]);
+    expect(provider.calls).toEqual([]);
+  });
+
+  it("显式 Scene 来自其他 workflow → provider 前 fail-closed", async () => {
+    const root = makeRoot();
+    const provider = new MockProvider({ responses: [] });
+    await expect(planStructureAnalysisWithSources(provider, root, {
+      workflowId: "w",
+      scenes: [{ relativePath: "scenes/s001.md", bytes: "---\nid: s001\nstatus: draft\nchapter_ids: [1]\nworkflow: other\n---\n" }],
+      pendingEntities: [],
+      reusedEntitySlugs: [],
+    })).rejects.toMatchObject({ code: "INVALID_SOURCE" });
+    expect(provider.calls).toEqual([]);
+  });
+
   it("高置信落 draft 文件, 低置信仅计数(N31)", async () => {
     const root = makeRoot();
     planImport(root, { startChapter: 1, endChapter: 1, confirmed: true });

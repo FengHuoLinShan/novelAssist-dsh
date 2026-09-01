@@ -194,12 +194,17 @@ describe("runDeepImport · 顺序(§15: begin_import 先于 stage_candidates 先
     // 复核纪律: 2b 只读 propose 后无实际变更(空建议)→ 不请求第二审批/不 adopt;
     // 只有 commit_scenes 需要决策。
     const approval = new MockApproval({ decisions: ["allowed-once"] });
+    const provider = new MockProvider({ retryable: false, responses: happyResponses(2) });
     const r = await runDeepImport(root, plan, {
-      provider: new MockProvider({ retryable: false, responses: happyResponses(2) }),
+      provider,
       approve: (a, s, items) => approval.approve(a, s, items),
       trace: recorder,
     });
     expect(r.adopted).toBe(2);
+    expect(r.structure.context?.status).toBe("ready");
+    expect(r.structure.context?.source_manifest.filter((source) => source.source_type === "chapter_text")).toHaveLength(2);
+    expect(provider.calls.at(-1)?.messages[1].content).toContain("第1章正文。");
+    expect(provider.calls.at(-1)?.messages[1].content).toContain("chapter_ids");
     assertOrdered(recorder, "begin_import", "stage_candidates"); // §15
     assertOrdered(recorder, "stage_candidates", "adopt"); // §15/§12
     // 只有 Scene 采用一次 adopt(2b 空建议无实际变更, 无写面无独立 adopt)
@@ -228,12 +233,18 @@ describe("runDeepImport · 审批(§9/§15: adopt 必过 approval, fail-closed)"
     const plan = planImport(root, { startChapter: 1, endChapter: 2, confirmed: true });
     const recorder = new TraceRecorder();
     const approval = new MockApproval({ decisions: ["rejected"] });
-    const r = await runDeepImport(root, plan, runtime(2, approval, { trace: recorder }));
+    const provider = new MockProvider({ retryable: false, responses: happyResponses(2).slice(0, 5) });
+    const r = await runDeepImport(root, plan, {
+      provider,
+      approve: (a, s, items) => approval.approve(a, s, items),
+      trace: recorder,
+    });
     expect(r.rejected).toBe(true);
     expect(r.rejection_decision).toBe("rejected");
     expect(r.committed).toHaveLength(0);
     expect(recorder.eventsOf("adopt")).toHaveLength(0);
     expect(recorder.eventsOf("reject")).toHaveLength(1);
+    expect(provider.calls).toHaveLength(5); // commit 拒绝后 2a/2b/3 均不得调用 provider
   });
   it("审批脚本耗尽 → unavailable(fail-closed), 无 commit", async () => {
     const root = makeRoot(2);

@@ -15,6 +15,8 @@
 // - provider 失败触发对应降级事件(R52–R55);
 // - runtime.trace 为可注入 sink(测试注入 TraceRecorder; 缺省也落 TraceRecorder 供检查)。
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { DEGRADATION_CLAUSE, TraceRecorder, loadPolicyDefaults } from "@novelcraft/trace";
 import type { ApprovalDecision, DeepImportPolicy, TraceEventInput, TraceSink } from "@novelcraft/trace";
 import type { Provider, ProviderRequest, WorkflowBudget } from "@novelcraft/llm-step";
@@ -26,7 +28,7 @@ import { commitScenesTx } from "./commit.js";
 import { extractEntityBatch } from "./entities.js";
 import { applyAliasRelationChangesTx, planAliasRelationChanges, proposeAliasRelations } from "./alias-relation.js";
 import type { AliasRelationProposal } from "./alias-relation.js";
-import { analyzeStructure } from "./structure.js";
+import { analyzeStructureWithSources, type StructureContextReceipt, type StructureSourceFile } from "./structure.js";
 import { commitImportState } from "./workspace.js";
 
 /** runDeepImport 的可注入运行时(provider/审批/trace sink/策略)。 */
@@ -76,7 +78,15 @@ export interface DeepImportResult {
     /** Phase 2b 独立审批决策(请求过才出现): allowed-once/rejected/unavailable。 */
     decision?: ApprovalDecision;
   };
-  structure: { threads: number; arcs: number; foreshadowing: number; reveals: number; low_confidence: number };
+  structure: {
+    threads: number;
+    arcs: number;
+    foreshadowing: number;
+    reveals: number;
+    low_confidence: number;
+    /** 新安全入口才出现；旧消费者字段保持不变。 */
+    context?: StructureContextReceipt;
+  };
   /** 本次运行的 trace sink(runtime.trace ?? 新建 TraceRecorder)。 */
   trace: TraceSink;
 }
@@ -99,6 +109,13 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function readExplicitFiles(root: string, prefix: string, slugs: readonly string[]): StructureSourceFile[] {
+  return slugs.map((slug) => {
+    const relativePath = `${prefix}/${slug}.md`;
+    return { relativePath, bytes: readFileSync(path.join(root, relativePath), "utf8") };
+  });
 }
 
 /** R42: input_fingerprint = sha256(授权 scope + 阶段步骤), 同 scope 幂等续跑基准。 */
@@ -414,13 +431,24 @@ export async function runDeepImport(
     }
 
     // --- Phase 3: structure(≥0.96 自动落 draft 待采用(N31), 低置信只计数; canonical 升格走 novelcraft_store_adopt 审批门) ---
-    const struct = await analyzeStructure(provider, root, { workflowId, budget: runtime.budget });
-    result.structure.threads = struct.threads.length;
-    result.structure.arcs = struct.arcs.length;
-    result.structure.foreshadowing = struct.foreshadowing.length;
-    result.structure.reveals = struct.reveals.length;
-    result.structure.low_confidence = struct.low_confidence;
-    phaseResults["3"] = struct;
+    const struct = await analyzeStructureWithSources(
+      provider,
+      root,
+      {
+        workflowId,
+        scenes: readExplicitFiles(root, "scenes", result.committed),
+        pendingEntities: readExplicitFiles(root, "world/pending", result.entities.created),
+        reusedEntitySlugs: result.entities.reused.map((item) => item.target),
+      },
+      { budget: runtime.budget },
+    );
+    result.structure.threads = struct.result.threads.length;
+    result.structure.arcs = struct.result.arcs.length;
+    result.structure.foreshadowing = struct.result.foreshadowing.length;
+    result.structure.reveals = struct.result.reveals.length;
+    result.structure.low_confidence = struct.result.low_confidence;
+    result.structure.context = struct.context;
+    phaseResults["3"] = { ...struct.result, context: struct.context };
     emitCheckpoint(sink, "3", fingerprint);
 
     // 阶段结果 + 授权快照落 checkpoint(续跑幂等, R42/R43; 含执行画像指纹, P5)

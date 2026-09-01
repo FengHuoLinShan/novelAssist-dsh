@@ -39,7 +39,13 @@ import type { AliasRelationPlan, AliasRelationProposal } from "./alias-relation.
 import { planAliasRelationChanges, proposeAliasRelations } from "./alias-relation.js";
 import { planSceneCommit, type SceneCommitFile } from "./commit.js";
 import { planEntityBatch, type EntityPlannedFile } from "./entities.js";
-import { planStructureAnalysis, type StructurePlannedFile } from "./structure.js";
+import {
+  buildStructureContext,
+  planStructureAnalysisWithSources,
+  type StructureContextReceipt,
+  type StructureContextSources,
+  type StructurePlannedFile,
+} from "./structure.js";
 import { enrichSceneBatch, fuseSceneBatch, sliceChapterBatch, type FusionDecision, type SceneCandidate } from "./stages.js";
 import type { DeepImportResult, DeepImportRuntime } from "./orchestrate.js";
 import type { CheckpointState, ImportPlan } from "./plan.js";
@@ -109,7 +115,7 @@ const ALIAS_APPLY_TARGET = "world/objects";
 /** 生产入口失败(provider outcome unknown 未重新授权 / apply probe unknown fail-closed)。 */
 export class DeepImportWorkflowError extends Error {
   constructor(
-    readonly status: "provider_outcome_unknown" | "apply_probe_unknown",
+    readonly status: "provider_outcome_unknown" | "apply_probe_unknown" | "context_drift",
     readonly workflowId: string,
     readonly remainingBatchIds: readonly string[],
     message: string,
@@ -357,6 +363,8 @@ interface Phase3Payload {
     low_confidence: number;
     skipped?: string[];
   };
+  /** commit 被拒时不存在；其余 Phase 3（含资料不足）必须冻结。 */
+  context?: StructureContextReceipt;
 }
 
 // —— driver 上下文 ——
@@ -480,6 +488,40 @@ async function commitApplyRejected(ctx: DriverContext): Promise<boolean> {
   const state = await ctx.persistence.loadRunState(ctx.workflowId);
   const record = state.manifest?.applies?.[applyIdFor(ctx.workflowId, ctx.batchByPhase.commit)];
   return record !== undefined && (record.state === "rejected" || record.state === "skipped");
+}
+
+async function durableStructureSources(ctx: DriverContext): Promise<StructureContextSources> {
+  const committed = await readArtifactPayload<CommitPayload>(ctx, ctx.batchByPhase.commit);
+  const entities = await readArtifactPayload<Phase2aPayload>(ctx, ctx.batchByPhase["2a"]);
+  return {
+    workflowId: ctx.workflowId,
+    scenes: committed.files,
+    pendingEntities: entities.files,
+    reusedEntitySlugs: entities.reused.map((item) => item.target),
+  };
+}
+
+/** 已冻结 Phase 3 不得在来源变化后静默复用；在任何候选/draft materialize 前验证。 */
+async function assertStructureContextCurrent(ctx: DriverContext): Promise<void> {
+  const payload = await readArtifactPayload<Phase3Payload>(ctx, ctx.batchByPhase["3"]);
+  if (payload.context === undefined) {
+    if (await commitApplyRejected(ctx)) return;
+    throw new DeepImportWorkflowError(
+      "context_drift",
+      ctx.workflowId,
+      [],
+      `深度导入 ${ctx.workflowId} 的旧 Phase 3 缺少冻结上下文回执，拒绝复用；请启动新 run`,
+    );
+  }
+  const current = buildStructureContext(ctx.root, await durableStructureSources(ctx));
+  if (current.context_hash !== payload.context.context_hash || current.status !== payload.context.status) {
+    throw new DeepImportWorkflowError(
+      "context_drift",
+      ctx.workflowId,
+      [],
+      `深度导入 ${ctx.workflowId} 的 Phase 3 来源已变化，拒绝复用冻结结构结果；请启动新 run`,
+    );
+  }
 }
 
 /** 各批 generator: 纯生成(零 canonical 写); 前置阶段产物一律从已提交 artifact 读取。 */
@@ -646,8 +688,13 @@ function makeGenerator(ctx: DriverContext): RunGeneratorPort {
           if (await commitApplyRejected(ctx)) {
             return { payload: payloadOf({ files: [], result: { threads: [], arcs: [], foreshadowing: [], reveals: [], low_confidence: 0 } } satisfies Phase3Payload) };
           }
-          const { files, result } = await planStructureAnalysis(ctx.provider, ctx.root, { workflowId: input.workflowId, budget: ctx.budget });
-          return { payload: payloadOf({ files, result } satisfies Phase3Payload) };
+          const planned = await planStructureAnalysisWithSources(
+            ctx.provider,
+            ctx.root,
+            await durableStructureSources(ctx),
+            { budget: ctx.budget },
+          );
+          return { payload: payloadOf({ files: planned.files, result: planned.result, context: planned.context } satisfies Phase3Payload) };
         }
           default:
             throw new RunEngineError("invalid", `未知 phase: ${phase}`);
@@ -852,6 +899,7 @@ async function aggregateRun(ctx: DriverContext, run: RunEngineResult): Promise<A
       foreshadowing: structPayload.result.foreshadowing.length,
       reveals: structPayload.result.reveals.length,
       low_confidence: structPayload.result.low_confidence,
+      ...(structPayload.context !== undefined ? { context: structPayload.context } : {}),
     },
     // legacy 契约(DeepImportResult.trace = runtime.trace ?? 新建 TraceRecorder):
     // 返回调用方传入的 sink 本身(供检查), 而不是 fanout wrapper;
@@ -915,7 +963,10 @@ async function aggregateRun(ctx: DriverContext, run: RunEngineResult): Promise<A
     } else {
       phaseResults["2b"] = { ...result.aliases, status: "no_changes", skipped_all: true };
     }
-    phaseResults["3"] = structPayload.result;
+    phaseResults["3"] = {
+      ...structPayload.result,
+      ...(structPayload.context !== undefined ? { context: structPayload.context } : {}),
+    };
   }
   phaseResults.input_fingerprint = ctx.inputFingerprint;
 
@@ -1051,14 +1102,17 @@ export async function runDeepImportWorkflow(
     );
   }
 
-  // 6) 候选/draft 事务化 materialize(2a 实体候选 + 3 结构 draft; 非 adopt 不经审批)
+  // 6) 已完成 Phase 3 的来源闭包先重建对账；漂移时在任何 materialize 前 fail-closed。
+  await assertStructureContextCurrent(ctx);
+
+  // 7) 候选/draft 事务化 materialize(2a 实体候选 + 3 结构 draft; 非 adopt 不经审批)
   await materializePhaseWrites(ctx, "2a");
   await materializePhaseWrites(ctx, "3");
 
-  // 7) 聚合(trace adopt/reject/checkpoint/complete + 结果 + phase_results)
+  // 8) 聚合(trace adopt/reject/checkpoint/complete + 结果 + phase_results)
   const { result, phaseResults } = await aggregateRun(ctx, run);
 
-  // 8) Checkpoint + trace are one ADR-0021 checkpoint transaction, authorized by
+  // 9) Checkpoint + trace are one ADR-0021 checkpoint transaction, authorized by
   // the committed immutable run plan. No bytes are written before the durable intent.
   const checkpointState: CheckpointState = {
     plan,

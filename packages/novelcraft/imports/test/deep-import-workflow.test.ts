@@ -83,6 +83,14 @@ function richResponses(): Array<{ text?: string; throwError?: Error }> {
   return responses;
 }
 
+function reusedEntityResponses(): Array<{ text?: string; throwError?: Error }> {
+  const responses = happyResponses();
+  for (const index of [5, 6]) {
+    responses[index] = { text: JSON.stringify({ entities: [{ name: "人物甲", entity_type: "character", confidence: 0.95, evidence: ["正文"] }] }) };
+  }
+  return responses;
+}
+
 /** 造两个 canonical 对象(2b 的可写目标)。 */
 function seedCanonicalObjects(root: string): void {
   writeFileSync(join(root, "world", "objects", "obj-a.md"), '---\nid: obj-a\nkind: "character"\nname: "人物甲"\nstatus: canonical\n---\n');
@@ -134,12 +142,13 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     const root = makeRoot();
     const plan = makePlan(root);
     const approval = new MockApproval({ decisions: ["allowed-once"] });
+    const provider = new MockProvider({ retryable: false, responses: happyResponses() });
     const runWorkflowSpy = vi.spyOn(deepImportEngineSeam, "runWorkflow");
     const loadSpy = vi.spyOn(deepImportEngineSeam.GitRunPersistence.prototype, "loadRunState");
     const applySpy = vi.spyOn(deepImportEngineSeam.GitRunPersistence.prototype, "applyState");
     let r!: Awaited<ReturnType<typeof runDeepImportWorkflow>>;
     try {
-      r = await runDeepImportWorkflow(root, plan, runtime(new MockProvider({ retryable: false, responses: happyResponses() }), approval));
+      r = await runDeepImportWorkflow(root, plan, runtime(provider, approval));
       expect(runWorkflowSpy).toHaveBeenCalledTimes(1);
       expect(runWorkflowSpy.mock.calls[0][1]).toMatchObject({ mode: "start" });
       expect(loadSpy).toHaveBeenCalled();
@@ -157,6 +166,9 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     expect(r.aliases.approved).toBe(false); // 空建议 → 不请求 2b 审批
     expect(r.workflow_id).toMatch(/^imp-[0-9a-f]{16}-/);
     expect(existsSync(join(root, "scenes", "s001.md"))).toBe(true);
+    expect(r.structure.context?.status).toBe("ready");
+    expect(r.structure.context?.source_manifest.filter((source) => source.source_type === "chapter_text")).toHaveLength(2);
+    expect(provider.calls.at(-1)?.messages[1].content).toContain("第1章正文。");
 
     // 确定性身份用纯函数证明，无需再跑一次完整 durable workflow。
     const inputFingerprint = deepImportInputFingerprint(
@@ -206,6 +218,41 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     expect(events.some((e) => e.type === "adopt" && e.action === "commit_scenes")).toBe(true);
     // 2b 空建议: 无 approval(alias_relation)事件
     expect(events.some((e) => e.type === "approval" && e.action === "alias_relation")).toBe(false);
+  });
+
+  itSlow("commit 被拒后 Phase 3 零 provider 调用", async () => {
+    const root = makeRoot();
+    const provider = new MockProvider({ retryable: false, responses: happyResponses().slice(0, 5) });
+    const result = await runDeepImportWorkflow(
+      root,
+      makePlan(root),
+      runtime(provider, new MockApproval({ decisions: ["rejected"] })),
+    );
+    expect(result.rejected).toBe(true);
+    expect(result.structure.context).toBeUndefined();
+    expect(provider.calls).toHaveLength(5);
+  });
+
+  itSlow("已完成 Phase 3 的复用 canonical 来源漂移 → typed context_drift，零 provider 重调", async () => {
+    const root = makeRoot();
+    seedCanonicalObjects(root);
+    const plan = makePlan(root);
+    await runDeepImportWorkflow(
+      root,
+      plan,
+      runtime(new MockProvider({ retryable: false, responses: reusedEntityResponses() }), new MockApproval({ decisions: ["allowed-once"] })),
+    );
+    const objectFile = join(root, "world", "objects", "obj-a.md");
+    writeFileSync(objectFile, readFileSync(objectFile, "utf8") + "\n作者修改。\n");
+    gitAdd(root); gitCommit(root, "change reused canonical source");
+
+    const resumedProvider = new MockProvider({ responses: [] });
+    await expect(runDeepImportWorkflow(
+      root,
+      plan,
+      runtime(resumedProvider, new MockApproval({ decisions: [] })),
+    )).rejects.toMatchObject({ status: "context_drift" });
+    expect(resumedProvider.calls).toEqual([]);
   });
 
   it("章节源字节变化产生新 fingerprint/workflow identity，不需要第二次全链运行(N33)", () => {
