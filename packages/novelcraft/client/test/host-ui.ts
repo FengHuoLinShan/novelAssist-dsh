@@ -44,12 +44,14 @@ import {
   stageChapterEditIntake,
   stageTextIntake,
 } from '@novelcraft/writing';
-import type { NovelcraftHostService } from '../src/rpc.js';
+import type { NovelcraftHostService, PresetLike } from '../src/rpc.js';
 
 const ATLAS_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 构建宿主 ui 面(测试镜像实现)。 */
-export function makeHostUi(): NovelcraftHostService['ui'] {
+export function makeHostUi(
+  listPresets: () => Promise<PresetLike[]> = async () => [...DEFAULT_CONTENT_PRESETS],
+): NovelcraftHostService['ui'] {
   return {
     read: {
       inbox: (root) => inboxView(root),
@@ -189,8 +191,11 @@ export function makeHostUi(): NovelcraftHostService['ui'] {
         if (effort !== null && !['high', 'max'].includes(effort)) throw new Error('当前模型不支持该思考等级');
         selectReasoningEffortInLlmYml(root, effort);
       },
-      selectPresetValidated: async (root, preset, route) => {
-        if (route.reasoningEffort !== undefined && !['high', 'max'].includes(route.reasoningEffort)) {
+      selectPresetValidated: async (root, preset) => {
+        const card = preset === null
+          ? undefined
+          : (await listPresets()).find((candidate) => candidate.name === preset);
+        if (card?.reasoning_effort !== undefined && !['high', 'max'].includes(card.reasoning_effort)) {
           throw new Error('当前模型不支持该思考等级');
         }
         selectPresetInLlmYml(root, preset);

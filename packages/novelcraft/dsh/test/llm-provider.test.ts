@@ -163,6 +163,33 @@ describe('DshProvider', () => {
     expect(next.requests).toHaveLength(1);
   });
 
+  it('prepareCall 后中间件异常仍携带 secret-free effective receipt', async () => {
+    const adapter = new ReasoningAdapter('high');
+    h.ctx.llm.registerAdapter(['reasoning-middleware-error'], adapter);
+    h.ctx.on('llm/stream', () => (async function* (): AsyncIterable<StreamChunk> {
+      throw new Error('middleware exploded');
+    })());
+    const provider = new DshProvider({
+      ctx: h.ctx,
+      provider: 'reasoning-middleware-error',
+      model: 'model-x',
+    });
+    const err = await provider.complete({ messages: [{ role: 'user', content: 'hi' }] })
+      .catch((error: unknown) => error);
+    expect(err).toMatchObject({
+      message: 'middleware exploded',
+      callReceipt: {
+        provider: 'reasoning-middleware-error',
+        model: 'model-x',
+        effectiveEffort: 'high',
+        effortSource: 'adapter_default',
+        contextWindow: 1_000_000,
+        contextWindowKnown: true,
+      },
+    });
+    expect(adapter.requests).toHaveLength(0);
+  });
+
   it('error 终止(RATE_LIMIT)→ retryable 错误(供 llm-step 重试分类)', async () => {
     h.adapter.enqueue({
       finishKind: 'error',

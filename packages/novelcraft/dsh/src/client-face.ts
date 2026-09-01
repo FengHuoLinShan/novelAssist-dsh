@@ -11,6 +11,7 @@ import path from 'node:path';
 import * as assistant from '@novelcraft/assistant';
 import {
   DEFAULT_CONTENT_PRESETS,
+  resolveExecutionLlmYml,
   resolvePolicy,
   selectPresetInLlmYml,
   selectReasoningEffortInLlmYml,
@@ -119,12 +120,8 @@ export interface NovelcraftUiFace {
     reasoningOptions(root: string): Promise<ReasoningOptionsView>;
     /** Validate against the current exact route, then write only reasoning_effort. */
     selectReasoningEffort(root: string, effort: string | null): Promise<void>;
-    /** Validate a preset's effort against its own exact route before writing preset. */
-    selectPresetValidated(
-      root: string,
-      preset: string,
-      route: { provider: string; model: string; reasoningEffort?: string },
-    ): Promise<void>;
+    /** Validate the prospective effective effort/route before writing only preset. */
+    selectPresetValidated(root: string, preset: string | null): Promise<void>;
   };
 }
 
@@ -170,6 +167,34 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
     const options = await resolveReasoning(provider, model, effort);
     if (!options.efforts.some((candidate) => candidate.id === effort)) {
       throw new Error(`当前模型不支持思考等级「${effort}」，配置未写入`);
+    }
+  };
+  const prospectiveRoute = async (
+    root: string,
+    change: { preset?: string | null; reasoningEffort?: string | null },
+  ): Promise<{ provider: string; model: string; reasoningEffort?: string }> => {
+    const llm = resolveExecutionLlmYml(root);
+    const presetName = Object.hasOwn(change, 'preset') ? change.preset ?? undefined : llm.preset;
+    const preset = presetName === undefined
+      ? undefined
+      : await service.presets.resolvePresetByName(presetName, { strict: true });
+    const directEffort = Object.hasOwn(change, 'reasoningEffort')
+      ? change.reasoningEffort ?? undefined
+      : llm.reasoning_effort;
+    const reasoningEffort = directEffort ?? preset?.reasoning_effort ?? service.config.llm.reasoningEffort;
+    return {
+      provider: llm.provider ?? preset?.provider ?? service.config.llm.provider,
+      model: llm.model ?? preset?.model ?? service.config.llm.model,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    };
+  };
+  const assertProspectiveRoute = async (
+    root: string,
+    change: { preset?: string | null; reasoningEffort?: string | null },
+  ): Promise<void> => {
+    const route = await prospectiveRoute(root, change);
+    if (route.reasoningEffort !== undefined) {
+      await assertEffort(route.provider, route.model, route.reasoningEffort);
     }
   };
   const face: NovelcraftUiFace = {
@@ -282,17 +307,11 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
         return resolveReasoning(profile.provider, profile.model, profile.reasoning_effort ?? null);
       },
       selectReasoningEffort: async (root, effort) => {
-        if (effort !== null) {
-          const profile = await service.resolveProfile(root);
-          if (!profile.provider || !profile.model) throw new Error('当前书未解析出 provider/model');
-          await assertEffort(profile.provider, profile.model, effort);
-        }
+        await assertProspectiveRoute(root, { reasoningEffort: effort });
         selectReasoningEffortInLlmYml(root, effort);
       },
-      selectPresetValidated: async (root, preset, route) => {
-        if (route.reasoningEffort !== undefined) {
-          await assertEffort(route.provider, route.model, route.reasoningEffort);
-        }
+      selectPresetValidated: async (root, preset) => {
+        await assertProspectiveRoute(root, { preset });
         selectPresetInLlmYml(root, preset);
       },
     }),

@@ -38,7 +38,7 @@ function setup(overrides: {
       resolve: async (sessionId) => (sessionId === 's1' ? { book: '测试书', root } : undefined),
       resolveFromPath: (p) => (p.startsWith(root) ? { book: '测试书', root } : undefined),
     },
-    ui: makeHostUi(),
+    ui: makeHostUi(overrides.service?.presets?.list),
     ...overrides.service,
   };
   ctx.provide('novelcraft', service);
@@ -589,9 +589,9 @@ describe('novelcraft RPC 处理器', () => {
     if (result.ok) {
       expect(result.value.ok).toBe(true);
       expect(result.value.active).toBe('writing-day');
-      expect(result.value.message).toContain('内容手已切到');
+      expect(result.value.message).toContain('内容手已应用预设');
       expect(result.value.message).toContain('写作日');
-      expect(result.value.message).toContain('deepseek');
+      expect(result.value.message).toContain('书级直接配置');
     }
     const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
     expect(content).toContain('model: gpt-x'); // N19: 其余键原样保留
@@ -651,6 +651,7 @@ describe('novelcraft RPC 处理器', () => {
     expect(readFileSync(file, 'utf8')).toBe('model: stable\nreasoning_effort: max\n');
     const cleared = await h.presetsEffortSelect({ sessionId: 's1', effort: null });
     expect(cleared.ok).toBe(true);
+    if (cleared.ok) expect(cleared.value.message).toContain('清除书级');
     expect(readFileSync(file, 'utf8')).toBe('model: stable\n');
     env.cleanup();
   });

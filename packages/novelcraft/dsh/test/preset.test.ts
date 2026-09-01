@@ -3,7 +3,7 @@
 //         D13(多模型预设)/铁律 6(Key 不进任何文件——本测试全链无 Key 字段)。
 // withAbortSignal 套件: 工具取消信号与 llm-step timeout 的合并/清理(工具取消贯通)。
 import { getEventListeners } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -132,14 +132,14 @@ describe('live exact-model effort 写前校验(M3b)', () => {
     const file = path.join(env.root, '.assistant', 'llm.yml');
     const snapshot = () => existsSync(file) ? readFileSync(file, 'utf8') : null;
     const before = snapshot();
-    await expect(env.service.ui.config.selectPresetValidated(env.root, 'effort-card', {
-      provider: 'effort-live', model: 'model-x', reasoningEffort: 'low',
-    })).rejects.toThrow('不支持思考等级');
+    await env.service.presets.upsert({
+      name: 'bad-effort-card', provider: 'effort-live', model: 'model-x', reasoning_effort: 'low',
+    });
+    await expect(env.service.ui.config.selectPresetValidated(env.root, 'bad-effort-card'))
+      .rejects.toThrow('不支持思考等级');
     expect(snapshot()).toBe(before);
 
-    await env.service.ui.config.selectPresetValidated(env.root, 'effort-card', {
-      provider: 'effort-live', model: 'model-x', reasoningEffort: 'max',
-    });
+    await env.service.ui.config.selectPresetValidated(env.root, 'effort-card');
     const live = await env.service.ui.config.reasoningOptions(env.root);
     expect(live).toMatchObject({
       provider: 'effort-live', model: 'model-x', selected: 'max', adapterDefault: 'high',
@@ -153,6 +153,46 @@ describe('live exact-model effort 写前校验(M3b)', () => {
     expect(result.effective).toMatchObject({
       requested_effort: 'max', effective_effort: 'max', effort_source: 'request',
     });
+    env.cleanup();
+  });
+
+  it('preset 校验使用 llm.yml 直接 route；错配时零写入', async () => {
+    const env = await setup();
+    const cardAdapter = new LiveReasoningAdapter();
+    const directAdapter = new LiveReasoningAdapter();
+    directAdapter.resolveModel = async (provider, model) => ({
+      provider,
+      id: model,
+      name: model,
+      reasoning: {
+        efforts: [{ id: ReasoningEffortId('high'), name: 'HIGH' }],
+        defaultEffort: ReasoningEffortId('high'),
+      },
+    });
+    env.h.ctx.llm.registerAdapter(['effort-card'], cardAdapter);
+    env.h.ctx.llm.registerAdapter(['effort-direct'], directAdapter);
+    await env.service.presets.upsert({
+      name: 'max-card', provider: 'effort-card', model: 'card-model', reasoning_effort: 'max',
+    });
+    const dir = path.join(env.root, '.assistant');
+    mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'llm.yml');
+    writeFileSync(file, 'provider: effort-direct\nmodel: direct-model\n', 'utf8');
+    const before = readFileSync(file, 'utf8');
+
+    await expect(env.service.ui.config.selectPresetValidated(env.root, 'max-card'))
+      .rejects.toThrow('不支持思考等级');
+    expect(readFileSync(file, 'utf8')).toBe(before);
+
+    writeFileSync(
+      file,
+      'preset: max-card\nprovider: effort-direct\nmodel: direct-model\nreasoning_effort: high\n',
+      'utf8',
+    );
+    const beforeClear = readFileSync(file, 'utf8');
+    await expect(env.service.ui.config.selectReasoningEffort(env.root, null))
+      .rejects.toThrow('不支持思考等级');
+    expect(readFileSync(file, 'utf8')).toBe(beforeClear);
     env.cleanup();
   });
 });

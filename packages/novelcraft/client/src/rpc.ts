@@ -197,11 +197,7 @@ export interface NovelcraftHostService {
         efforts: Array<{ id: string; name: string; description?: string }>;
       }>;
       selectReasoningEffort?(root: string, effort: string | null): Promise<void>;
-      selectPresetValidated?(
-        root: string,
-        preset: string,
-        route: { provider: string; model: string; reasoningEffort?: string },
-      ): Promise<void>;
+      selectPresetValidated?(root: string, preset: string | null): Promise<void>;
     };
   };
 }
@@ -807,37 +803,30 @@ export function createNovelcraftHandlers(ctx: Context) {
       // 写边界(N19): 只允许经宿主 ui.config.selectPreset 写 llm.yml 的 preset 单键
       // (配置非资产, 不过 approval)。
       try {
-        const route = defaultRouteOf(novelcraft);
-        const provider = found.provider ?? route.provider;
-        const model = found.model ?? route.model;
-        if (found.reasoning_effort !== undefined) {
-          if (!ui.config.selectPresetValidated) {
-            return rpcFail('宿主未提供思考等级写前校验，预设未写入');
-          }
-          await ui.config.selectPresetValidated(binding.root, name, {
-            provider,
-            model,
-            reasoningEffort: found.reasoning_effort,
-          });
+        if (ui.config.selectPresetValidated) {
+          await ui.config.selectPresetValidated(binding.root, name);
+        } else if (found.reasoning_effort !== undefined) {
+          return rpcFail('宿主未提供思考等级写前校验，预设未写入');
         } else {
           ui.config.selectPreset(binding.root, name);
         }
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));
       }
-      const route = defaultRouteOf(novelcraft);
-      const provider = found.provider ?? route.provider;
-      const model = found.model ?? route.model;
       const label = found.label ?? name;
       return rpcOk({
         ok: true,
         active: ui.view.vaultPolicy(binding.root).llm.preset ?? null,
-        message: `内容手已切到「${label}」(${provider}·${model}${found.reasoning_effort ? `·${found.reasoning_effort}` : ''})`,
+        message: `内容手已应用预设「${label}」；书级直接配置仍按优先级覆盖预设`,
       });
     }
     // name === null: 恢复默认(移除 llm.yml 的 preset 键, 其余键原样保留)。
     try {
-      ui.config.selectPreset(binding.root, null);
+      if (ui.config.selectPresetValidated) {
+        await ui.config.selectPresetValidated(binding.root, null);
+      } else {
+        ui.config.selectPreset(binding.root, null);
+      }
     } catch (err) {
       return rpcFail(err instanceof Error ? err.message : String(err));
     }
@@ -859,7 +848,9 @@ export function createNovelcraftHandlers(ctx: Context) {
       return rpcOk({
         ok: true,
         selected: payload.effort,
-        message: payload.effort === null ? '已恢复模型默认思考等级' : `思考等级已设为「${payload.effort}」`,
+        message: payload.effort === null
+          ? '已清除书级思考等级覆盖，当前继承预设/助手配置'
+          : `思考等级已设为「${payload.effort}」`,
       });
     } catch (err) {
       return rpcFail(err instanceof Error ? err.message : String(err));

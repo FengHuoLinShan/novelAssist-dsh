@@ -201,6 +201,9 @@ export class DshProvider implements Provider {
       if (isAbortError(err)) {
         throw attachCallReceipt(abortError('调用已被取消(aborted)'), callReceipt);
       }
+      if (err instanceof Error) {
+        throw attachCallReceipt(err, callReceipt);
+      }
       throw err;
     }
     // 审查项 6: 三条取消路径(finish aborted / adapter AbortError / signal abort)统一
