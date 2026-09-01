@@ -1,11 +1,14 @@
 // Provider 接口实现: MockProvider(测试/验收用)。
 // 真 DSH ctx.llm 适配器留挂载阶段(seam 契约, packages/novelcraft/README.md)。
-import type { Provider, ProviderRequest, ProviderResponse } from "./types.js";
+import type { Provider, ProviderFinishReason, ProviderOutcome, ProviderRequest, ProviderResponse, ProviderTextStatus, Usage } from "./types.js";
 
 export interface MockResponse {
   /** 成功响应文本(与 throwError 二选一) */
   text?: string;
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: Usage;
+  finishReason?: ProviderFinishReason;
+  textStatus?: ProviderTextStatus;
+  providerOutcome?: ProviderOutcome;
   /** 返回前延迟毫秒(测超时) */
   delayMs?: number;
   /** 抛错(测重试分类) */
@@ -50,6 +53,23 @@ export class MockProvider implements Provider {
       (next.throwError as Error & { retryable?: boolean }).retryable = this.retryable;
       throw next.throwError;
     }
-    return { text: next.text ?? "", usage: next.usage ?? { inputTokens: 0, outputTokens: 0 } };
+    const text = next.text ?? "";
+    const finishReason = next.finishReason ?? "stop";
+    const textStatus = next.textStatus ?? (text.trim().length > 0 ? "present" : "empty");
+    const providerOutcome = next.providerOutcome ?? (
+      finishReason === "max-tokens" ? "truncated"
+        : finishReason === "tool-calls" ? "unexpected_tool_calls"
+          : finishReason === "aborted" ? "cancelled"
+            : finishReason === "error" ? "provider_error"
+              : finishReason === "missing" ? "protocol_error"
+                : textStatus === "present" ? "success" : "empty_response"
+    );
+    return {
+      text,
+      usage: next.usage ?? { inputTokens: 0, outputTokens: 0 },
+      finishReason,
+      textStatus,
+      providerOutcome,
+    };
   }
 }

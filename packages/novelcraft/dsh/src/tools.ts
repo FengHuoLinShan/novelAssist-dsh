@@ -131,6 +131,12 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           text: { type: 'string', required: true },
           input_tokens: { type: 'integer', required: true },
           output_tokens: { type: 'integer', required: true },
+          cache_read_tokens: { type: 'integer', required: true },
+          cache_write_tokens: { type: 'integer', required: true },
+          reasoning_tokens: { type: 'integer', required: true },
+          finish_reason: { type: 'string', required: true },
+          text_status: { type: 'string', required: true },
+          provider_outcome: { type: 'string', required: true },
           error: { type: 'string', required: true },
           spec_ref: { type: 'string', required: true },
           contract_version: { type: 'string', required: true },
@@ -146,6 +152,12 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           effort_source: { type: 'string', required: true },
           context_window: { type: 'integer', required: true },
           context_window_status: { type: 'string', required: true },
+          max_tokens_source: { type: 'string', required: true },
+          admission_status: { type: 'string', required: true },
+          estimated_input_tokens: { type: 'integer', required: true },
+          output_reserve_tokens: { type: 'integer', required: true },
+          effective_call_fingerprint: { type: 'string', required: true },
+          admission_warnings: { type: 'array', required: true },
           effective_temperature: { type: 'number', required: true },
           effective_max_tokens: { type: 'integer', required: true },
           effective_timeout_ms: { type: 'integer', required: true },
@@ -189,11 +201,19 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
         // journal 逐字段投影为纯 JSON 对象(接口类型无 index signature, 直接透传不满足
         // 工具 output 的 JsonValue 契约)。
         const fp = result.promptFingerprint;
+        const finalAttempt = result.journal.at(-1);
+        const finalReceipt = finalAttempt?.callReceipt;
         return {
           ok: true,
           text,
           input_tokens: result.usage.inputTokens,
           output_tokens: result.usage.outputTokens,
+          cache_read_tokens: result.usage.cacheReadTokens ?? 0,
+          cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
+          reasoning_tokens: result.usage.reasoningTokens ?? 0,
+          finish_reason: finalAttempt?.finishReason ?? '',
+          text_status: finalAttempt?.textStatus ?? '',
+          provider_outcome: finalAttempt?.providerOutcome ?? '',
           error: result.error ? `${result.error.kind}: ${result.error.message}` : '',
           spec_ref: result.specRef,
           contract_version: result.contractVersion,
@@ -209,6 +229,12 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           effort_source: result.effective?.effort_source ?? '',
           context_window: result.effective?.context_window ?? 0,
           context_window_status: result.effective?.context_window_status ?? '',
+          max_tokens_source: result.effective?.max_tokens_source ?? '',
+          admission_status: result.effective?.admission_status ?? '',
+          estimated_input_tokens: result.effective?.estimated_input_tokens ?? 0,
+          output_reserve_tokens: result.effective?.output_reserve_tokens ?? 0,
+          effective_call_fingerprint: result.effective?.effective_call_fingerprint ?? '',
+          admission_warnings: finalReceipt?.warnings ?? [],
           effective_temperature: result.effective?.temperature ?? 0,
           effective_max_tokens: result.effective?.maxTokens ?? 0,
           effective_timeout_ms: result.effective?.timeoutMs ?? 0,
@@ -216,9 +242,30 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
             attempt: e.attempt,
             startedAt: e.startedAt,
             durationMs: e.durationMs,
-            ...(e.providerText !== undefined ? { providerText: e.providerText } : {}),
+            ...(e.outputTextHash !== undefined ? { outputTextHash: e.outputTextHash } : {}),
+            ...(e.outputChars !== undefined ? { outputChars: e.outputChars } : {}),
             ...(e.usage !== undefined
-              ? { usage: { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens } }
+              ? {
+                  usage: {
+                    inputTokens: e.usage.inputTokens,
+                    outputTokens: e.usage.outputTokens,
+                    ...(e.usage.cacheReadTokens !== undefined
+                      ? { cacheReadTokens: e.usage.cacheReadTokens }
+                      : {}),
+                    ...(e.usage.cacheWriteTokens !== undefined
+                      ? { cacheWriteTokens: e.usage.cacheWriteTokens }
+                      : {}),
+                    ...(e.usage.reasoningTokens !== undefined
+                      ? { reasoningTokens: e.usage.reasoningTokens }
+                      : {}),
+                  },
+                }
+              : {}),
+            ...(e.finishReason !== undefined ? { finishReason: e.finishReason } : {}),
+            ...(e.textStatus !== undefined ? { textStatus: e.textStatus } : {}),
+            ...(e.providerOutcome !== undefined ? { providerOutcome: e.providerOutcome } : {}),
+            ...(e.providerFailureCode !== undefined
+              ? { providerFailureCode: e.providerFailureCode }
               : {}),
             ...(e.errorKind !== undefined ? { errorKind: e.errorKind } : {}),
             ...(e.errorMessage !== undefined ? { errorMessage: e.errorMessage } : {}),
@@ -240,6 +287,30 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
                       ? { contextWindow: e.callReceipt.contextWindow }
                       : {}),
                     contextWindowKnown: e.callReceipt.contextWindowKnown,
+                    ...(e.callReceipt.effectiveMaxTokens !== undefined
+                      ? { effectiveMaxTokens: e.callReceipt.effectiveMaxTokens }
+                      : {}),
+                    ...(e.callReceipt.maxTokensSource !== undefined
+                      ? { maxTokensSource: e.callReceipt.maxTokensSource }
+                      : {}),
+                    ...(e.callReceipt.estimatedInputTokens !== undefined
+                      ? { estimatedInputTokens: e.callReceipt.estimatedInputTokens }
+                      : {}),
+                    ...(e.callReceipt.inputEstimator !== undefined
+                      ? { inputEstimator: e.callReceipt.inputEstimator }
+                      : {}),
+                    ...(e.callReceipt.outputReserveTokens !== undefined
+                      ? { outputReserveTokens: e.callReceipt.outputReserveTokens }
+                      : {}),
+                    ...(e.callReceipt.admissionStatus !== undefined
+                      ? { admissionStatus: e.callReceipt.admissionStatus }
+                      : {}),
+                    ...(e.callReceipt.warnings !== undefined
+                      ? { warnings: e.callReceipt.warnings }
+                      : {}),
+                    ...(e.callReceipt.effectiveCallFingerprint !== undefined
+                      ? { effectiveCallFingerprint: e.callReceipt.effectiveCallFingerprint }
+                      : {}),
                   },
                 }
               : {}),

@@ -16,7 +16,11 @@ import { DshProvider } from '../src/index.js';
 import { FakeAdapter, makeContext, type HarnessServices } from './helpers.js';
 
 class ReasoningAdapter extends FakeAdapter {
-  constructor(private readonly defaultEffort?: string) {
+  constructor(
+    private readonly defaultEffort?: string,
+    private readonly defaultMaxTokens?: number,
+    private readonly contextWindow = 1_000_000,
+  ) {
     super();
   }
 
@@ -25,7 +29,8 @@ class ReasoningAdapter extends FakeAdapter {
       provider,
       id: model,
       name: model,
-      context: { contextWindow: 1_000_000 },
+      context: { contextWindow: this.contextWindow },
+      ...(this.defaultMaxTokens !== undefined ? { defaultMaxTokens: this.defaultMaxTokens } : {}),
       reasoning: {
         efforts: ['off', 'high', 'max'].map((id) => ({ id: ReasoningEffortId(id), name: id })),
         ...(this.defaultEffort !== undefined
@@ -60,12 +65,23 @@ describe('DshProvider', () => {
 
     expect(resp.text).toBe('{"findings":[{"category":"c","severity":"high","quote":"q","suggestion":"s"}],"verdict":"ok"}');
     expect(resp.usage).toEqual({ inputTokens: 12, outputTokens: 34 });
+    expect(resp).toMatchObject({
+      finishReason: 'stop',
+      textStatus: 'present',
+      providerOutcome: 'success',
+    });
     expect(resp.callReceipt).toMatchObject({
       provider: 'fake',
       model: 'fake-model',
       effortSource: 'provider_default',
       contextWindowKnown: false,
+      effectiveMaxTokens: 100,
+      maxTokensSource: 'request',
+      admissionStatus: 'capacity_unknown',
+      warnings: ['context_window_unknown'],
     });
+    expect(resp.callReceipt?.estimatedInputTokens).toBeGreaterThan(0);
+    expect(resp.callReceipt?.effectiveCallFingerprint).toMatch(/^[0-9a-f]{16}$/);
 
     const sent = h.adapter.requests[0];
     expect(sent.provider).toBe('fake');
@@ -76,6 +92,104 @@ describe('DshProvider', () => {
     expect(sent.system).toBe('你是内容手。');
     expect(sent.messages).toHaveLength(1);
     expect(sent.messages[0].content[0]).toMatchObject({ type: 'text', text: '第一章正文' });
+  });
+
+  it('user/assistant 角色按 prepared provider/model 保真，不再把 assistant 改成 user', async () => {
+    h.adapter.enqueue({ deltas: ['ok'] });
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'fake', model: 'fake-model' });
+    await provider.complete({
+      messages: [
+        { role: 'user', content: '初次问题' },
+        { role: 'assistant', content: '旧模型输出' },
+        { role: 'user', content: '请修正' },
+      ],
+    });
+    expect(h.adapter.requests[0].messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+    ]);
+    expect(h.adapter.requests[0].messages[1].source).toMatchObject({
+      kind: 'model',
+      provider: 'fake',
+      model: 'fake-model',
+    });
+  });
+
+  it('完整请求 + output reserve 超过 prepared context 时 provider 零 dispatch', async () => {
+    class SmallContextAdapter extends FakeAdapter {
+      override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return { provider, id: model, name: model, context: { contextWindow: 20 } };
+      }
+    }
+    const adapter = new SmallContextAdapter();
+    h.ctx.llm.registerAdapter(['small-context'], adapter);
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'small-context', model: 'm' });
+    const error = await provider.complete({
+      messages: [
+        { role: 'system', content: '很长的系统契约'.repeat(20) },
+        { role: 'user', content: 'x' },
+      ],
+      maxTokens: 10,
+    }).catch((value: unknown) => value);
+    expect(error).toMatchObject({
+      code: 'CONTEXT_WINDOW_EXCEEDED',
+      retryable: false,
+      providerOutcome: 'context_overflow',
+      callReceipt: {
+        admissionStatus: 'rejected',
+        contextWindow: 20,
+        outputReserveTokens: 10,
+      },
+    });
+    expect(adapter.requests).toHaveLength(0);
+  });
+
+  it('finish/text outcome 保真：截断、工具、空、无终止均不伪装 success', async () => {
+    h.adapter.enqueue(
+      { deltas: ['partial'], finishKind: 'max-tokens' },
+      { deltas: [], finishKind: 'tool-calls' },
+      { deltas: ['   '], finishKind: 'stop' },
+      { deltas: ['orphan'], omitFinish: true },
+      { deltas: [], reasoningDeltas: ['hidden'], finishKind: 'stop' },
+    );
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'fake', model: 'm' });
+    const responses = [];
+    for (let index = 0; index < 5; index += 1) {
+      responses.push(await provider.complete({ messages: [{ role: 'user', content: 'x' }] }));
+    }
+    expect(responses.map((response) => [response.finishReason, response.textStatus, response.providerOutcome])).toEqual([
+      ['max-tokens', 'present', 'truncated'],
+      ['tool-calls', 'empty', 'unexpected_tool_calls'],
+      ['stop', 'empty', 'empty_response'],
+      ['missing', 'present', 'protocol_error'],
+      ['stop', 'empty', 'empty_response'],
+    ]);
+    expect(responses[4].text).toBe('');
+    expect(JSON.stringify(responses)).not.toContain('hidden');
+  });
+
+  it('usage 保留互不重叠的 cache/reasoning buckets，不重复计入 output', async () => {
+    h.adapter.enqueue({
+      deltas: ['ok'],
+      usage: {
+        inputTokens: 10,
+        cacheReadTokens: 20,
+        cacheWriteTokens: 30,
+        outputTokens: 40,
+        reasoningTokens: 15,
+      },
+    });
+    const response = await new DshProvider({ ctx: h.ctx, provider: 'fake', model: 'm' })
+      .complete({ messages: [{ role: 'user', content: 'x' }] });
+    expect(response.usage).toEqual({
+      inputTokens: 10,
+      cacheReadTokens: 20,
+      cacheWriteTokens: 30,
+      outputTokens: 40,
+      reasoningTokens: 15,
+    });
+    expect(response.usage?.outputTokens).toBe(40);
   });
 
   it('请求级 model 覆盖(StepRequest.overrides.model 优先)', async () => {
@@ -98,7 +212,7 @@ describe('DshProvider', () => {
       reasoning_effort: 'max',
     });
     expect(adapter.requests[0].reasoningEffort).toBe('max');
-    expect(response.callReceipt).toEqual({
+    expect(response.callReceipt).toMatchObject({
       provider: 'reasoning-request',
       model: 'model-x',
       requestedEffort: 'max',
@@ -106,6 +220,9 @@ describe('DshProvider', () => {
       effortSource: 'request',
       contextWindow: 1_000_000,
       contextWindowKnown: true,
+      maxTokensSource: 'provider_default',
+      admissionStatus: 'output_reserve_unknown',
+      warnings: ['output_reserve_unknown'],
     });
   });
 
@@ -123,6 +240,21 @@ describe('DshProvider', () => {
     expect(a.callReceipt).toMatchObject({ effectiveEffort: 'high', effortSource: 'adapter_default' });
     expect(b.callReceipt).toMatchObject({ effortSource: 'provider_default' });
     expect(b.callReceipt?.effectiveEffort).toBeUndefined();
+  });
+
+  it('adapter default maxTokens 进入 dispatch、admission 与 effective receipt', async () => {
+    const adapter = new ReasoningAdapter(undefined, 77, 1_000);
+    h.ctx.llm.registerAdapter(['max-default'], adapter);
+    adapter.enqueue({ deltas: ['ok'] });
+    const response = await new DshProvider({ ctx: h.ctx, provider: 'max-default', model: 'm' })
+      .complete({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(adapter.requests[0].maxTokens).toBe(77);
+    expect(response.callReceipt).toMatchObject({
+      effectiveMaxTokens: 77,
+      maxTokensSource: 'adapter_default',
+      outputReserveTokens: 77,
+      admissionStatus: 'admitted',
+    });
   });
 
   it('unsupported effort 在 adapter stream 前 fail-closed', async () => {

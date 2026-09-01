@@ -6,10 +6,10 @@
 // —— provider 可携带执行画像默认(DSH 组合面附着), 内部裸 runStep(provider, req)
 //   无需逐调用点改签名/散写常量即继承 timeout/maxTokens/temperature/top_p/model;
 //   显式 undefined 判断(temperature=0 等合法零值不被默认吞掉)。
-import { checkBudget, estimateTokens, type WorkflowBudget } from "./budget.js";
+import { estimateTokens, type WorkflowBudget } from "./budget.js";
 import { composeSystemPrompt, outputSchemaHash, promptHash } from "./prompt-body.js";
 import { loadSpec } from "./specs.js";
-import type { LlmStepSpec, Provider, ProviderCallReceipt, StepEffectiveParams, StepErrorKind, StepPromptFingerprint, StepRequest, StepResult } from "./types.js";
+import type { LlmStepSpec, Provider, ProviderCallReceipt, ProviderFinishReason, ProviderOutcome, ProviderResponse, ProviderTextStatus, StepEffectiveParams, StepErrorKind, StepPromptFingerprint, StepRequest, StepResult, Usage } from "./types.js";
 import { validateSchema } from "./validator.js";
 
 function extractJson(text: string): string {
@@ -79,7 +79,61 @@ function withCallReceipt(
     effort_source: receipt.effortSource,
     context_window_status: receipt.contextWindowKnown ? "known" : "unknown",
     ...(receipt.contextWindow !== undefined ? { context_window: receipt.contextWindow } : {}),
+    ...(receipt.effectiveMaxTokens !== undefined ? { maxTokens: receipt.effectiveMaxTokens } : {}),
+    ...(receipt.maxTokensSource !== undefined ? { max_tokens_source: receipt.maxTokensSource } : {}),
+    ...(receipt.admissionStatus !== undefined ? { admission_status: receipt.admissionStatus } : {}),
+    ...(receipt.estimatedInputTokens !== undefined
+      ? { estimated_input_tokens: receipt.estimatedInputTokens }
+      : {}),
+    ...(receipt.outputReserveTokens !== undefined
+      ? { output_reserve_tokens: receipt.outputReserveTokens }
+      : {}),
+    ...(receipt.effectiveCallFingerprint !== undefined
+      ? { effective_call_fingerprint: receipt.effectiveCallFingerprint }
+      : {}),
   };
+}
+
+function responseFacts(resp: ProviderResponse): {
+  finishReason: ProviderFinishReason;
+  textStatus: ProviderTextStatus;
+  providerOutcome: ProviderOutcome;
+  failure?: { kind: StepErrorKind; message: string };
+} {
+  const finishReason = resp.finishReason ?? "missing";
+  const textStatus = resp.textStatus ?? (resp.text.trim().length > 0 ? "present" : "empty");
+  if (finishReason === "missing") {
+    return { finishReason, textStatus, providerOutcome: "protocol_error", failure: { kind: "protocol_error", message: "provider stream 缺少 terminal finish" } };
+  }
+  if (finishReason === "max-tokens") {
+    return { finishReason, textStatus, providerOutcome: "truncated", failure: { kind: "truncated", message: "模型输出达到 max-tokens，结果不完整" } };
+  }
+  if (finishReason === "tool-calls") {
+    return { finishReason, textStatus, providerOutcome: "unexpected_tool_calls", failure: { kind: "unexpected_tool_calls", message: "内容步骤未配置工具，却收到 tool-calls" } };
+  }
+  if (finishReason === "aborted") {
+    return { finishReason, textStatus, providerOutcome: "cancelled", failure: { kind: "cancelled", message: "模型调用已取消" } };
+  }
+  if (finishReason === "error") {
+    return { finishReason, textStatus, providerOutcome: "provider_error", failure: { kind: "provider_fatal", message: "provider 以 error 终止" } };
+  }
+  if (finishReason !== "stop") {
+    return { finishReason, textStatus, providerOutcome: "protocol_error", failure: { kind: "protocol_error", message: `未知 finish reason: ${String(finishReason)}` } };
+  }
+  if (textStatus !== "present") {
+    return { finishReason, textStatus, providerOutcome: "empty_response", failure: { kind: "empty_response", message: "模型返回空 visible text" } };
+  }
+  return { finishReason, textStatus, providerOutcome: "success" };
+}
+
+interface ThrownProviderFacts {
+  callReceipt?: ProviderCallReceipt;
+  finishReason?: ProviderFinishReason;
+  textStatus?: ProviderTextStatus;
+  providerOutcome?: ProviderOutcome;
+  usage?: Usage;
+  providerFailureCode?: string;
+  code?: string;
 }
 
 /**
@@ -124,13 +178,9 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   const d = provider.executionDefaults;
   const overrides = req.overrides ?? {};
   const maxTokens = overrides.maxTokens ?? d?.maxTokens ?? spec.budgetTokens;
-  // 单步输入守卫: 保持旧口径(req.input 自身 ≤ maxTokens)——maxTokens 同时是输出
-  // 预算, N38 注入的 system(schema 文本)不计入, 避免输入上限与输出预算耦合误拒
-  // 小 maxTokens 的合法场景(M10-A review 修正, N39 ①)。
-  const budget = checkBudget(req.input, maxTokens);
-  if (!budget.allowed) {
-    return fail(spec, req, "budget_exceeded", `输入估算 ${budget.estimatedInput} tokens 超过预算 ${maxTokens}`, [], { inputTokens: budget.estimatedInput, outputTokens: 0 }, fingerprint);
-  }
+  // maxTokens 只表示输出预留，不再兼任 raw input 上限。完整 system/messages +
+  // prepared output reserve/contextWindow 的 admission 由真实 Provider seam 完成。
+  const estimatedInput = estimateTokens(req.input);
 
   // 工作流累计预算 guard seam: 在 provider 前按「真实输入成本(含 system 提示估算,
   // N39)+ 输出上限」占用 —— N38 注入后 json spec 的 system 含完整 JSON Schema 文本,
@@ -138,7 +188,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   // (不产生新的 provider 成本)。fix 重试不重复占用(输出上限只按首次口径)。
   const workflowBudget = options?.budget ?? provider.workflowBudget;
   const spendEstimate =
-    budget.estimatedInput + estimateTokens(composed.text) + (maxTokens > 0 ? maxTokens : 0);
+    estimatedInput + estimateTokens(composed.text) + (maxTokens > 0 ? maxTokens : 0);
   if (workflowBudget && !workflowBudget.trySpend(spendEstimate)) {
     return fail(
       spec,
@@ -146,7 +196,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
       "budget_exceeded",
       `工作流累计预算不足(剩余 ${workflowBudget.remaining} tokens, 本次需 ${spendEstimate}(含 system 提示估算))`,
       [],
-      { inputTokens: budget.estimatedInput, outputTokens: 0 },
+      { inputTokens: estimatedInput, outputTokens: 0 },
       fingerprint,
     );
   }
@@ -177,7 +227,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
   const pushEntry = (entry: StepResult["journal"][number]) => {
     journal.push({ ...entry, promptHash: sysHash, schemaInjection: composed.schemaInjection });
   };
-  let lastUsage = { inputTokens: budget.estimatedInput, outputTokens: 0 };
+  let lastUsage: Usage = { inputTokens: estimatedInput, outputTokens: 0 };
   // 跟踪最后一次失败类型: 尝试耗尽时按此分类(schema 耗尽 → schema_violation;
   // retryable provider 耗尽 → provider_retryable + 最后 message)
   let lastFailure: { kind: "schema_violation" | "provider_retryable"; message: string } | undefined;
@@ -203,7 +253,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         { role: "system" as const, content: composed.text },
         { role: "user" as const, content: req.input },
       ];
-      if (i > 0) {
+      if (i > 0 && lastFailure?.kind === "schema_violation") {
         // 修复重试: 注入上次错误信息
         messages.push({
           role: "user" as const,
@@ -240,12 +290,41 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
       if (resp.callReceipt !== undefined) {
         latestEffective = withCallReceipt(effective, resp.callReceipt);
       }
+      const facts = responseFacts(resp);
+      const receiptFields = {
+        outputChars: resp.text.length,
+        ...(resp.text.length > 0 ? { outputTextHash: promptHash(resp.text) } : {}),
+        ...(resp.usage !== undefined ? { usage: resp.usage } : {}),
+        finishReason: facts.finishReason,
+        textStatus: facts.textStatus,
+        providerOutcome: facts.providerOutcome,
+        ...(resp.callReceipt !== undefined ? { callReceipt: resp.callReceipt } : {}),
+      };
+      if (facts.failure !== undefined) {
+        pushEntry({
+          attempt: i + 1,
+          startedAt,
+          durationMs: Date.now() - t0,
+          ...receiptFields,
+          errorKind: facts.failure.kind,
+          errorMessage: facts.failure.message,
+        });
+        return fail(
+          spec,
+          req,
+          facts.failure.kind,
+          facts.failure.message,
+          journal,
+          lastUsage,
+          fingerprint,
+          latestEffective,
+        );
+      }
 
       if (spec.outputFormat === "text") {
         pushEntry({
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
-          providerText: resp.text.slice(0, 200), usage: lastUsage,
-          ...(resp.callReceipt !== undefined ? { callReceipt: resp.callReceipt } : {}),
+          ...receiptFields,
         });
         return {
           result: { text: resp.text },
@@ -265,9 +344,8 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
       } catch {
         pushEntry({
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
-          providerText: resp.text.slice(0, 200),
+          ...receiptFields,
           errorKind: "schema_violation", errorMessage: "输出不是合法 JSON",
-          ...(resp.callReceipt !== undefined ? { callReceipt: resp.callReceipt } : {}),
         });
         lastFailure = { kind: "schema_violation", message: "输出不是合法 JSON" };
         continue;
@@ -277,18 +355,16 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         const issueMsg = issues.slice(0, 5).map((x) => `${x.path}: ${x.message}`).join("; ");
         pushEntry({
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
-          providerText: resp.text.slice(0, 200),
+          ...receiptFields,
           errorKind: "schema_violation",
           errorMessage: issueMsg,
-          ...(resp.callReceipt !== undefined ? { callReceipt: resp.callReceipt } : {}),
         });
         lastFailure = { kind: "schema_violation", message: issueMsg };
         continue;
       }
       pushEntry({
         attempt: i + 1, startedAt, durationMs: Date.now() - t0,
-        providerText: resp.text.slice(0, 200), usage: lastUsage,
-        ...(resp.callReceipt !== undefined ? { callReceipt: resp.callReceipt } : {}),
+        ...receiptFields,
       });
       return {
         result: parsed,
@@ -301,29 +377,60 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         effective: latestEffective,
       };
     } catch (err) {
-      const errorReceipt = (err as { callReceipt?: ProviderCallReceipt } | undefined)?.callReceipt;
+      const thrown = (err ?? {}) as ThrownProviderFacts;
+      const errorReceipt = thrown.callReceipt;
       if (errorReceipt !== undefined) latestEffective = withCallReceipt(effective, errorReceipt);
+      if (thrown.usage !== undefined) lastUsage = thrown.usage;
+      const errorReceiptFields = {
+        ...(thrown.usage !== undefined ? { usage: thrown.usage } : {}),
+        ...(thrown.finishReason !== undefined ? { finishReason: thrown.finishReason } : {}),
+        ...(thrown.textStatus !== undefined ? { textStatus: thrown.textStatus } : {}),
+        ...(thrown.providerOutcome !== undefined ? { providerOutcome: thrown.providerOutcome } : {}),
+        ...(thrown.providerFailureCode !== undefined
+          ? { providerFailureCode: thrown.providerFailureCode }
+          : {}),
+        ...(errorReceipt !== undefined ? { callReceipt: errorReceipt } : {}),
+      };
       if (controller.signal.aborted) {
         pushEntry({
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
           errorKind: "timeout", errorMessage: "超时",
-          ...(errorReceipt !== undefined ? { callReceipt: errorReceipt } : {}),
+          ...errorReceiptFields,
         });
         return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint, latestEffective);
+      }
+      const typedKind = thrown.providerOutcome === "cancelled" || (err as Error | undefined)?.name === "AbortError"
+        ? "cancelled"
+        : thrown.providerOutcome === "context_overflow" || thrown.code === "CONTEXT_WINDOW_EXCEEDED"
+          ? "context_overflow"
+          : thrown.providerOutcome === "protocol_error"
+            ? "protocol_error"
+            : undefined;
+      if (typedKind !== undefined) {
+        const message = (err as Error | undefined)?.message ?? typedKind;
+        pushEntry({
+          attempt: i + 1,
+          startedAt,
+          durationMs: Date.now() - t0,
+          errorKind: typedKind,
+          errorMessage: message,
+          ...errorReceiptFields,
+        });
+        return fail(spec, req, typedKind, message, journal, lastUsage, fingerprint, latestEffective);
       }
       const { retryable, message } = classifyError(err);
       if (!retryable) {
         pushEntry({
           attempt: i + 1, startedAt, durationMs: Date.now() - t0,
           errorKind: "provider_fatal", errorMessage: message,
-          ...(errorReceipt !== undefined ? { callReceipt: errorReceipt } : {}),
+          ...errorReceiptFields,
         });
         return fail(spec, req, "provider_fatal", message, journal, lastUsage, fingerprint, latestEffective);
       }
       pushEntry({
         attempt: i + 1, startedAt, durationMs: Date.now() - t0,
         errorKind: "provider_retryable", errorMessage: message,
-        ...(errorReceipt !== undefined ? { callReceipt: errorReceipt } : {}),
+        ...errorReceiptFields,
       });
       lastFailure = { kind: "provider_retryable", message };
       // 继续重试(受 attempts 与 deadline 双限)

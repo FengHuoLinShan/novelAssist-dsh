@@ -409,6 +409,8 @@ describe('NovelCraftService 端到端', () => {
     )) as {
       text: string; spec_ref: string; contract_version: string;
       prompt_hash: string; schema_injection: string; output_schema_hash: string;
+      finish_reason: string; text_status: string; provider_outcome: string;
+      admission_status: string; effective_call_fingerprint: string;
       journal: Array<Record<string, unknown>>;
     };
     // 正文不截断(完整 JSON 结果)
@@ -419,12 +421,23 @@ describe('NovelCraftService 端到端', () => {
     expect(out.prompt_hash).toMatch(/^[0-9a-f]{16}$/);
     expect(out.schema_injection).toBe('text-contract');
     expect(out.output_schema_hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(out).toMatchObject({
+      finish_reason: 'stop',
+      text_status: 'present',
+      provider_outcome: 'success',
+      admission_status: 'output_reserve_unknown',
+    });
+    expect(out.effective_call_fingerprint).toMatch(/^[0-9a-f]{16}$/);
     // journal 完整回传, 每条带指纹字段(N38: 模型可见⟺可回放)
     expect(out.journal.length).toBeGreaterThanOrEqual(1);
     for (const entry of out.journal) {
       expect(entry.promptHash).toBe(out.prompt_hash);
       expect(entry.schemaInjection).toBe('text-contract');
+      expect(entry.finishReason).toBe('stop');
+      expect(entry.providerOutcome).toBe('success');
+      expect(entry.providerText).toBeUndefined();
     }
+    expect(JSON.stringify(out.journal)).not.toContain('通过');
     // 模型确实收到契约文本(adapter 记录的 GenerateOptions.system 槽)
     const system = env.h.adapter.requests[0]?.system ?? '';
     expect(system).toContain('OUTPUT_CONTRACT');

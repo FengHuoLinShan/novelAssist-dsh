@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis';
 import { JobRegistry } from '@deepseek-ai/dsh-jobs';
 import type { JobDoneListener, JobId, JobRead, JobSnapshot, JobStart, JobsChangedListener } from '@deepseek-ai/dsh-jobs';
 import { LlmAdapter, LlmRuntime } from '@deepseek-ai/dsh-llm';
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { GenerateOptions, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm';
 import z from '@deepseek-ai/schemastery';
 import Storage from '@deepseek-ai/dsh-storage';
 import { apply as applyStorageJson, Config as JsonConfig } from '@deepseek-ai/dsh-storage-json';
@@ -22,10 +22,12 @@ import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-app
 export interface FakeLlmResponse {
   /** 文本增量序列(逐块 text-delta) */
   deltas?: string[];
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: TokenUsage;
   /** 终止原因(缺省 stop) */
-  finishKind?: 'stop' | 'error' | 'aborted';
+  finishKind?: 'stop' | 'tool-calls' | 'max-tokens' | 'error' | 'aborted';
   failure?: { code: string; message: string };
+  reasoningDeltas?: string[];
+  omitFinish?: boolean;
 }
 
 export class FakeAdapter extends LlmAdapter {
@@ -51,9 +53,13 @@ export class FakeAdapter extends LlmAdapter {
     for (const text of next.deltas ?? ['']) {
       yield { type: 'text-delta', index: 0, text };
     }
+    for (const text of next.reasoningDeltas ?? []) {
+      yield { type: 'reasoning-delta', index: 1, text };
+    }
     if (next.usage) {
       yield { type: 'usage', usage: next.usage };
     }
+    if (next.omitFinish) return;
     if (next.finishKind === 'error' || next.finishKind === 'aborted') {
       yield {
         type: 'finish',
@@ -63,7 +69,7 @@ export class FakeAdapter extends LlmAdapter {
         },
       };
     } else {
-      yield { type: 'finish', reason: { kind: 'stop' } };
+      yield { type: 'finish', reason: { kind: next.finishKind ?? 'stop' } };
     }
   }
 }

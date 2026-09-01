@@ -302,21 +302,27 @@ describe('timeout/预算继承(N34: 内部 llm-step 统一继承 profile 默认,
     env.cleanup();
   });
 
-  it('profile.max_tokens:5 → 长输入 budget_exceeded(在 provider 前); override 200000 → 通过', async () => {
+  it('profile.max_tokens 只控制输出 reserve；capacity unknown 不伪报 input admission', async () => {
     const env = await setup();
     llmYml(env.root, 'max_tokens: 5\n');
     const longInput = '这是很长的一段中文输入, 用于验证执行画像预算继承是否生效。'.repeat(3);
+    env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
     const r1 = await env.service.runStep({ specRef: 'semantic_review', input: longInput }, env.root);
-    expect(r1.ok).toBe(false);
-    expect(r1.error?.kind).toBe('budget_exceeded');
-    expect(env.h.adapter.requests).toHaveLength(0); // 预算守卫先于 provider
+    expect(r1.ok).toBe(true);
+    expect(env.h.adapter.requests[0].maxTokens).toBe(5);
+    expect(r1.effective).toMatchObject({
+      maxTokens: 5,
+      max_tokens_source: 'request',
+      admission_status: 'capacity_unknown',
+    });
     env.h.adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
     const r2 = await env.service.runStep(
       { specRef: 'semantic_review', input: longInput, overrides: { maxTokens: 200_000 } },
       env.root,
     );
     expect(r2.ok).toBe(true);
-    expect(env.h.adapter.requests).toHaveLength(1);
+    expect(env.h.adapter.requests).toHaveLength(2);
+    expect(env.h.adapter.requests[1].maxTokens).toBe(200_000);
     env.cleanup();
   });
 

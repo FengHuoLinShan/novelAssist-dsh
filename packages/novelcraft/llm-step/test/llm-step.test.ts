@@ -185,7 +185,7 @@ describe("runStep(主流程, 设计文档 §12 契约)", () => {
     };
     const r = await runStep(provider, { specRef: "entity_extraction", input: "x" });
     expect(r.ok).toBe(false);
-    expect(r.error?.kind).toBe("provider_fatal"); // 取消 = 不可重试的 provider 失败
+    expect(r.error?.kind).toBe("cancelled");
     expect(calls).toBe(1); // 零重试(即使 message 含 "abort", 也不走 retryable 正则)
     expect(r.journal).toHaveLength(1);
   });
@@ -206,15 +206,85 @@ describe("runStep(主流程, 设计文档 §12 契约)", () => {
     expect(r.journal.every((j) => j.errorKind === "provider_retryable")).toBe(true);
   });
 
-  it("预算超限 → budget_exceeded", async () => {
-    const provider = new MockProvider({ responses: [] });
+  it("maxTokens 只表示输出预留，不再把较长 raw input 当输出预算拒绝", async () => {
+    const provider = new MockProvider({
+      responses: [{ text: JSON.stringify({ entities: [] }) }],
+    });
     const r = await runStep(provider, {
       specRef: "entity_extraction",
-      input: "很长的正文".repeat(5000),
+      input: "正文".repeat(100),
       overrides: { maxTokens: 100 },
     });
-    expect(r.ok).toBe(false);
-    expect(r.error?.kind).toBe("budget_exceeded");
+    expect(r.ok).toBe(true);
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0].maxTokens).toBe(100);
+  });
+
+  it.each([
+    ["max-tokens", "partial", "truncated"],
+    ["tool-calls", "", "unexpected_tool_calls"],
+    ["stop", "   ", "empty_response"],
+    ["missing", "orphan", "protocol_error"],
+  ] as const)("finish=%s 不记普通成功", async (finishReason, text, expectedKind) => {
+    const provider = new MockProvider({ responses: [{ text, finishReason }] });
+    const result = await runStep(provider, {
+      specRef: "writing_generate",
+      input: "x",
+      fixAttempts: 0,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe(expectedKind);
+    expect(result.journal[0]).toMatchObject({ finishReason, errorKind: expectedKind });
+  });
+
+  it("journal 只留输出 hash/长度与完整 usage，不留正文或 reasoning bytes", async () => {
+    const provider = new MockProvider({
+      responses: [{
+        text: "修订后的秘密正文",
+        usage: {
+          inputTokens: 2,
+          cacheReadTokens: 3,
+          cacheWriteTokens: 4,
+          outputTokens: 9,
+          reasoningTokens: 5,
+        },
+      }],
+    });
+    const result = await runStep(provider, {
+      specRef: "writing_generate",
+      input: "x",
+      fixAttempts: 0,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.usage).toEqual({
+      inputTokens: 2,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 4,
+      outputTokens: 9,
+      reasoningTokens: 5,
+    });
+    expect(result.journal[0]).toMatchObject({
+      finishReason: "stop",
+      textStatus: "present",
+      providerOutcome: "success",
+      outputChars: 8,
+    });
+    expect(result.journal[0].outputTextHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(result.journal[0].providerText).toBeUndefined();
+    expect(JSON.stringify(result.journal)).not.toContain("秘密正文");
+  });
+
+  it("transport retry 不注入 schema-fix 文案", async () => {
+    const provider = new MockProvider({
+      retryable: true,
+      responses: [
+        { throwError: new Error("network down") },
+        { text: JSON.stringify({ entities: [] }) },
+      ],
+    });
+    const result = await runStep(provider, { specRef: "entity_extraction", input: "x" });
+    expect(result.ok).toBe(true);
+    expect(provider.calls[1].messages).toEqual(provider.calls[0].messages);
   });
 });
 

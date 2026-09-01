@@ -56,6 +56,12 @@ export type StepErrorKind =
   | "spec_not_found"
   | "budget_exceeded"
   | "timeout"
+  | "cancelled"
+  | "context_overflow"
+  | "truncated"
+  | "empty_response"
+  | "unexpected_tool_calls"
+  | "protocol_error"
   | "schema_violation"
   | "provider_retryable"
   | "provider_fatal";
@@ -70,9 +76,38 @@ export interface StepError {
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
+  /** Disjoint cached-input buckets; never add reasoningTokens to outputTokens. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** Informational subset already included in outputTokens. */
+  reasoningTokens?: number;
 }
 
 export type ReasoningEffortSource = "request" | "adapter_default" | "provider_default";
+export type MaxTokensSource = "request" | "adapter_default" | "provider_default";
+export type ProviderFinishReason =
+  | "stop"
+  | "tool-calls"
+  | "max-tokens"
+  | "aborted"
+  | "error"
+  | "missing";
+export type ProviderTextStatus = "present" | "empty" | "discarded";
+export type ProviderOutcome =
+  | "success"
+  | "truncated"
+  | "cancelled"
+  | "provider_error"
+  | "unexpected_tool_calls"
+  | "empty_response"
+  | "protocol_error"
+  | "context_overflow";
+export type ProviderAdmissionStatus =
+  | "admitted"
+  | "capacity_unknown"
+  | "output_reserve_unknown"
+  | "rejected";
+export type ProviderCallWarning = "context_window_unknown" | "output_reserve_unknown";
 
 /** Secret-free receipt returned by a provider after exact-model preparation. */
 export interface ProviderCallReceipt {
@@ -83,14 +118,32 @@ export interface ProviderCallReceipt {
   effortSource: ReasoningEffortSource;
   contextWindow?: number;
   contextWindowKnown: boolean;
+  /** Effective prepared output cap. Absence means provider-owned/unknown. */
+  effectiveMaxTokens?: number;
+  maxTokensSource?: MaxTokensSource;
+  /** Heuristic full system/messages estimate used immediately before dispatch. */
+  estimatedInputTokens?: number;
+  inputEstimator?: "novelcraft-heuristic-v1";
+  outputReserveTokens?: number;
+  admissionStatus?: ProviderAdmissionStatus;
+  warnings?: ProviderCallWarning[];
+  /** Hash of resolved non-secret call config and adapter-default markers. */
+  effectiveCallFingerprint?: string;
 }
 
 export interface JournalEntry {
   attempt: number;
   startedAt: string;
   durationMs: number;
+  /** @deprecated Durable journal must not retain model output bytes. */
   providerText?: string;
+  outputTextHash?: string;
+  outputChars?: number;
   usage?: Usage;
+  finishReason?: ProviderFinishReason;
+  textStatus?: ProviderTextStatus;
+  providerOutcome?: ProviderOutcome;
+  providerFailureCode?: string;
   errorKind?: StepErrorKind;
   errorMessage?: string;
   /** 本次 attempt 实际发送 system 提示的 sha256 前 16 hex(M10-A3/N38: 模型可见⟺可回放) */
@@ -121,6 +174,11 @@ export interface StepEffectiveParams {
   effort_source?: ReasoningEffortSource;
   context_window?: number;
   context_window_status?: "known" | "unknown";
+  max_tokens_source?: MaxTokensSource;
+  admission_status?: ProviderAdmissionStatus;
+  estimated_input_tokens?: number;
+  output_reserve_tokens?: number;
+  effective_call_fingerprint?: string;
   temperature?: number;
   top_p?: number;
   maxTokens?: number;
@@ -165,7 +223,11 @@ export interface ProviderRequest {
 
 export interface ProviderResponse {
   text: string;
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: Usage;
+  /** Optional for additive provider compatibility; runStep treats absence as protocol_error. */
+  finishReason?: ProviderFinishReason;
+  textStatus?: ProviderTextStatus;
+  providerOutcome?: ProviderOutcome;
   /** Exact registration-bound preparation receipt, when the provider supports it. */
   callReceipt?: ProviderCallReceipt;
 }

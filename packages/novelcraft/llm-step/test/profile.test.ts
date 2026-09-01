@@ -203,7 +203,7 @@ describe("top_p 进入 core strict 参数面与 fingerprint(审查项 4)", () =>
       executionDefaults: { top_p: 0.8 },
       async complete(req) {
         seen.push({ top_p: req.top_p, temperature: req.temperature });
-        return { text: JSON.stringify({ entities: [] }) };
+        return { text: JSON.stringify({ entities: [] }), finishReason: "stop", textStatus: "present", providerOutcome: "success" };
       },
     };
     await runStep(provider, { specRef: "entity_extraction", input: "x" });
@@ -240,6 +240,9 @@ describe("reasoning_effort 不透明传输与真实 prepared receipt(M3a)", () =
       async complete(req) {
         return {
           text: JSON.stringify({ entities: [] }),
+          finishReason: "stop",
+          textStatus: "present",
+          providerOutcome: "success",
           callReceipt: {
             provider: "fake",
             model: "resolved-model",
@@ -718,7 +721,7 @@ describe("Provider.executionDefaults 合并链(独立审查 P2: spec < defaults 
       executionDefaults: { temperature: 0.7, maxTokens: 100, timeoutMs: 2000, model: "dflt-model" },
       async complete(req) {
         calls.push({ temperature: req.temperature, maxTokens: req.maxTokens, model: req.model });
-        return { text: JSON.stringify({ entities: [] }) };
+        return { text: JSON.stringify({ entities: [] }), finishReason: "stop", textStatus: "present", providerOutcome: "success" };
       },
     };
     // 无请求 override: defaults 生效(覆盖 spec 的 temperature 0.3/budget 32768)
@@ -741,7 +744,7 @@ describe("Provider.executionDefaults 合并链(独立审查 P2: spec < defaults 
     const provider: Provider = {
       async complete(req) {
         calls.push({ temperature: req.temperature, maxTokens: req.maxTokens });
-        return { text: JSON.stringify({ entities: [] }) };
+        return { text: JSON.stringify({ entities: [] }), finishReason: "stop", textStatus: "present", providerOutcome: "success" };
       },
     };
     await runStep(provider, { specRef: "entity_extraction", input: "x" });
@@ -767,7 +770,7 @@ describe("workflowBudget 累计 guard seam(N34 workflowBudget: 至少提供累�
     const provider: Provider = {
       async complete() {
         calls += 1;
-        return { text: JSON.stringify({ entities: [] }) };
+        return { text: JSON.stringify({ entities: [] }), finishReason: "stop", textStatus: "present", providerOutcome: "success" };
       },
     };
     // 每次占用 = 估算输入(≈1) + system 提示估算(N39: entity_extraction 含 schema

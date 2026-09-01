@@ -7,17 +7,36 @@
 // 原文直通 —— 本适配器只转发, 不落盘、不记录正文)。
 // 审查项 6: 取消三条路径(finish aborted / adapter AbortError / signal abort)统一抛
 // name=AbortError + retryable=false, llm-step 对其零重试(provider 前 fail-closed)。
-import { createUserMessage, LlmError, ReasoningEffortId, type LlmRuntime } from '@deepseek-ai/dsh-llm';
+import {
+  BlockAssembler,
+  CONTEXT_WINDOW_EXCEEDED_CODE,
+  createAssistantMessage,
+  createUserMessage,
+  LlmError,
+  ReasoningEffortId,
+  type LlmRuntime,
+} from '@deepseek-ai/dsh-llm';
 import type {
   GenerateOptions,
   LlmCallConfig,
   LlmFailure,
   Message,
   StreamChunk,
-  TokenUsage,
 } from '@deepseek-ai/dsh-llm';
 import type { Context } from '@deepseek-ai/cordis';
-import type { Provider, ProviderCallReceipt, ProviderRequest, ProviderResponse } from '@novelcraft/llm-step';
+import {
+  estimateTokens,
+  promptHash,
+  type Provider,
+  type ProviderCallReceipt,
+  type ProviderCallWarning,
+  type ProviderFinishReason,
+  type ProviderOutcome,
+  type ProviderRequest,
+  type ProviderResponse,
+  type ProviderTextStatus,
+  type Usage,
+} from '@novelcraft/llm-step';
 import { svc } from '../ctx.js';
 
 export interface DshProviderOptions {
@@ -38,8 +57,15 @@ function mapFailure(failure: LlmFailure): Error {
     failure.code === 'OVERLOADED' ||
     /5\d\d|timeout|network|ECONN|ETIMEDOUT/i.test(`${failure.code ?? ''} ${failure.message ?? ''}`);
   const err = new Error(`DSH llm 调用失败: ${failure.code ?? 'UNKNOWN'} ${failure.message ?? ''}`);
-  (err as Error & { retryable: boolean; code?: string }).retryable = retryable;
-  (err as Error & { code?: string }).code = failure.code;
+  Object.assign(err, {
+    retryable,
+    code: failure.code,
+    ...(failure.status !== undefined ? { status: failure.status } : {}),
+    ...(failure.providerRetryAfterMs !== undefined
+      ? { providerRetryAfterMs: failure.providerRetryAfterMs }
+      : {}),
+    ...(failure.requestId !== undefined ? { requestId: failure.requestId } : {}),
+  });
   return err;
 }
 
@@ -57,11 +83,38 @@ function isAbortError(err: unknown): boolean {
   return (err as Error | undefined)?.name === 'AbortError';
 }
 
-function attachCallReceipt(err: Error, callReceipt: ProviderCallReceipt | undefined): Error {
-  if (callReceipt !== undefined) {
-    (err as Error & { callReceipt?: ProviderCallReceipt }).callReceipt = callReceipt;
-  }
+interface ProviderErrorFacts {
+  callReceipt?: ProviderCallReceipt;
+  finishReason?: ProviderFinishReason;
+  textStatus?: ProviderTextStatus;
+  providerOutcome?: ProviderOutcome;
+  usage?: Usage;
+  providerFailureCode?: string;
+}
+
+function attachProviderFacts(err: Error, facts: ProviderErrorFacts): Error {
+  Object.assign(err, facts);
   return err;
+}
+
+/** Estimate the exact role/content envelope handed to DSH; this is intentionally heuristic. */
+function estimateFullInput(messages: ProviderRequest['messages']): number {
+  const rendered = messages.map((message) => `${message.role}\n${message.content}`).join('\n\n');
+  return estimateTokens(rendered) + messages.length * 4 + 2;
+}
+
+function classifyOutcome(
+  finishReason: ProviderFinishReason,
+  textStatus: ProviderTextStatus,
+  sawToolCall: boolean,
+): ProviderOutcome {
+  if (finishReason === 'missing') return 'protocol_error';
+  if (finishReason === 'max-tokens') return 'truncated';
+  if (finishReason === 'tool-calls' || sawToolCall) return 'unexpected_tool_calls';
+  if (finishReason === 'aborted') return 'cancelled';
+  if (finishReason === 'error') return 'provider_error';
+  if (finishReason !== 'stop') return 'protocol_error';
+  return textStatus === 'present' ? 'success' : 'empty_response';
 }
 
 /**
@@ -114,19 +167,12 @@ export class DshProvider implements Provider {
     }
 
     let system: string | undefined;
-    const messages: Message[] = [];
-    for (const m of req.messages) {
-      if (m.role === 'system') {
-        system = system === undefined ? m.content : `${system}\n\n${m.content}`;
-        continue;
-      }
-      messages.push(
-        createUserMessage({
-          content: [{ type: 'text', text: m.content }],
-          source: { kind: 'plugin', plugin: sourcePlugin },
-        }) as Message,
-      );
-    }
+    const conversation = req.messages.filter((message) => {
+      if (message.role !== 'system') return true;
+      system = system === undefined ? message.content : `${system}\n\n${message.content}`;
+      return false;
+    });
+    const estimatedInputTokens = estimateFullInput(req.messages);
 
     const callConfig: LlmCallConfig = {
       provider: route,
@@ -138,13 +184,20 @@ export class DshProvider implements Provider {
       ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
     };
 
-    let text = '';
-    let usage: TokenUsage | undefined;
-    let failure: LlmFailure | undefined;
-    let aborted = false;
     let callReceipt: ProviderCallReceipt | undefined;
     try {
       const prepared = await llm.prepareCall(callConfig, req.signal);
+      const outputReserveTokens = prepared.config.maxTokens;
+      const warnings: ProviderCallWarning[] = [];
+      if (prepared.context === undefined) warnings.push('context_window_unknown');
+      if (outputReserveTokens === undefined) warnings.push('output_reserve_unknown');
+      const admissionStatus = outputReserveTokens === undefined
+        ? 'output_reserve_unknown'
+        : prepared.context === undefined
+          ? 'capacity_unknown'
+          : estimatedInputTokens + outputReserveTokens > prepared.context.contextWindow
+            ? 'rejected'
+            : 'admitted';
       callReceipt = {
         provider: prepared.config.provider,
         model: prepared.config.model,
@@ -159,76 +212,162 @@ export class DshProvider implements Provider {
             : 'provider_default',
         ...(prepared.context !== undefined ? { contextWindow: prepared.context.contextWindow } : {}),
         contextWindowKnown: prepared.context !== undefined,
+        ...(outputReserveTokens !== undefined ? { effectiveMaxTokens: outputReserveTokens } : {}),
+        maxTokensSource: req.maxTokens !== undefined
+          ? 'request'
+          : prepared.adapterDefaults.maxTokens
+            ? 'adapter_default'
+            : 'provider_default',
+        estimatedInputTokens,
+        inputEstimator: 'novelcraft-heuristic-v1',
+        ...(outputReserveTokens !== undefined ? { outputReserveTokens } : {}),
+        admissionStatus,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        effectiveCallFingerprint: promptHash(JSON.stringify([
+          prepared.config.provider,
+          prepared.config.model,
+          prepared.config.reasoningEffort ?? null,
+          prepared.config.temperature ?? null,
+          prepared.config.maxTokens ?? null,
+          prepared.adapterDefaults.reasoningEffort === true,
+          prepared.adapterDefaults.maxTokens === true,
+        ])),
       };
+      if (admissionStatus === 'rejected') {
+        const err = new Error(
+          `完整请求估算 ${estimatedInputTokens} + 输出预留 ${outputReserveTokens} ` +
+            `超过模型上下文 ${prepared.context?.contextWindow ?? 0}`,
+        );
+        Object.assign(err, { retryable: false, code: CONTEXT_WINDOW_EXCEEDED_CODE });
+        throw attachProviderFacts(err, {
+          callReceipt,
+          finishReason: 'missing',
+          textStatus: 'empty',
+          providerOutcome: 'context_overflow',
+          providerFailureCode: CONTEXT_WINDOW_EXCEEDED_CODE,
+        });
+      }
+
+      const messages: Message[] = conversation.map((message) => (
+        message.role === 'assistant'
+          ? createAssistantMessage({
+              content: [{ type: 'text', text: message.content }],
+              source: { provider: prepared.config.provider, model: prepared.config.model },
+            })
+          : createUserMessage({
+              content: [{ type: 'text', text: message.content }],
+              source: { kind: 'plugin', plugin: sourcePlugin },
+            })
+      ));
       const options: GenerateOptions = {
         ...prepared.config,
         messages,
         ...(system !== undefined ? { system } : {}),
         ...(req.signal ? { signal: req.signal } : {}),
       };
+      const assembler = new BlockAssembler();
+      let sawFinish = false;
+      let sawToolCall = false;
       for await (const chunk of prepared.stream(options) as AsyncIterable<StreamChunk>) {
-        switch (chunk.type) {
-          case 'text-delta':
-            text += chunk.text;
-            break;
-          case 'usage':
-            usage = chunk.usage;
-            break;
-          case 'finish':
-            // 审查项 6: finish aborted(适配器抛错经 dsh-llm 流协议转 terminal finish,
-            // signal abort 或 failure.code==='ABORTED' → kind 'aborted')单独记取消;
-            // kind 'error' 仍走 mapFailure 可重试分类。
-            if (chunk.reason.kind === 'aborted') {
-              aborted = true;
-              failure = chunk.reason.failure;
-            } else if (chunk.reason.kind === 'error') {
-              failure = chunk.reason.failure;
-            }
-            break;
-          default:
-            break;
-        }
+        assembler.push(chunk);
+        if (chunk.type === 'finish') sawFinish = true;
+        if (chunk.type === 'tool-call-delta' ||
+            (chunk.type === 'block-end' && chunk.block.type === 'tool-call')) sawToolCall = true;
       }
+      const terminal = sawFinish ? assembler.finish : undefined;
+      const finishReason = (terminal?.kind ?? 'missing') as ProviderFinishReason;
+      const blocks = assembler.blocks();
+      const text = blocks
+        .filter((block): block is Extract<(typeof blocks)[number], { type: 'text' }> => block.type === 'text')
+        .map((block) => block.text)
+        .join('');
+      const hasText = text.trim().length > 0;
+      const textStatus: ProviderTextStatus = hasText ? 'present' : 'empty';
+      const usage = assembler.usage ? { ...assembler.usage } : undefined;
+      const providerOutcome = classifyOutcome(finishReason, textStatus, sawToolCall);
+
+      if (terminal?.kind === 'aborted') {
+        throw attachProviderFacts(
+          abortError(`调用已被取消(aborted): ${terminal.failure.code} ${terminal.failure.message}`),
+          {
+            callReceipt,
+            finishReason,
+            textStatus: hasText ? 'discarded' : 'empty',
+            providerOutcome,
+            ...(usage !== undefined ? { usage } : {}),
+            providerFailureCode: terminal.failure.code,
+          },
+        );
+      }
+      if (terminal?.kind === 'error') {
+        throw attachProviderFacts(mapFailure(terminal.failure), {
+          callReceipt,
+          finishReason,
+          textStatus: hasText ? 'discarded' : 'empty',
+          providerOutcome,
+          ...(usage !== undefined ? { usage } : {}),
+          providerFailureCode: terminal.failure.code,
+        });
+      }
+      if (req.signal?.aborted) {
+        throw attachProviderFacts(abortError('调用已被取消(aborted)'), {
+          callReceipt,
+          finishReason: 'aborted',
+          textStatus: hasText ? 'discarded' : 'empty',
+          providerOutcome: 'cancelled',
+          ...(usage !== undefined ? { usage } : {}),
+          providerFailureCode: 'ABORTED',
+        });
+      }
+      return {
+        text,
+        ...(usage !== undefined ? { usage } : {}),
+        finishReason,
+        textStatus,
+        providerOutcome,
+        callReceipt,
+      };
     } catch (err) {
       // LlmRuntime 之外的中间件/消费方错误仍然抛出; 取消/中止类(adapter AbortError、
       // LlmError ABORTED 码)统一映射为 AbortError, 其余 LlmError 走 mapFailure 分类。
       if (err instanceof LlmError) {
         if (err.failure.code === 'ABORTED') {
-          throw attachCallReceipt(abortError(`调用已被取消(aborted): ${err.failure.message}`), callReceipt);
+          throw attachProviderFacts(abortError(`调用已被取消(aborted): ${err.failure.message}`), {
+            callReceipt,
+            finishReason: 'aborted',
+            textStatus: 'discarded',
+            providerOutcome: 'cancelled',
+            providerFailureCode: err.failure.code,
+          });
         }
-        throw attachCallReceipt(mapFailure(err.failure), callReceipt);
+        throw attachProviderFacts(mapFailure(err.failure), {
+          callReceipt,
+          finishReason: 'error',
+          textStatus: 'discarded',
+          providerOutcome: 'provider_error',
+          providerFailureCode: err.failure.code,
+        });
       }
       if (isAbortError(err)) {
-        throw attachCallReceipt(abortError('调用已被取消(aborted)'), callReceipt);
+        const facts = err as ProviderErrorFacts;
+        if (facts.providerOutcome !== undefined) throw err;
+        throw attachProviderFacts(abortError('调用已被取消(aborted)'), {
+          callReceipt,
+          finishReason: 'aborted',
+          textStatus: 'discarded',
+          providerOutcome: 'cancelled',
+          providerFailureCode: 'ABORTED',
+        });
       }
       if (err instanceof Error) {
-        throw attachCallReceipt(err, callReceipt);
+        throw attachProviderFacts(err, {
+          ...(callReceipt !== undefined ? { callReceipt } : {}),
+          ...((err as ProviderErrorFacts).providerOutcome === undefined
+            ? { providerOutcome: 'provider_error' as const }
+            : {}),
+        });
       }
       throw err;
     }
-    // 审查项 6: 三条取消路径(finish aborted / adapter AbortError / signal abort)统一
-    // 抛 name=AbortError + retryable=false —— 不返回半截文本、不产生「假成功」,
-    // llm-step classifyError 对其零重试(provider 前 fail-closed)。
-    if (aborted) {
-      throw attachCallReceipt(abortError(
-        failure ? `调用已被取消(aborted): ${failure.code} ${failure.message}` : '调用已被取消(aborted)',
-      ), callReceipt);
-    }
-    if (failure) {
-      throw attachCallReceipt(mapFailure(failure), callReceipt);
-    }
-    // P2 修复: 调用因 signal abort 提前结束(流已消费完但信号已 abort, 如 wall-clock
-    // 超时掐断)→ 视为取消(AbortError, 不可重试), 而非返回半截文本 ——
-    // trace(provider 层 llm_step ok:false)与 runStep 超时语义对齐, 不产生「假成功」。
-    if (req.signal?.aborted) {
-      throw attachCallReceipt(abortError('调用已被取消(aborted)'), callReceipt);
-    }
-    return {
-      text,
-      usage: usage
-        ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
-        : undefined,
-      ...(callReceipt !== undefined ? { callReceipt } : {}),
-    };
   }
 }
