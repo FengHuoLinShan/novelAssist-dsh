@@ -19,6 +19,7 @@ export const ENDPOINTS = {
   presetsEffortSelect: 'presets/effort-select',
   atlasView: 'atlas/view',
   atlasAnnotationRequest: 'atlas/annotation-request',
+  workflowView: 'workflow/view',
 } as const;
 
 /** Browser intake limit; the writing core rechecks the decoded byte length. */
@@ -477,4 +478,32 @@ export interface AtlasAnnotationRequestValue {
   queued: number;
   file: string;
   message: string;
+}
+
+// ---------------------------------------------------------------------------
+// durable workflow author view(P1-U1)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowViewPayload {
+  sessionId?: string;
+}
+
+export type WorkflowAuthorState = 'running' | 'needs-attention' | 'completed' | 'failed';
+
+export interface WorkflowRunCard {
+  workflow_id: string;
+  kind: 'deep-import' | 'map-atlas';
+  state: WorkflowAuthorState;
+  completed_batches: number;
+  total_batches: number;
+  created_at: string;
+  message: string;
+  can_resume: boolean;
+  can_abandon: boolean;
+}
+
+export interface WorkflowViewValue {
+  bound: { book: string; root: string } | null;
+  runs: WorkflowRunCard[];
+  restart_scope: { start_chapter: number; end_chapter: number } | null;
 }

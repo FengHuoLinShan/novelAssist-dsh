@@ -32,6 +32,23 @@ export type NovelcraftKey =
   | 'inbox.done.adopt'
   | 'inbox.done.record'
   | 'story.title'
+  | 'workflow.title'
+  | 'workflow.unbound'
+  | 'workflow.empty'
+  | 'workflow.loading'
+  | 'workflow.chatBusy'
+  | 'workflow.requested'
+  | 'workflow.kind.import'
+  | 'workflow.kind.atlas'
+  | 'workflow.state.running'
+  | 'workflow.state.needs-attention'
+  | 'workflow.state.completed'
+  | 'workflow.state.failed'
+  | 'workflow.progress'
+  | 'workflow.resume'
+  | 'workflow.abandon'
+  | 'workflow.restart'
+  | 'workflow.restartHint'
   | 'story.empty'
   | 'story.unbound'
   | 'story.threads'
@@ -184,6 +201,23 @@ export const zh: Record<NovelcraftKey, string> = {
   'inbox.done.adopt': '已记录采纳决定',
   'inbox.done.record': '已记录',
   'story.title': '剧情地图',
+  'workflow.title': '长任务',
+  'workflow.unbound': '当前会话还没有绑定一本书。',
+  'workflow.empty': '还没有可恢复的深度导入或地图册任务。',
+  'workflow.loading': '刷新中…',
+  'workflow.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
+  'workflow.requested': '请求已交给助手；需要副作用的动作仍会请求审批。',
+  'workflow.kind.import': '深度导入',
+  'workflow.kind.atlas': '地图册',
+  'workflow.state.running': '进行中',
+  'workflow.state.needs-attention': '需要确认',
+  'workflow.state.completed': '已完成',
+  'workflow.state.failed': '失败',
+  'workflow.progress': '批次进度',
+  'workflow.resume': '继续',
+  'workflow.abandon': '审批放弃',
+  'workflow.restart': '重新开始',
+  'workflow.restartHint': '按已记录范围新开一次导入，不复用旧 run。章节：',
   'story.empty': '还没有结构资产: 先跑结构分析或手工建 threads/arcs/伏笔。',
   'story.unbound': '这本书还没绑定工作区。',
   'story.threads': '剧情线',
@@ -337,6 +371,23 @@ export const en: Record<NovelcraftKey, string> = {
   'inbox.done.adopt': 'Accept recorded',
   'inbox.done.record': 'Recorded',
   'story.title': 'Story Map',
+  'workflow.title': 'Long tasks',
+  'workflow.unbound': 'This session is not bound to a book yet.',
+  'workflow.empty': 'No recoverable import or map-atlas runs yet.',
+  'workflow.loading': 'Refreshing…',
+  'workflow.chatBusy': 'Chat has an unsent draft. Send or clear it first.',
+  'workflow.requested': 'The request was sent to the assistant; effectful actions still require approval.',
+  'workflow.kind.import': 'Deep import',
+  'workflow.kind.atlas': 'Map atlas',
+  'workflow.state.running': 'Running',
+  'workflow.state.needs-attention': 'Needs attention',
+  'workflow.state.completed': 'Completed',
+  'workflow.state.failed': 'Failed',
+  'workflow.progress': 'Batch progress',
+  'workflow.resume': 'Resume',
+  'workflow.abandon': 'Abandon with approval',
+  'workflow.restart': 'Start new',
+  'workflow.restartHint': 'Start a new import for the recorded scope instead of replaying the old run. Chapters:',
   'story.empty': 'No structure assets yet — run structure analysis or create threads/arcs/foreshadowing.',
   'story.unbound': 'No vault bound for this book.',
   'story.threads': 'Threads',

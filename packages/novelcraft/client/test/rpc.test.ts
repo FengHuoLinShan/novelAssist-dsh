@@ -59,6 +59,40 @@ function pngBytes(width: number, height: number): Buffer {
 }
 
 describe('novelcraft RPC 处理器', () => {
+  it('workflow/view: 四态作者投影 + 恢复动作资格', async () => {
+    const base = makeHostUi();
+    const env = setup({ service: { ui: {
+      ...base,
+      view: {
+        ...base.view,
+        workflowInspect: () => ({
+          runs: [
+            { kind: 'deep-import' as const, workflow_id: 'run-a', status: 'running', batches: { total: 4, completed: 1, other: 3 } },
+            { kind: 'deep-import' as const, workflow_id: 'run-b', status: 'provider_outcome_unknown', batches: { total: 4, completed: 2, other: 2 } },
+            { kind: 'map-atlas' as const, workflow_id: 'run-c', status: 'completed', batches: { total: 2, completed: 2, other: 0 } },
+            { kind: 'deep-import' as const, workflow_id: 'run-d', status: 'unreadable', batches: { total: 0, completed: 0, other: 0 }, corrupt: 'raw parser details' },
+          ],
+          checkpoint: { workflow_id: 'cp', start_chapter: 2, end_chapter: 5 },
+        }),
+      },
+    } } });
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.workflowView({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.runs.map((run) => run.state)).toEqual([
+        'running', 'needs-attention', 'completed', 'failed',
+      ]);
+      expect(result.value.runs[0]).toMatchObject({ can_resume: true, can_abandon: false });
+      expect(result.value.runs[1]).toMatchObject({ can_resume: true, can_abandon: true });
+      expect(result.value.runs[2]).toMatchObject({ can_resume: false, can_abandon: true });
+      expect(result.value.runs[3].message).not.toContain('raw parser details');
+      expect(result.value.restart_scope).toEqual({ start_chapter: 2, end_chapter: 5 });
+    }
+    expect((await h.workflowView({ sessionId: 'unknown' })).ok).toBe(true);
+    env.cleanup();
+  });
+
   it('intake/stage-text: 会话授权 bytes → 收据 + 导入意图, 零章节资产写入', async () => {
     const env = setup();
     const h = createNovelcraftHandlers(env.ctx);

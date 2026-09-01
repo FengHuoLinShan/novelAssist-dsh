@@ -57,6 +57,10 @@ export type {
   WatchStateValue,
   WritingDeskPayload,
   WritingDeskValue,
+  WorkflowAuthorState,
+  WorkflowRunCard,
+  WorkflowViewPayload,
+  WorkflowViewValue,
 } from './wire.js';
 export type { NovelcraftHostService } from './rpc.js';
 export { createNovelcraftHandlers, wireRefError } from './rpc.js';
@@ -90,6 +94,7 @@ export function apply(ctx: Context): void {
       [ENDPOINTS.presetsEffortSelect]: (p) => handlers.presetsEffortSelect(p),
       [ENDPOINTS.atlasView]: (p) => handlers.atlasView(p),
       [ENDPOINTS.atlasAnnotationRequest]: (p) => handlers.atlasAnnotationRequest(p),
+      [ENDPOINTS.workflowView]: (p) => handlers.workflowView(p),
     };
     const route = routes[endpoint];
     if (route === undefined) {

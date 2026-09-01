@@ -20,6 +20,7 @@ import type {
   AtlasImageIntakeStageValue,
   AtlasViewValue,
   AtlasAnnotationRequestValue,
+  WorkflowViewValue,
 } from '../wire.ts'
 import { ENDPOINTS, RPC_CHANNEL } from '../wire.ts'
 
@@ -500,4 +501,25 @@ export function useChapterDossier(
     }
   }, [refresh])
   return { data, refresh }
+}
+
+/** Durable workflow 只读视图；session 切换/卸载后旧响应不得回填。 */
+export function useWorkflowView(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  const [data, setData] = useState<WorkflowViewValue | null>(null)
+  const [loading, setLoading] = useState(false)
+  const request = useRef(0)
+  const refresh = useCallback(async () => {
+    const seq = ++request.current
+    setLoading(true)
+    const value = await call<WorkflowViewValue>(connection, ENDPOINTS.workflowView, { sessionId })
+    if (seq !== request.current) return
+    setLoading(false)
+    if (value) setData(value)
+  }, [connection, sessionId])
+  useEffect(() => {
+    setData(null)
+    void refresh()
+    return () => { request.current += 1 }
+  }, [refresh])
+  return { data, loading, refresh }
 }

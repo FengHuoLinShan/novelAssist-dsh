@@ -79,6 +79,8 @@ export interface NovelcraftUiFace {
     atlasImagePreview(root: string, file: string, mediaType: string, byteSize: number): string | undefined;
     /** 种子预设名单(最小 profile 无注册表面时 client 兜底展示; N20)。 */
     presetSeeds(): PresetLike[];
+    /** Durable workflow 只读枚举(P1-U1)。 */
+    workflowInspect(root: string): ReturnType<NovelCraftService['workflowInspect']>;
   };
   readonly stage: {
     /** 文本手稿收据(会话绑定; 零正史写)+ 摄入提示信号 + 信号变化推送。 */
@@ -224,6 +226,7 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
         }
       },
       presetSeeds: () => DEFAULT_CONTENT_PRESETS,
+      workflowInspect: (root) => service.workflowInspect(root),
     }),
     stage: Object.freeze({
       stageTextIntake: (root, sessionId, fileName, bytes) => {

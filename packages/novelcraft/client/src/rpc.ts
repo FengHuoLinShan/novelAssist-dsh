@@ -70,6 +70,9 @@ import type {
   WatchStateValue,
   WritingDeskPayload,
   WritingDeskValue,
+  WorkflowAuthorState,
+  WorkflowViewPayload,
+  WorkflowViewValue,
 } from './wire.js';
 import { ENDPOINTS, MAX_TEXT_INTAKE_BYTES } from './wire.js';
 
@@ -157,6 +160,13 @@ export interface NovelcraftHostService {
       atlasQueueStatus(root: string): AtlasAnnotationQueueStatus;
       atlasImagePreview(root: string, file: string, mediaType: string, byteSize: number): string | undefined;
       presetSeeds(): PresetLike[];
+      workflowInspect?(root: string): {
+        runs: Array<{
+          kind: 'deep-import' | 'map-atlas'; workflow_id: string; status: string; created_at?: string;
+          batches: { total: number; completed: number; other: number }; corrupt?: string;
+        }>;
+        checkpoint?: { workflow_id: string; start_chapter: number; end_chapter: number };
+      };
     };
     stage: {
       stageTextIntake(root: string, sessionId: string, fileName: string, bytes: Uint8Array): StagedFileIntake;
@@ -213,6 +223,13 @@ export function rpcFail<T>(message: string): RpcResult<T> {
 
 /** 收件箱四动词(与 wire InboxActPayload.action 对齐; 运行时判定用, 防恶意/损坏载荷)。 */
 const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
+
+export function workflowAuthorState(status: string): WorkflowAuthorState {
+  if (status === 'completed') return 'completed';
+  if (status === 'provider_outcome_unknown') return 'needs-attention';
+  if (status === 'failed' || status === 'unreadable' || status === 'unknown') return 'failed';
+  return 'running';
+}
 
 /**
  * wire 文件名级引用(page_ref / runId / signalId)运行时校验。
@@ -1002,6 +1019,47 @@ export function createNovelcraftHandlers(ctx: Context) {
       });
     } catch (err) {
       return rpcFail(err instanceof Error ? err.message : String(err));
+    }
+  },
+
+  async workflowView(payload: WorkflowViewPayload): Promise<RpcResult<WorkflowViewValue>> {
+    const binding = await resolveRoot(novelcraft, payload);
+    if (!binding || !novelcraft?.ui) return rpcOk({ bound: null, runs: [], restart_scope: null });
+    const inspect = novelcraft.ui.view.workflowInspect;
+    if (!inspect) return rpcOk({ bound: { book: binding.book, root: binding.root }, runs: [], restart_scope: null });
+    try {
+      const view = inspect(binding.root);
+      return rpcOk({
+        bound: { book: binding.book, root: binding.root },
+        runs: view.runs.map((run) => {
+          const state = workflowAuthorState(run.status);
+          const message = run.corrupt
+            ? '运行记录不可读，可放弃后重新开始。'
+            : state === 'completed'
+              ? '已完成，可查看结果或清理运行记录。'
+              : state === 'needs-attention'
+                ? '模型结果未确定，继续前需再次确认。'
+                : state === 'failed'
+                  ? '运行失败，可尝试继续或显式重开。'
+                  : '正在进行，离开后可返回此处刷新。';
+          return {
+            workflow_id: run.workflow_id,
+            kind: run.kind,
+            state,
+            completed_batches: run.batches.completed,
+            total_batches: run.batches.total,
+            created_at: run.created_at ?? '',
+            message,
+            can_resume: run.kind === 'deep-import' && state !== 'completed',
+            can_abandon: state !== 'running',
+          };
+        }),
+        restart_scope: view.checkpoint
+          ? { start_chapter: view.checkpoint.start_chapter, end_chapter: view.checkpoint.end_chapter }
+          : null,
+      });
+    } catch (error) {
+      return rpcFail(error instanceof Error ? error.message : String(error));
     }
   },
   };
