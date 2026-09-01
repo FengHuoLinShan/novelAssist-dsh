@@ -20,7 +20,17 @@ export function computeAtlasPageContentHash(page: Omit<AtlasPage, 'content_hash'
         visual_brief: page.visual_brief,
         prompt: page.prompt,
         evidence: page.evidence,
-        sources: page.source_manifest.map((s) => `${s.source_type}:${s.source_id}:${s.source_hash ?? ''}`),
+        sources: page.source_manifest.map((s) => {
+          const identity = `${s.source_type}:${s.source_id}:${s.source_hash ?? ''}`;
+          return s.included_content_hash === undefined && s.included_range === undefined && s.truncated === undefined
+            ? identity // 旧资产保持原 content_hash 投影。
+            : {
+                identity,
+                included_content_hash: s.included_content_hash ?? null,
+                included_range: s.included_range ?? null,
+                truncated: s.truncated ?? null,
+              };
+        }),
         annotations: page.annotations,
         image: page.image ?? null,
       }),

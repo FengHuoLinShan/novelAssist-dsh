@@ -37,6 +37,45 @@ function cmpStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+function safePrefix(text: string, maxChars: number): string {
+  let end = Math.min(text.length, Math.max(0, maxChars));
+  if (end > 0) {
+    const last = text.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  }
+  return text.slice(0, end);
+}
+
+function wellFormed(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 空文本不占 selector 槽；同 key 冲突 fail-closed，避免 packet/manifest 身份歧义。 */
+function uniqueEvidence(items: AtlasEvidenceItem[]): AtlasEvidenceItem[] {
+  const byKey = new Map<string, AtlasEvidenceItem>();
+  for (const item of items) {
+    if (!item.text) continue;
+    if (!item.source_key || !wellFormed(item.source_key) || !wellFormed(item.text)) {
+      throw new Error(`atlas evidence 含非法 Unicode/identity: ${item.source_key}`);
+    }
+    const prior = byKey.get(item.source_key);
+    if (prior && prior.text !== item.text) {
+      throw new Error(`atlas source_key 内容冲突: ${item.source_key}`);
+    }
+    if (!prior) byKey.set(item.source_key, item);
+  }
+  return [...byKey.values()];
+}
+
 interface LocationCandidate {
   slug: string;
   name: string;
@@ -140,7 +179,7 @@ function trimLocationEvidence(
   const cap = ATLAS_CHARS_PER_LOCATION;
   const take = (item: AtlasEvidenceItem, budget: number): AtlasEvidenceItem | null => {
     if (budget <= 0) return null;
-    const text = item.text.slice(0, budget);
+    const text = safePrefix(item.text, budget);
     return text ? { ...item, text } : null;
   };
   if (wiki.length > 0 && rag.length > 0) {
@@ -213,7 +252,8 @@ export async function compileAtlasContext(
   const selected = candidates.slice(0, ATLAS_MAX_LOCATIONS);
 
   const packets: AtlasContextPacket[] = [];
-  const manifest: SourceRef[] = [];
+  const sourceByKey = new Map<string, { fullText: string; ref: SourceRef }>();
+  const includedByKey = new Map<string, string>();
   const locationSourceHashes: Record<string, string[]> = {};
 
   for (const loc of selected) {
@@ -222,14 +262,15 @@ export async function compileAtlasContext(
       .filter(
         (p) => p.linkedSlugs.has(loc.slug) || nameKeys.some((n) => p.title.includes(n)),
       )
+      .filter((p) => p.text.length > 0)
       // 显式链接页优先于标题命中页(对齐旧引擎 linked-first; review F4), 组内按 slug 确定性排序。
       .sort((a, b) => Number(b.linkedSlugs.has(loc.slug)) - Number(a.linkedSlugs.has(loc.slug)) || cmpStr(a.slug, b.slug))
       .slice(0, ATLAS_WIKI_PER_LOCATION);
-    const wikiFull: AtlasEvidenceItem[] = wikiPages.map((p) => ({
+    const wikiFull = uniqueEvidence(wikiPages.map((p) => ({
       source_key: `wiki:${p.slug}`,
       text: p.text,
-    }));
-    const ragFull = await ragEvidence(root, loc);
+    })));
+    const ragFull = uniqueEvidence(await ragEvidence(root, loc));
 
     const trimmed = trimLocationEvidence(wikiFull, ragFull);
     const retained = [...trimmed.wiki, ...trimmed.rag];
@@ -237,45 +278,43 @@ export async function compileAtlasContext(
     if (retained.length === 0) continue;
     const fullByKey = new Map([...wikiFull, ...ragFull].map((item) => [item.source_key, item]));
     const wikiByKey = new Map(wikiPages.map((page) => [`wiki:${page.slug}`, page]));
-    const hashes: string[] = [];
     // A1: 先 trim，再从实际 packet 生成 manifest；原始与实发片段 hash 分列。
     for (const item of retained) {
       const full = fullByKey.get(item.source_key);
-      if (!full) continue;
+      if (!full) throw new Error(`atlas retained source 无原文: ${item.source_key}`);
       const sourceHash = sha256Hex(full.text).slice(0, 16);
-      const includedHash = sha256Hex(item.text).slice(0, 16);
-      const truncated = item.text.length < full.text.length;
-      hashes.push(sourceHash);
+      let ref: SourceRef;
       if (item.source_key.startsWith("wiki:")) {
         const page = wikiByKey.get(item.source_key);
-        if (!page) continue;
-        manifest.push({
+        if (!page) throw new Error(`atlas wiki source 无页面: ${item.source_key}`);
+        ref = {
           source_id: page.slug,
           source_type: "bible_page",
           title: page.title || page.slug,
           source_hash: sourceHash,
-          included_content_hash: includedHash,
-          included_range: { start: 0, end: item.text.length },
-          truncated,
           source_status: page.status,
           open_target: { kind: "bible_page", slug: page.slug },
-        });
+        };
       } else {
         const chunkId = item.source_key.slice("rag:".length);
-        manifest.push({
+        if (!chunkId) throw new Error("atlas rag source 缺 chunk_id");
+        ref = {
           source_id: chunkId,
           source_type: "rag_chunk",
-          title: full.text.slice(0, 30),
+          title: safePrefix(full.text, 30),
           source_hash: sourceHash,
-          included_content_hash: includedHash,
-          included_range: { start: 0, end: item.text.length },
-          truncated,
           source_status: "canonical",
           open_target: { kind: "rag_chunk", chunk_id: chunkId },
-        });
+        };
       }
+      const prior = sourceByKey.get(item.source_key);
+      if (prior && (prior.fullText !== full.text || JSON.stringify(prior.ref) !== JSON.stringify(ref))) {
+        throw new Error(`atlas source_key 映射冲突: ${item.source_key}`);
+      }
+      if (!prior) sourceByKey.set(item.source_key, { fullText: full.text, ref });
+      const included = includedByKey.get(item.source_key);
+      if (included === undefined || item.text.length < included.length) includedByKey.set(item.source_key, item.text);
     }
-    hashes.sort();
     packets.push({
       location_key: loc.slug,
       name: loc.name,
@@ -285,8 +324,33 @@ export async function compileAtlasContext(
       rag: trimmed.rag,
       source_keys: retained.map((i) => i.source_key),
     });
-    locationSourceHashes[loc.slug] = hashes;
   }
+
+  // 同一 source 跨地点时统一为各 packet 都能容纳的最短实发前缀：
+  // 一个 source_key 始终映射同一文本/一条 manifest，避免 validator Map 歧义。
+  for (const packet of packets) {
+    const normalize = (item: AtlasEvidenceItem): AtlasEvidenceItem => ({
+      ...item,
+      text: includedByKey.get(item.source_key) ?? item.text,
+    });
+    packet.wiki = packet.wiki.map(normalize);
+    packet.rag = packet.rag.map(normalize);
+    packet.source_keys = [...packet.wiki, ...packet.rag].map((item) => item.source_key);
+    locationSourceHashes[packet.location_key] = [...packet.wiki, ...packet.rag]
+      .map((item) => sha256Hex(`${item.source_key}\n${item.text}`).slice(0, 16))
+      .sort();
+  }
+
+  const manifest: SourceRef[] = [...sourceByKey.entries()].map(([key, source]) => {
+    const included = includedByKey.get(key);
+    if (included === undefined) throw new Error(`atlas source 无实发片段: ${key}`);
+    return {
+      ...source.ref,
+      included_content_hash: sha256Hex(included).slice(0, 16),
+      included_range: { start: 0, end: included.length },
+      truncated: included.length < source.fullText.length,
+    };
+  });
 
   const contextHash = sha256Hex(
     JSON.stringify({
@@ -295,9 +359,12 @@ export async function compileAtlasContext(
         include_interiors: opts?.include_interiors === true,
         style_note: opts?.style_note ?? null,
       },
+      packets,
       manifest: manifest.map((m) => ({
         source_type: m.source_type,
         source_id: m.source_id,
+        title: m.title,
+        open_target: m.open_target,
         source_hash: m.source_hash,
         included_content_hash: m.included_content_hash,
         included_range: m.included_range,

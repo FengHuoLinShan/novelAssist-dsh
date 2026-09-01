@@ -112,4 +112,41 @@ describe("compileAuditableContext(P0-C1)", () => {
       { sources: [{ ...sources[0], content: "  " }] },
     )).toThrow(/content 为空/);
   });
+
+  it("task/scope/budget/source 元数据均进 hash；特殊 source_type 不破坏 selected ids", () => {
+    const base = compileAuditableContext(
+      { task: "续写", scope: "chapter", budget_tokens: 100 },
+      { sources: [{ tier: "P1", name: "A", content: "正文", source_id: "a", source_type: "__proto__" }] },
+    );
+    expect(base.selected_asset_ids.__proto__).toEqual(["a"]);
+    const variants = [
+      compileAuditableContext({ task: "审稿", scope: "chapter", budget_tokens: 100 }, { sources: [{ tier: "P1", name: "A", content: "正文", source_id: "a", source_type: "__proto__" }] }),
+      compileAuditableContext({ task: "续写", scope: "arc", budget_tokens: 100 }, { sources: [{ tier: "P1", name: "A", content: "正文", source_id: "a", source_type: "__proto__" }] }),
+      compileAuditableContext({ task: "续写", scope: "chapter", budget_tokens: 99 }, { sources: [{ tier: "P1", name: "A", content: "正文", source_id: "a", source_type: "__proto__" }] }),
+      compileAuditableContext({ task: "续写", scope: "chapter", budget_tokens: 100 }, { sources: [{ tier: "P2", name: "A", content: "正文", source_id: "a", source_type: "__proto__" }] }),
+      compileAuditableContext({ task: "续写", scope: "chapter", budget_tokens: 100 }, { sources: [{ tier: "P1", name: "B", content: "正文", source_id: "a", source_type: "__proto__" }] }),
+    ];
+    for (const variant of variants) expect(variant.context_hash).not.toBe(base.context_hash);
+  });
+
+  it("Unicode 输入 fail-closed，合法 emoji 截断不拆 surrogate pair", () => {
+    const emojiSource = { tier: "P1" as const, name: "emoji", content: "😀".repeat(40), source_id: "emoji", source_type: "note" };
+    for (let budget_tokens = 1; budget_tokens <= 40; budget_tokens++) {
+      const result = compileAuditableContext({ task: "x", scope: "chapter", budget_tokens }, { sources: [emojiSource] });
+      const end = result.source_manifest[0]?.included_range.end;
+      if (end !== undefined) {
+        const last = emojiSource.content.charCodeAt(end - 1);
+        expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+      }
+      expect(result.total_tokens).toBeLessThanOrEqual(budget_tokens);
+    }
+    expect(() => compileAuditableContext(
+      { task: "x", scope: "chapter" },
+      { sources: [{ ...emojiSource, content: "\ud800" }] },
+    )).toThrow(/Unicode/);
+    expect(() => compileAuditableContext(
+      { task: "x", scope: "chapter" },
+      { sources: [{ ...emojiSource, open_target: { n: Number.NaN } }] },
+    )).toThrow(/open_target/);
+  });
 });

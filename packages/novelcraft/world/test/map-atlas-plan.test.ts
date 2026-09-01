@@ -11,6 +11,7 @@ import {
   buildPriorAtlas,
   changedUpdateTargets,
   compileAtlasContext,
+  computeAtlasPageContentHash,
   computePlanSemanticKeys,
   newSourceIdentities,
   normalizePlanSources,
@@ -215,6 +216,23 @@ describe("validatePlanSources 来源白名单(规则 3)", () => {
       included_range: { start: 0, end: 42 },
       truncated: true,
     });
+
+    const page: Omit<AtlasPage, "content_hash"> = {
+      id: "p", run_ref: "r", node_ref: "n", generation_status: "prompt_only", review_status: "candidate",
+      title: "t", visual_brief: "v", prompt: "p",
+      evidence: { supported: [], visual_fill: [], conflicts: [] },
+      source_manifest: [MANIFEST[0]], annotations: [], review_note: null,
+      adopted_at: null, rejected_at: null, deprecated_at: null,
+    };
+    const legacyHash = computeAtlasPageContentHash(page);
+    expect(computeAtlasPageContentHash({ ...page, source_manifest: [{ ...MANIFEST[0] }] })).toBe(legacyHash);
+    expect(computeAtlasPageContentHash({
+      ...page,
+      source_manifest: [{ ...MANIFEST[0], included_content_hash: "actual", included_range: { start: 0, end: 42 }, truncated: true }],
+    })).not.toBe(computeAtlasPageContentHash({
+      ...page,
+      source_manifest: [{ ...MANIFEST[0], included_content_hash: "changed", included_range: { start: 0, end: 42 }, truncated: true }],
+    }));
   });
 });
 
@@ -477,8 +495,9 @@ describe("planMapAtlas orchestrator(计划 Phase 3 步骤 1-7)", () => {
     expect(r.run.error_code).toBe("plan_generation_failed");
   });
 
-  it("空 vault → failed(insufficient_sources), 不调 provider(计划 Phase 2 降级)", async () => {
+  it("只有地点名 → failed(insufficient_sources), provider=0", async () => {
     const root = makeRoot();
+    writeLocation(root, "loc-name-only", "只有名字");
     const provider = new MockProvider({ responses: [] });
     const r = await planMapAtlas(root, provider, { run_kind: "initial", runId: "run-t4" });
     expect(r.run.status).toBe("failed");

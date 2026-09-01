@@ -340,7 +340,7 @@ export interface AtlasContextResult {
   packets: AtlasContextPacket[];
   /** 全部来源清单(spatial facts 校验白名单 + 前端 open_target)。 */
   source_manifest: SourceRef[];
-  /** location_key → 排序后的 source_hash 列表(source_fingerprint 输入)。 */
+  /** location_key → 排序后的 source_key+实发片段 hash 列表(source_fingerprint 输入)。 */
   location_source_hashes: Record<string, string[]>;
   /** sha256(options + manifest ids + hashes) 全 hex。 */
   context_hash: string;

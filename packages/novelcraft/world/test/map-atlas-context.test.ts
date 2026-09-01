@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault, paths } from "@novelcraft/vault";
 import { gitAdd, gitCommit, serializeFrontmatter } from "@novelcraft/store";
+import { INDEX_VERSION_CN, rebuildRagIndex } from "@novelcraft/rag";
 import {
   ATLAS_CHARS_PER_LOCATION,
   ATLAS_MAX_LOCATIONS,
@@ -268,6 +269,64 @@ describe("compileAtlasContext 预算与确定性(计划 §4 Phase 2 预算; 规�
     expect(a.source_manifest.map((m) => m.source_id)).toEqual(
       b.source_manifest.map((m) => m.source_id),
     );
+  });
+
+  it("同一 source 跨地点只有一条无歧义 manifest，context_hash 覆盖实际 packet", async () => {
+    const root = makeRoot();
+    writeObject(root, { id: "loc-a", name: "甲城", importance: 10 });
+    writeObject(root, { id: "loc-b", name: "共享" });
+    writeBiblePage(root, { slug: "bp-shared", title: "共享志", linked_asset_refs: ["loc-a"] }, "共".repeat(6000));
+    writeBiblePage(root, { slug: "bp-big", title: "乙城档", linked_asset_refs: ["loc-b"] }, "大".repeat(7000));
+    const first = await compileAtlasContext(root);
+    const shared = first.source_manifest.filter((source) => source.source_id === "bp-shared");
+    expect(shared).toHaveLength(1);
+    const snippets = first.packets.flatMap((packet) => packet.wiki)
+      .filter((item) => item.source_key === "wiki:bp-shared");
+    expect(snippets).toHaveLength(2);
+    expect(new Set(snippets.map((item) => item.text))).toHaveLength(1);
+    expect(shared[0].included_range?.end).toBe(snippets[0].text.length);
+    const manifestKeys = new Set(first.source_manifest.map((source) =>
+      `${source.source_type === "bible_page" ? "wiki" : "rag"}:${source.source_id}`));
+    expect(new Set(first.packets.flatMap((packet) => packet.source_keys))).toEqual(manifestKeys);
+
+    writeObject(root, { id: "loc-a", name: "甲城", aliases: ["新别名"], importance: 10 });
+    const changed = await compileAtlasContext(root);
+    expect(changed.context_hash).not.toBe(first.context_hash);
+  });
+
+  it("空证据不阻断后续有效来源；Unicode 截断不拆 surrogate pair", async () => {
+    const root = makeRoot();
+    writeObject(root, { id: "loc-a", name: "临水城" });
+    for (let i = 0; i < 3; i++) writeBiblePage(root, { slug: `bp-empty-${i}`, title: `临水城空页 ${i}` }, "");
+    writeBiblePage(root, { slug: "bp-z-valid", title: "临水城志" }, "有效证据");
+    const valid = await compileAtlasContext(root);
+    expect(valid.packets[0].source_keys).toEqual(["wiki:bp-z-valid"]);
+
+    writeBiblePage(root, { slug: "bp-0-emoji", title: "临水城 emoji", linked_asset_refs: ["loc-a"] }, `a${"😀".repeat(5000)}`);
+    const unicode = await compileAtlasContext(root);
+    const item = unicode.packets[0].wiki.find((source) => source.source_key === "wiki:bp-0-emoji");
+    expect(item).toBeDefined();
+    const last = item!.text.charCodeAt(item!.text.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    expect(unicode.packets[0].wiki.reduce((sum, source) => sum + source.text.length, 0))
+      .toBeLessThanOrEqual(ATLAS_CHARS_PER_LOCATION);
+  });
+
+  it("derived RAG 含 lone surrogate 时 fail-closed，不产生 hash 归一碰撞", async () => {
+    const root = makeRoot();
+    writeObject(root, { id: "loc-a", name: "临水城" });
+    rebuildRagIndex(root, [{
+      chunk_id: "bad-unicode",
+      source_type: "world_entity",
+      chunk_index: 0,
+      char_count: 4,
+      text: "临水城\ud800",
+      visibility: "author_only",
+      importance: 1,
+      index_version: INDEX_VERSION_CN,
+      embedding_status: "pending",
+    }]);
+    await expect(compileAtlasContext(root)).rejects.toThrow(/Unicode/);
   });
 
   it("只有地点名、无 retained/openable 证据时 insufficient，不为名字支付 LLM", async () => {
