@@ -56,11 +56,17 @@ function Section(props: { title: string; lines: string[] }): JSX.Element {
 }
 
 export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
-  const { t, connection, sessionId } = props
+  const { t, connection, inputActions, sessionId, useInput } = props
+  const chatDraft = useInput((state) => state.draft)
   const [open, setOpen] = useState(false)
   /** 钻取中章节(章节档案 §17.5.1); null = 列表视图。 */
   const [chapter, setChapter] = useState<number | null>(null)
-  const { data } = useStoryMap(connection, sessionId)
+  const [outlineTask, setOutlineTask] = useState('')
+  const [outlineTarget, setOutlineTarget] = useState<'story_outline' | 'plot_thread' | 'outline_arc'>('story_outline')
+  const [selectedSources, setSelectedSources] = useState<string[]>([])
+  const [includeWorkingDrafts, setIncludeWorkingDrafts] = useState(false)
+  const [notice, setNotice] = useState('')
+  const { data, loading, refresh } = useStoryMap(connection, sessionId)
 
   const bound = data?.bound != null
   const chapters = data?.chapters ?? []
@@ -71,6 +77,31 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const reveals = data?.reveals ?? []
   const edges = data?.edges ?? []
   const edgeGroups = groupEdges(edges)
+  const empty = chapters.length + scenes.length + threads.length + arcs.length + foreshadowing.length + reveals.length + edges.length === 0
+
+  const send = (prompt: string): void => {
+    if (chatDraft.trim()) {
+      setNotice(t('outline.chatBusy'))
+      return
+    }
+    inputActions.setDraft(prompt)
+    inputActions.submit()
+    setNotice(t('outline.requested'))
+  }
+
+  const requestPreview = (): void => {
+    const input = outlineTask.trim()
+    if (!input) return
+    const context = `input=${JSON.stringify(input)}，source_refs=${JSON.stringify(selectedSources)}，include_working_drafts=${includeWorkingDrafts}`
+    send(outlineTarget === 'story_outline'
+      ? `请调用 novelcraft_outline_preview，${context}。`
+      : `请调用 novelcraft_outline_item_preview，target=${outlineTarget}，${context}。`)
+  }
+
+  const applyPreview = (preview: NonNullable<typeof data>['outline_previews'][number]): void => {
+    const tool = preview.kind === 'story_outline' ? 'novelcraft_outline_apply' : 'novelcraft_outline_item_apply'
+    send(`请调用 ${tool}，run_id=${JSON.stringify(preview.run_id)}。`)
+  }
 
   return (
     <>
@@ -100,10 +131,9 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
             chapterIndex={chapter}
             onBack={() => setChapter(null)}
           />
-        ) : chapters.length + scenes.length + threads.length + arcs.length + foreshadowing.length + reveals.length + edges.length === 0 ? (
-          <div className={css.empty}>{t('story.empty')}</div>
         ) : (
           <div>
+            {empty ? <div className={css.empty}>{t('story.empty')}</div> : null}
             <div className={css.sectionTitle}>{t('story.chapters')}</div>
             {chapters.map((c) => (
               <button
@@ -116,6 +146,66 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
                 <span>{c.title ?? ''}</span>
               </button>
             ))}
+            <section className={css.outlineWorkbench}>
+              <div className={css.panelToolbar}>
+                <div className={css.sectionTitle}>{t('outline.workbench')}</div>
+                <button type="button" className={css.actionButton} disabled={loading} onClick={() => void refresh()}>
+                  {loading ? t('workflow.loading') : t('inbox.refresh')}
+                </button>
+              </div>
+              {notice ? <div className={css.message} role="status">{notice}</div> : null}
+              <label className={css.presetControl}>
+                <span>{t('outline.target')}</span>
+                <select value={outlineTarget} onChange={(event) => setOutlineTarget(event.currentTarget.value as typeof outlineTarget)}>
+                  <option value="story_outline">{t('outline.target.story')}</option>
+                  <option value="plot_thread">{t('outline.target.thread')}</option>
+                  <option value="outline_arc">{t('outline.target.arc')}</option>
+                </select>
+              </label>
+              <textarea className={css.outlineTask} aria-label={t('outline.task')}
+                placeholder={t('outline.task')} value={outlineTask}
+                onChange={(event) => setOutlineTask(event.currentTarget.value)} />
+              <details>
+                <summary className={css.sectionTitle}>{t('outline.sources')} ({selectedSources.length})</summary>
+                <div className={css.sourcePicker}>
+                  {data?.source_options.length === 0 ? <div className={css.dossierEmpty}>{t('outline.sources.empty')}</div> : null}
+                  {data?.source_options.map((source) => (
+                    <label key={source.ref} className={css.sourceOption}>
+                      <input type="checkbox" checked={selectedSources.includes(source.ref)}
+                        onChange={(event) => setSelectedSources((current) => event.currentTarget.checked
+                          ? [...current, source.ref]
+                          : current.filter((ref) => ref !== source.ref))} />
+                      <span>{source.label} · {source.status}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+              <label className={css.sourceOption}>
+                <input type="checkbox" checked={includeWorkingDrafts}
+                  onChange={(event) => setIncludeWorkingDrafts(event.currentTarget.checked)} />
+                <span>{t('outline.includeDrafts')}</span>
+              </label>
+              <button type="button" className={css.actionButton} disabled={!outlineTask.trim()} onClick={requestPreview}>
+                {t('outline.preview')}
+              </button>
+              <div className={css.sectionTitle}>{t('outline.previews')}</div>
+              {data?.outline_previews.length === 0 ? <div className={css.dossierEmpty}>{t('outline.previews.empty')}</div> : null}
+              {data?.outline_previews.map((preview) => (
+                <article key={preview.run_id} className={css.workflowCard}>
+                  <header className={css.cardHeader}>
+                    <span className={css.cardTitle}>{preview.title}</span>
+                    <span className={css.cardMeta}>{preview.kind === 'story_outline' ? t('outline.target.story') : preview.target === 'plot_thread' ? t('outline.target.thread') : t('outline.target.arc')}</span>
+                  </header>
+                  <p className={css.previewSummary}>{preview.summary}</p>
+                  <div className={css.chapterWorkspaceMeta}>
+                    {t('outline.receipt')}: {preview.source_count} · {t('outline.warnings')}: {preview.warning_count}
+                  </div>
+                  <button type="button" className={css.actionButton} onClick={() => applyPreview(preview)}>
+                    {t('outline.apply')}
+                  </button>
+                </article>
+              ))}
+            </section>
             <Section title={t('story.threads')} lines={threads.map((x) => {
               const range = x.start_chapter != null ? `ch${x.start_chapter}${x.end_chapter != null ? '-' + x.end_chapter : ''}` : ''
               return `${x.name}${x.thread_type ? ' · ' + x.thread_type : ''}${range ? ' · ' + range : ''}`

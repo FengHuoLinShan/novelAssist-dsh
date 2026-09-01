@@ -137,6 +137,57 @@
   outline-offset: 2px;
 }
 
+.outlineWorkbench {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border);
+  border-radius: 8px;
+}
+
+.outlineTask {
+  min-height: 96px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-fill);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+}
+
+.outlineTask:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline-offset: 2px;
+}
+
+.sourcePicker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.sourceOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.previewSummary {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
 @media (max-width: 390px) {
   .workflowPanel { width: 100%; }
   .actionRow > .actionButton { flex: 1 1 100%; }

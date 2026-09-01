@@ -75,6 +75,23 @@ export type NovelcraftKey =
   | 'story.edge.references_entity'
   | 'story.edge.references_memory'
   | 'story.chapters'
+  | 'outline.workbench'
+  | 'outline.target'
+  | 'outline.target.story'
+  | 'outline.target.thread'
+  | 'outline.target.arc'
+  | 'outline.task'
+  | 'outline.sources'
+  | 'outline.sources.empty'
+  | 'outline.includeDrafts'
+  | 'outline.preview'
+  | 'outline.previews'
+  | 'outline.previews.empty'
+  | 'outline.receipt'
+  | 'outline.warnings'
+  | 'outline.apply'
+  | 'outline.chatBusy'
+  | 'outline.requested'
   | 'desk.title'
   | 'desk.empty'
   | 'desk.unbound'
@@ -253,6 +270,23 @@ export const zh: Record<NovelcraftKey, string> = {
   'story.edge.references_entity': '引用实体',
   'story.edge.references_memory': '引用记忆',
   'story.chapters': '章节',
+  'outline.workbench': '总纲与 Scene 工作台',
+  'outline.target': '生成目标',
+  'outline.target.story': '全书总纲',
+  'outline.target.thread': '剧情线',
+  'outline.target.arc': '篇章纲',
+  'outline.task': '说明本次要解决的结构问题或方向…',
+  'outline.sources': '明确参考来源',
+  'outline.sources.empty': '尚无可选的总纲、结构、Scene 或世界对象。',
+  'outline.includeDrafts': '允许本次显式选中的草稿/候选来源',
+  'outline.preview': '请助手生成预览',
+  'outline.previews': '最近预览',
+  'outline.previews.empty': '还没有总纲或结构预览。',
+  'outline.receipt': '实际来源',
+  'outline.warnings': '警告',
+  'outline.apply': '审批采用',
+  'outline.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
+  'outline.requested': '请求已交给助手；预览不写正史，采用仍需审批。',
   'desk.title': '写作台',
   'desk.empty': '暂无内容。',
   'desk.unbound': '这本书还没绑定工作区。',
@@ -432,6 +466,23 @@ export const en: Record<NovelcraftKey, string> = {
   'story.edge.references_entity': 'References entity',
   'story.edge.references_memory': 'References memory',
   'story.chapters': 'Chapters',
+  'outline.workbench': 'Outline and Scene workbench',
+  'outline.target': 'Generation target',
+  'outline.target.story': 'Story outline',
+  'outline.target.thread': 'Plot thread',
+  'outline.target.arc': 'Outline arc',
+  'outline.task': 'Describe the structural question or direction for this preview…',
+  'outline.sources': 'Explicit reference sources',
+  'outline.sources.empty': 'No outline, structure, Scene, or world-object sources are available yet.',
+  'outline.includeDrafts': 'Allow explicitly selected draft or candidate sources for this request',
+  'outline.preview': 'Ask assistant for preview',
+  'outline.previews': 'Recent previews',
+  'outline.previews.empty': 'No outline or structure previews yet.',
+  'outline.receipt': 'Actual sources',
+  'outline.warnings': 'Warnings',
+  'outline.apply': 'Adopt with approval',
+  'outline.chatBusy': 'Chat has an unsent draft. Send or clear it first.',
+  'outline.requested': 'The request was sent to the assistant; previews do not write canon, and adoption still requires approval.',
   'desk.title': 'Writing Desk',
   'desk.empty': 'Nothing here yet.',
   'desk.unbound': 'No vault bound for this book.',

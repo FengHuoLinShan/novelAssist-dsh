@@ -148,6 +148,31 @@ function listProposalFiles(dir: string): string[] {
   return readdirSync(dir).filter((n) => n.endsWith(".json")).sort();
 }
 
+/** Author workbench read: valid ordinary outline preview files, newest first. */
+export function listOutlinePreviews(root: string): OutlinePreviewRecord[] {
+  const dir = paths(root).assistant.proposals;
+  if (!existsSync(dir)) return [];
+  const records: OutlinePreviewRecord[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^outline(?:-item-(?:plot_thread|outline_arc))?-.+\.json$/.test(entry.name)) continue;
+    try {
+      const record = JSON.parse(readFileSync(`${dir}/${entry.name}`, "utf8")) as OutlinePreviewRecord;
+      const expected = record.kind === "story_outline"
+        ? `outline-${record.run_id}.json`
+        : record.kind === "outline_item" && (record.target === "plot_thread" || record.target === "outline_arc")
+          ? `outline-item-${record.target}-${record.run_id}.json`
+          : "";
+      if (
+        entry.name === expected && typeof record.run_id === "string" &&
+        typeof record.generated_at === "string" && record.result && typeof record.result === "object"
+      ) records.push(record);
+    } catch {
+      // A broken machine-state record is omitted from the author read view; apply remains fail-closed.
+    }
+  }
+  return records.sort((a, b) => b.generated_at.localeCompare(a.generated_at));
+}
+
 function runIdOf(now: Date): string {
   // 时间戳+随机熵(M12-b review P2-3): 同毫秒并发 preview 不得同 run_id(文件静默覆盖/
   // 宽匹配歧义); 熵段 6 hex 足够单毫秒内去重。

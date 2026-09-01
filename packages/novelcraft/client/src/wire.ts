@@ -135,6 +135,24 @@ export interface StoryMapSceneCard {
   title?: string;
 }
 
+export interface OutlineSourceOption {
+  ref: string;
+  label: string;
+  status: string;
+  kind: 'outline' | 'structure' | 'scene' | 'world';
+}
+
+export interface OutlinePreviewCard {
+  run_id: string;
+  kind: 'story_outline' | 'outline_item';
+  target?: 'plot_thread' | 'outline_arc';
+  title: string;
+  summary: string;
+  generated_at: string;
+  source_count: number;
+  warning_count: number;
+}
+
 export interface StoryMapValue {
   bound: { book: string; root: string } | null;
   book: string;
@@ -146,6 +164,8 @@ export interface StoryMapValue {
   reveals: StoryMapAssetCard[];
   /** 跨类关系边(ADR-0019: 显式 relations + related_*_ids 兼容投影并集去重)。 */
   edges: Array<{ source: string; target: string; type: string; status: string; sourceKind?: string }>;
+  source_options: OutlineSourceOption[];
+  outline_previews: OutlinePreviewCard[];
 }
 
 export interface WritingDeskPayload {

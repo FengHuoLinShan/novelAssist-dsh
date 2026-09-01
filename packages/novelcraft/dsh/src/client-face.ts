@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm';
 import path from 'node:path';
 import * as assistant from '@novelcraft/assistant';
+import * as outline from '@novelcraft/outline';
 import {
   DEFAULT_CONTENT_PRESETS,
   resolveExecutionLlmYml,
@@ -81,6 +82,8 @@ export interface NovelcraftUiFace {
     presetSeeds(): PresetLike[];
     /** Durable workflow 只读枚举(P1-U1)。 */
     workflowInspect(root: string): ReturnType<NovelCraftService['workflowInspect']>;
+    /** Outline previews for the author workbench(P1-U3). */
+    outlinePreviews(root: string): ReturnType<typeof outline.listOutlinePreviews>;
   };
   readonly stage: {
     /** 文本手稿收据(会话绑定; 零正史写)+ 摄入提示信号 + 信号变化推送。 */
@@ -227,6 +230,7 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
       },
       presetSeeds: () => DEFAULT_CONTENT_PRESETS,
       workflowInspect: (root) => service.workflowInspect(root),
+      outlinePreviews: (root) => outline.listOutlinePreviews(root),
     }),
     stage: Object.freeze({
       stageTextIntake: (root, sessionId, fileName, bytes) => {

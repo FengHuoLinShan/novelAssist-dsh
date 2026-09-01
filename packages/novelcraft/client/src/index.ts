@@ -47,6 +47,8 @@ export type {
   IntakeStagePayload,
   IntakeStageValue,
   ObjectCard,
+  OutlinePreviewCard,
+  OutlineSourceOption,
   PresetsListPayload,
   PresetsListValue,
   PresetsSelectPayload,

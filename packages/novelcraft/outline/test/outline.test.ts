@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
 import { StoreError, gitAdd, gitCommit, gitStatusEntries, relOf, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
-import { analyzeOutline, generateOutlineItem, generateStoryOutline, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
+import { analyzeOutline, generateOutlineItem, generateStoryOutline, listOutlinePreviews, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -80,6 +80,22 @@ describe("structureHealthSignals(N1 后两键)", () => {
       relations: [{ target: "霜华剑", type: "references_entity" }],
     });
     expect(slug).toContain("主线");
+  });
+});
+
+describe("listOutlinePreviews(作者工作台读面)", () => {
+  it("只读形态正确的普通文件，按生成时间倒序，坏记录和 symlink 忽略", () => {
+    const root = makeRoot();
+    const dir = join(root, ".assistant", "proposals");
+    writeFileSync(join(dir, "outline-p1.json"), JSON.stringify({
+      kind: "story_outline", run_id: "p1", generated_at: "2026-01-01T00:00:00Z", input_hash: "a", result: { title: "旧" },
+    }));
+    writeFileSync(join(dir, "outline-item-plot_thread-p2.json"), JSON.stringify({
+      kind: "outline_item", target: "plot_thread", run_id: "p2", generated_at: "2026-02-01T00:00:00Z", input_hash: "b", result: { content: { title: "新" } },
+    }));
+    writeFileSync(join(dir, "outline-bad.json"), "{");
+    symlinkSync(join(dir, "outline-p1.json"), join(dir, "outline-p3.json"));
+    expect(listOutlinePreviews(root).map((record) => record.run_id)).toEqual(["p2", "p1"]);
   });
 });
 

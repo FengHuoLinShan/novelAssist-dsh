@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { act, inboxView, plotSummaryLine, pushSignal, scanHealthSignals } from '@novelcraft/assistant';
+import { listOutlinePreviews } from '@novelcraft/outline';
 import {
   DEFAULT_CONTENT_PRESETS,
   resolvePolicy,
@@ -96,6 +97,7 @@ export function makeHostUi(
         }
       },
       presetSeeds: () => DEFAULT_CONTENT_PRESETS,
+      outlinePreviews: (root) => listOutlinePreviews(root),
     },
     stage: {
       stageTextIntake: (root, sessionId, fileName, bytes): StagedFileIntake => {

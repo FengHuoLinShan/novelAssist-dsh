@@ -353,6 +353,12 @@ describe('novelcraft RPC 处理器', () => {
     write(path.join(env.root, 'scenes', 's001.md'), { id: 's001', status: 'draft', chapter_ids: [1], title: '初遇' });
     write(path.join(env.root, 'structure', 'threads', '主线.md'), { id: '主线', status: 'canonical', name: '主角成长', thread_type: 'plot', start_chapter: 1 });
     write(path.join(env.root, 'structure', 'reveal', '身世.md'), { id: '身世', status: 'canonical', name: '身世揭示', target_type: 'thread', target_id: '主线' });
+    write(path.join(env.root, 'world', 'objects', 'city.md'), { id: 'city', kind: 'location', status: 'canonical', name: '雾城' });
+    writeFileSync(path.join(env.root, '.assistant', 'proposals', 'outline-p-ui.json'), JSON.stringify({
+      kind: 'story_outline', run_id: 'p-ui', generated_at: '2026-09-01T00:00:00Z', input_hash: 'x',
+      result: { title: '三幕预览', outline_markdown: '启幕 → 危机 → 结局', internal_secret: 'raw' },
+      context_receipt: { source_manifest: [{ source_id: 'vault:scenes/s001.md' }], warnings: [] },
+    }), 'utf8');
 
     const h = createNovelcraftHandlers(env.ctx);
     const result = await h.storyMap({ sessionId: 's1' });
@@ -364,6 +370,14 @@ describe('novelcraft RPC 处理器', () => {
       expect(result.value.scenes[0]).toMatchObject({ slug: 's001', title: '初遇' });
       expect(result.value.threads[0]).toMatchObject({ kind: 'thread', name: '主角成长', thread_type: 'plot' });
       expect(result.value.reveals[0]).toMatchObject({ kind: 'reveal', target_id: '主线' });
+      expect(result.value.source_options).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ref: 'scenes/s001.md', kind: 'scene' }),
+        expect.objectContaining({ ref: 'world/objects/city.md', label: expect.stringContaining('雾城') }),
+      ]));
+      expect(result.value.outline_previews[0]).toMatchObject({
+        kind: 'story_outline', title: '三幕预览', summary: '启幕 → 危机 → 结局', source_count: 1, warning_count: 0,
+      });
+      expect(JSON.stringify(result.value.outline_previews)).not.toContain('internal_secret');
     }
     env.cleanup();
   });

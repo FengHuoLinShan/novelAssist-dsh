@@ -170,6 +170,11 @@ export interface NovelcraftHostService {
         }>;
         checkpoint?: { workflow_id: string; start_chapter: number; end_chapter: number };
       };
+      outlinePreviews(root: string): Array<{
+        kind: 'story_outline' | 'outline_item'; run_id: string; target?: 'plot_thread' | 'outline_arc';
+        generated_at: string; result: Record<string, unknown>;
+        context_receipt?: { source_manifest: unknown[]; warnings: unknown[] };
+      }>;
     };
     stage: {
       stageTextIntake(root: string, sessionId: string, fileName: string, bytes: Uint8Array): StagedFileIntake;
@@ -347,6 +352,25 @@ function presetCard(p: PresetLike, seedNames: ReadonlySet<string>): ContentPrese
     ...(p.max_tokens !== undefined ? { max_tokens: p.max_tokens } : {}),
     ...(p.timeout_ms !== undefined ? { timeout_ms: p.timeout_ms } : {}),
     source: seedNames.has(p.name) ? 'seed' : 'stored',
+  };
+}
+
+function outlinePreviewCard(record: ReturnType<NovelcraftHostService['ui']['view']['outlinePreviews']>[number]) {
+  const content = record.result.content && typeof record.result.content === 'object'
+    ? record.result.content as Record<string, unknown>
+    : record.result;
+  const title = [record.result.title, content.title, content.name].find((value) => typeof value === 'string') as string | undefined;
+  const summary = [record.result.outline_markdown, content.summary, content.goal]
+    .find((value) => typeof value === 'string') as string | undefined;
+  return {
+    run_id: record.run_id,
+    kind: record.kind,
+    ...(record.target ? { target: record.target } : {}),
+    title: title?.trim() || '未命名预览',
+    summary: (summary?.trim() || '预览已生成，采用前请核对来源。').slice(0, 500),
+    generated_at: record.generated_at,
+    source_count: record.context_receipt?.source_manifest.length ?? 0,
+    warning_count: record.context_receipt?.warnings.length ?? 0,
   };
 }
 
@@ -528,10 +552,26 @@ export function createNovelcraftHandlers(ctx: Context) {
   async storyMap(payload: StoryMapPayload): Promise<RpcResult<StoryMapValue>> {
     const binding = await resolveRoot(novelcraft, payload);
     if (!binding || !novelcraft?.ui) {
-      return rpcOk({ bound: null, book: '', chapters: [], scenes: [], threads: [], arcs: [], foreshadowing: [], reveals: [], edges: [] });
+      return rpcOk({ bound: null, book: '', chapters: [], scenes: [], threads: [], arcs: [], foreshadowing: [], reveals: [], edges: [], source_options: [], outline_previews: [] });
     }
     try {
-      const m = novelcraft.ui.view.storyMap(binding.root);
+      const ui = novelcraft.ui;
+      const m = ui.view.storyMap(binding.root);
+      const index = ui.view.chapterIndex(binding.root);
+      const sourceOptions = [
+        ...index.structure.map((item) => ({
+          ref: item.file,
+          label: `${item.kind === 'outline' ? '总纲' : '结构'} · ${item.name ?? item.slug}`,
+          status: item.status,
+          kind: item.kind === 'outline' ? 'outline' as const : 'structure' as const,
+        })),
+        ...index.scenes.map((item) => ({
+          ref: item.file, label: `Scene · ${item.slug}`, status: item.status, kind: 'scene' as const,
+        })),
+        ...index.objects.filter((item) => item.file.startsWith('world/objects/')).map((item) => ({
+          ref: item.file, label: `世界 · ${item.name || item.slug}`, status: item.status, kind: 'world' as const,
+        })),
+      ];
       return rpcOk({
         bound: { book: binding.book, root: binding.root },
         book: m.book,
@@ -542,6 +582,8 @@ export function createNovelcraftHandlers(ctx: Context) {
         foreshadowing: m.foreshadowing,
         reveals: m.reveals,
         edges: m.edges,
+        source_options: sourceOptions,
+        outline_previews: ui.view.outlinePreviews(binding.root).map(outlinePreviewCard),
       });
     } catch (err) {
       return rpcFail(err instanceof Error ? err.message : String(err));
