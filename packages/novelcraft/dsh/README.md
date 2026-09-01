@@ -11,7 +11,7 @@ plugins:
   novelcraft:
     name: "@novelcraft/dsh"
     config:
-      llm: { provider: deepseek, model: deepseek-chat }   # 内容手默认路由(可被 DSH 模型切换覆盖)
+      llm: { provider: deepseek, model: deepseek-v4-flash } # 内容手候选默认路由(可被 DSH 模型切换覆盖)
       vaultsDir: ~/Novels                                 # 每书一个子文件夹
       watch: { enabled: false, intervalMinutes: 60 }      # 雷达低频巡检(默认关 D6)
 ```

@@ -1,11 +1,11 @@
 // N48 工具组契约：六组显式归属、完整 Config、Cordis 服务生命周期与稳定全量顺序。
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Config, NovelCraftService } from '../src/index.js';
+import { Config, DEFAULT_CONFIG, NovelCraftService } from '../src/index.js';
 import { buildToolSegments } from '../src/internal.js';
 import {
   NovelcraftBookToolsPlugin,
@@ -102,6 +102,10 @@ describe('config.tools 六组开关(profile 即产品)', () => {
     expect(Config({}).tools).toEqual({
       writing: true, mapAtlas: true, workflow: true, book: true, world: true, outline: true,
     });
+    expect(Config({}).llm).toMatchObject({ provider: 'deepseek', model: 'deepseek-v4-flash' });
+    expect(DEFAULT_CONFIG.llm).toEqual({ provider: 'deepseek', model: 'deepseek-v4-flash' });
+    expect(readFileSync(new URL('../../../../starter/dev-profile/cordis.patch.yml', import.meta.url), 'utf8'))
+      .toContain('model: deepseek-v4-flash');
     expect(() => Config({ tools: { world: 'false' as unknown as boolean } })).toThrow();
   });
 

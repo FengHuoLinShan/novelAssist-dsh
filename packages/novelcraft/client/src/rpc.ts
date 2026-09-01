@@ -122,7 +122,7 @@ export interface NovelcraftHostService {
   presets?: {
     list(): Promise<PresetLike[]>;
   };
-  /** 宿主配置(内容手默认路由 Config.llm; 缺省兜底 deepseek/deepseek-chat)。 */
+  /** 宿主配置(内容手默认路由 Config.llm; 缺省兜底 deepseek/deepseek-v4-flash)。 */
   config?: { llm?: { provider: string; model: string } };
   /** 客户端数据面(@novelcraft/dsh service.ui 的结构子集)。 */
   ui: {
@@ -286,11 +286,11 @@ async function resolveRoot(
   return undefined;
 }
 
-/** 内容手默认路由: 宿主 Config.llm; 缺省兜底 deepseek/deepseek-chat。 */
+/** 内容手默认路由: 宿主 Config.llm; 缺省兜底 deepseek/deepseek-v4-flash。 */
 function defaultRouteOf(svc: NovelcraftHostService | undefined): { provider: string; model: string } {
   const p = svc?.config?.llm?.provider;
   const m = svc?.config?.llm?.model;
-  return p && m ? { provider: p, model: m } : { provider: 'deepseek', model: 'deepseek-chat' };
+  return p && m ? { provider: p, model: m } : { provider: 'deepseek', model: 'deepseek-v4-flash' };
 }
 
 /** 宿主预设面(list)容错读: 缺面/抛错 → 空数组(调用方种子兜底)。 */

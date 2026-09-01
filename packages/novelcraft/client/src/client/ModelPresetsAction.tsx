@@ -39,7 +39,7 @@ export function ModelPresetsAction(props: ModelPresetsActionProps): JSX.Element 
   // 顶卡即「默认(继承助手配置)」(preset=null), 网格去重同名 seed 卡。
   const presets = (data?.presets ?? []).filter((p) => p.name !== 'default')
   const active = data?.active ?? null
-  const defaultRoute = data?.defaultRoute ?? { provider: 'deepseek', model: 'deepseek-chat' }
+  const defaultRoute = data?.defaultRoute ?? { provider: 'deepseek', model: 'deepseek-v4-flash' }
   const availableProviders = data?.availableProviders ?? []
   const defaultActive = active == null || active === 'default'
 

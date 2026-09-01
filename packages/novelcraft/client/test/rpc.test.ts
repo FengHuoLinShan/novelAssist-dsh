@@ -507,7 +507,7 @@ describe('novelcraft RPC 处理器', () => {
     if (result.ok) {
       expect(result.value.bound).toBeNull();
       expect(result.value.active).toBeNull();
-      expect(result.value.defaultRoute).toEqual({ provider: 'deepseek', model: 'deepseek-chat' });
+      expect(result.value.defaultRoute).toEqual({ provider: 'deepseek', model: 'deepseek-v4-flash' });
       expect(result.value.availableProviders).toEqual([]);
       // 最小 profile(宿主无 presets 面)→ 种子兜底, 全部 source=seed
       const names = result.value.presets.map((p) => p.name);

@@ -351,7 +351,7 @@ export interface PresetsListValue {
   presets: ContentPresetCard[];
   /** 当前书生效预设名(llm.yml preset 键; 未设/未绑定 null)。 */
   active: string | null;
-  /** 内容手默认路由(宿主 Config.llm; 缺省兜底 deepseek/deepseek-chat)。 */
+  /** 内容手默认路由(宿主 Config.llm; 缺省兜底 deepseek/deepseek-v4-flash)。 */
   defaultRoute: { provider: string; model: string };
   /** 已注册 provider 路由 id 列表(ctx.llm; 最小 profile 空数组, 不炸)。 */
   availableProviders: string[];

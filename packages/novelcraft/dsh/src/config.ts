@@ -61,7 +61,7 @@ export const Config: z<Config> = z.object({
   llm: z
     .object({
       provider: z.string().default('deepseek'),
-      model: z.string().default('deepseek-chat'),
+      model: z.string().default('deepseek-v4-flash'),
       // N34 执行级默认(可选; 边界与 llm-step validateContentPreset 一致, 解析时再兜底校验)。
       // schemastery 对象归一化会丢弃 undefined 键(实测), 缺省即不出现; 类型经
       // `undefined as unknown as number` 桥接 ObjectT 的「键必填」静态约束。
@@ -74,7 +74,7 @@ export const Config: z<Config> = z.object({
     })
     .default({
       provider: 'deepseek',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
       timeoutMs: undefined as unknown as number,
       maxTokens: undefined as unknown as number,
       workflowBudget: undefined as unknown as number,
@@ -100,7 +100,7 @@ export const Config: z<Config> = z.object({
 });
 
 export const DEFAULT_CONFIG: Config = {
-  llm: { provider: 'deepseek', model: 'deepseek-chat' },
+  llm: { provider: 'deepseek', model: 'deepseek-v4-flash' },
   vaultsDir: '~/Novels',
   watch: { enabled: false, intervalMinutes: 60 },
   tools: { writing: true, mapAtlas: true, workflow: true, book: true, world: true, outline: true },
