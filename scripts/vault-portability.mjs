@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { initVault, validateInitializedVault } from '@novelcraft/vault';
 
 const SCHEMA = 'novelcraft-vault-portability/v1';
 
@@ -90,13 +91,9 @@ function assertNoCredentialFiles(root, entries) {
   }
 }
 
-function assertVaultShape(entries) {
-  if (!entries.some((entry) => entry.path === 'book.yml' && entry.type === 'file')) {
-    fail('源缺少 book.yml，不是 NovelCraft vault');
-  }
-  if (!entries.some((entry) => entry.path === '.git/' && entry.type === 'directory')) {
-    fail('源缺少内嵌 .git 目录，无法保证版本历史可移植');
-  }
+function assertVaultShape(root) {
+  const validated = validateInitializedVault(root);
+  if (!validated.ok) fail(`不是完整初始化的 NovelCraft vault: ${validated.reason ?? 'unknown'}`);
 }
 
 function sameManifest(left, right) {
@@ -122,7 +119,7 @@ export function verifyPortableVault(vaultPath) {
   if (receipt?.schema !== SCHEMA || !Array.isArray(receipt.entries)) fail(`清单形态非法: ${sidecar}`);
   if (receipt.manifest_sha256 !== manifestHash(receipt.entries)) fail(`清单自身哈希失配: ${sidecar}`);
   const current = manifest(vault);
-  assertVaultShape(current);
+  assertVaultShape(vault);
   assertNoCredentialFiles(vault, current);
   if (!sameManifest(receipt.entries, current)) fail(`vault 与清单不一致: ${vault}`);
   return { ok: true, vault, manifest_sha256: receipt.manifest_sha256, entries: current.length };
@@ -149,7 +146,7 @@ export function copyPortableVault(mode, sourcePath, destinationPath) {
   const target = assertSafeDestination(source, path.resolve(destinationPath));
   const { parent, destination } = target;
   const before = manifest(source);
-  assertVaultShape(before);
+  assertVaultShape(source);
   assertNoCredentialFiles(source, before);
   const digest = manifestHash(before);
   const token = randomUUID();
@@ -194,15 +191,13 @@ function selfTest() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'novelcraft-portability-'));
   try {
     const source = path.join(root, 'source');
-    mkdirSync(path.join(source, '.git'), { recursive: true });
+    initVault(source, { title: 'test' });
     mkdirSync(path.join(source, '.assistant', 'workflows'), { recursive: true });
-    mkdirSync(path.join(source, 'world', 'atlas', 'images'), { recursive: true });
-    writeFileSync(path.join(source, 'book.yml'), 'title: test\n');
-    writeFileSync(path.join(source, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-    const safeGitConfig = '[remote "origin"]\n\turl = https://github.com/example/novel.git\n';
-    writeFileSync(path.join(source, '.git', 'config'), safeGitConfig);
     writeFileSync(path.join(source, '.assistant', 'workflows', 'run.json'), '{"status":"running"}\n');
     writeFileSync(path.join(source, 'world', 'atlas', 'images', 'map.bin'), Buffer.from([0, 1, 2, 255]));
+    const gitConfigPath = path.join(source, '.git', 'config');
+    const safeGitConfig = `${readFileSync(gitConfigPath, 'utf8')}\n[remote "origin"]\n\turl = https://github.com/example/novel.git\n`;
+    writeFileSync(gitConfigPath, safeGitConfig);
     const sourceHash = manifestHash(manifest(source));
     const backup = path.join(root, 'backup');
     const restored = path.join(root, 'restored');
@@ -210,6 +205,7 @@ function selfTest() {
     verifyPortableVault(backup);
     copyPortableVault('restore', backup, restored);
     verifyPortableVault(restored);
+    if (!validateInitializedVault(restored).ok) fail('self-test 恢复副本未通过 Vault 初始化验证');
     if (manifestHash(manifest(source)) !== sourceHash || manifestHash(manifest(restored)) !== sourceHash) {
       fail('self-test 源/恢复哈希不一致');
     }
@@ -254,11 +250,27 @@ function selfTest() {
     try { copyPortableVault('backup', source, path.join(root, 'blocked')); } catch { rejected = true; }
     if (!rejected || existsSync(path.join(root, 'blocked'))) fail('self-test 未拒绝 vault 内凭据');
     rmSync(path.join(source, '.env'));
-    writeFileSync(path.join(source, '.git', 'config'), '[remote "origin"]\n\turl = https://token-value@github.com/example/novel.git\n');
+    writeFileSync(path.join(source, '.git', 'config'), safeGitConfig.replace(
+      'https://github.com/example/novel.git',
+      'https://token-value@github.com/example/novel.git',
+    ));
     rejected = false;
     try { copyPortableVault('backup', source, path.join(root, 'blocked-git-token')); } catch { rejected = true; }
     if (!rejected || existsSync(path.join(root, 'blocked-git-token'))) fail('self-test 未拒绝 Git 配置内嵌凭据');
     writeFileSync(path.join(source, '.git', 'config'), safeGitConfig);
+    const fake = path.join(root, 'fake-vault');
+    initVault(fake, { title: 'fake' });
+    rmSync(path.join(fake, '.git'), { recursive: true, force: true });
+    mkdirSync(path.join(fake, '.git'), { recursive: true });
+    writeFileSync(path.join(fake, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    rejected = false;
+    try { copyPortableVault('backup', fake, path.join(root, 'blocked-fake-head')); } catch { rejected = true; }
+    if (!rejected || entryExists(path.join(root, 'blocked-fake-head'))) fail('self-test 未拒绝伪 Git HEAD');
+    rmSync(path.join(source, 'bible'), { recursive: true, force: true });
+    rejected = false;
+    try { copyPortableVault('backup', source, path.join(root, 'blocked-missing-skeleton')); } catch { rejected = true; }
+    if (!rejected || entryExists(path.join(root, 'blocked-missing-skeleton'))) fail('self-test 未拒绝缺失 Vault 骨架');
+    mkdirSync(path.join(source, 'bible'));
     if (manifestHash(manifest(source)) !== sourceHash) fail('self-test 结束时源 vault 发生变化');
     return { self_test: 'ok', entries: manifest(source).length, manifest_sha256: sourceHash };
   } finally {
