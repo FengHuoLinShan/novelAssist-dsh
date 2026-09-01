@@ -80,6 +80,18 @@ describe('rebuildIndex(R12 · 幂等可重建)', () => {
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 
+  it.skipIf(!dirSymlinksSupported)('扫描根目录 symlink 不读取 Vault 外 Scene', () => {
+    const r = fixture();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nvc-store-outside-scenes-'));
+    cleanups.push(() => fs.rmSync(outside, { recursive: true, force: true }));
+    writeAsset(outside, 'external.md', {
+      id: 'external-scene', status: 'canonical', title: 'EXTERNAL-SCENE-MARKER', scene_index: 1,
+    }, '不得进入索引');
+    fs.rmSync(path.join(r, 'scenes'), { recursive: true, force: true });
+    fs.symlinkSync(outside, path.join(r, 'scenes'), process.platform === 'win32' ? 'junction' : 'dir');
+    expect(() => rebuildIndex(r)).toThrow(/ordinary directory|symlink/i);
+  });
+
   it('derives alias → owner mapping', () => {
     const r = fixture();
     scaffold(r);

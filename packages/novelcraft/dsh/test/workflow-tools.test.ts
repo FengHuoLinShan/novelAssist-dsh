@@ -3,7 +3,7 @@
 // 铁律 3(abandon 审批 fail-closed)、铁律 2(不动 canonical, git 是回滚面)、
 // R12 目录容错(坏 manifest 仍列出)。
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { join } from 'node:path';
@@ -139,6 +139,48 @@ describe('workflow 工具组(M10-B1/N40)', () => {
     expect(out.checkpoint_workflow_id).toBe('imp-1-2');
     expect(out.checkpoint_scope).toBe('1-2');
     env.cleanup();
+  });
+
+  it('inspect: namespace/run/checkpoint symlink 不读取 Vault 外 manifest 或 scope', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'nc-wf-outside-'));
+    try {
+      const marker = 'EXTERNAL-WORKFLOW-MARKER';
+      const externalRun = path.join(outside, 'external-run');
+      mkdirSync(externalRun);
+      writeFileSync(path.join(externalRun, 'manifest.json'), JSON.stringify({
+        status: marker, createdAt: marker, batches: { leaked: { state: 'completed' } },
+      }));
+      writeFileSync(path.join(outside, 'checkpoint.json'), JSON.stringify({
+        plan: { workflow_id: marker, authorization: { scope: { start_chapter: 77, end_chapter: 88 } } },
+      }));
+      const assistant = path.join(env.root, '.assistant');
+      const runsRoot = path.join(assistant, 'import-runs');
+      const externalNamespace = path.join(outside, 'runs');
+      mkdirSync(externalNamespace);
+      symlinkSync(externalRun, path.join(externalNamespace, 'outside-run'), 'dir');
+      symlinkSync(externalNamespace, runsRoot, 'dir');
+      symlinkSync(path.join(outside, 'checkpoint.json'), path.join(assistant, 'checkpoint.json'));
+
+      const rootLink = await exec(env, 'novelcraft_workflow_inspect', { root: env.root });
+      expect(JSON.stringify(rootLink)).not.toContain(marker);
+      rmSync(runsRoot, { force: true });
+      mkdirSync(runsRoot);
+      symlinkSync(externalRun, path.join(runsRoot, 'outside-run'), 'dir');
+      const runLink = await exec(env, 'novelcraft_workflow_inspect', { root: env.root });
+      expect(JSON.stringify(runLink)).not.toContain(marker);
+
+      rmSync(path.join(runsRoot, 'outside-run'), { force: true });
+      const localRun = path.join(runsRoot, 'local-run');
+      mkdirSync(localRun);
+      symlinkSync(path.join(externalRun, 'manifest.json'), path.join(localRun, 'manifest.json'));
+      const manifestLink = await exec(env, 'novelcraft_workflow_inspect', { root: env.root }) as { runs: Array<Record<string, unknown>> };
+      expect(JSON.stringify(manifestLink)).not.toContain(marker);
+      expect(manifestLink.runs[0]).toMatchObject({ workflow_id: 'local-run', status: 'unreadable' });
+    } finally {
+      env.cleanup();
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('resume fail-closed: 无 checkpoint / workflowId 不绑定 → 拒绝并指引, 零 provider 调用', async () => {

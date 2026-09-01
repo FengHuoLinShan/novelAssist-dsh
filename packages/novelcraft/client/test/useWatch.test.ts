@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSeqGate,
+  bookIdentityChanged,
   matchesBookChangedSession,
   nextPollAction,
   nextPollDelay,
@@ -74,6 +75,15 @@ describe('createSeqGate(latest-wins 请求护栏)', () => {
     expect(gate.isCurrent(oldBookRequest)).toBe(false);
     expect(gate.isCurrent(newBookRequest)).toBe(true);
   });
+
+  it('同标题但不同 Vault root 仍判定切书并作废旧响应', () => {
+    expect(bookIdentityChanged('/vaults/a', '/vaults/b')).toBe(true)
+    expect(bookIdentityChanged('/vaults/a', '/vaults/a')).toBe(false)
+    const gate = createSeqGate()
+    const sameTitleOldRoot = gate.request()
+    if (bookIdentityChanged('/vaults/a', '/vaults/b')) gate.invalidate()
+    expect(gate.isCurrent(sameTitleOldRoot)).toBe(false)
+  })
 
   it('新请求 latest-wins: 旧请求响应作废(同代际内)', () => {
     const gate = createSeqGate();

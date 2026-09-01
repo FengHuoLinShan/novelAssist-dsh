@@ -1,11 +1,11 @@
 // 剧情地图(StoryMapAction): 会话头动作, 打开剧情地图 Modal(结构资产 + Scene/章节覆盖)。
 // 数据源 = /novelcraft story/map(宿主读 store.storyMap, 文件真相)。纯读, 无动作。
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS, type NovelcraftKey } from './locales.ts'
-import { useStoryMap } from './useWatch.ts'
+import { BOOK_CHANGED_EVENT, matchesBookChangedSession, useStoryMap, type BookChangedDetail } from './useWatch.ts'
 import { ChapterDossier } from './ChapterDossier.tsx'
 import css from './novelcraft.module.css'
 
@@ -67,6 +67,22 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const [includeWorkingDrafts, setIncludeWorkingDrafts] = useState(false)
   const [notice, setNotice] = useState('')
   const { data, loading, refresh } = useStoryMap(connection, sessionId)
+
+  useEffect(() => {
+    const reset = (event?: Event) => {
+      if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
+      setOpen(false)
+      setChapter(null)
+      setOutlineTask('')
+      setOutlineTarget('story_outline')
+      setSelectedSources([])
+      setIncludeWorkingDrafts(false)
+      setNotice('')
+    }
+    reset()
+    window.addEventListener(BOOK_CHANGED_EVENT, reset)
+    return () => window.removeEventListener(BOOK_CHANGED_EVENT, reset)
+  }, [sessionId])
 
   const bound = data?.bound != null
   const chapters = data?.chapters ?? []

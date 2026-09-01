@@ -1,5 +1,5 @@
 // world/map-atlas · 来源上下文编译行为契约(计划 §4 Phase 2; 规则 4; N28/N29)。
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -173,6 +173,19 @@ describe("compileAtlasContext 世界书证据(计划 §2/§4 Phase 2)", () => {
     writeBiblePage(root, { slug: "bp-d", title: "草稿页", status: "draft" }, "草稿");
     expect(listBiblePages(root).map((page) => page.title)).toEqual(["正式页"]);
     expect(listBiblePages(root, true).map((page) => page.title)).toEqual(["正式页", "草稿页"]);
+  });
+
+  it("bible 根 symlink 不读取 Vault 外页面", () => {
+    const root = makeRoot();
+    const outside = mkdtempSync(join(tmpdir(), "ncma-bible-outside-"));
+    dirs.push(outside);
+    writeFileSync(join(outside, "external.md"), serializeFrontmatter({
+      id: "external", status: "canonical", page_type: "setting", page_key: "external",
+      title: "EXTERNAL-BIBLE-MARKER", version_number: 1,
+    }, "不得投影"));
+    rmSync(paths(root).bible.dir, { recursive: true, force: true });
+    symlinkSync(outside, paths(root).bible.dir, "dir");
+    expect(() => listBiblePages(root, true)).toThrow(/symlink|escapes vault root|普通目录/i);
   });
 
   it("canonical 必选; draft 默认不选, include_working_drafts=true 时可选(计划 §2)", async () => {

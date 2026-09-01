@@ -2,9 +2,9 @@
 // 地点选择(≤20)/世界书证据(≤3 页)/RAG 证据(topK=5)/预算截断(8000+40000)/来源 manifest + 指纹输入。
 // 依据: map-atlas 实施计划 §2/§4 Phase 2、policy-defaults §9、移植锚点(旧引擎 workflow.py 407-530 行)。
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { paths } from "@novelcraft/vault";
+import { guardPath, paths } from "@novelcraft/vault";
 import { parseFrontmatter } from "@novelcraft/store";
 import { searchRag } from "@novelcraft/rag";
 import { readAtlasTree } from "./read.js";
@@ -95,20 +95,33 @@ export interface BiblePageInfo {
   text: string;
 }
 
+function listMarkdownFiles(root: string, requestedDir: string): { dir: string; files: string[] } {
+  const dir = guardPath(root, requestedDir);
+  if (!existsSync(dir)) return { dir, files: [] };
+  const stat = lstatSync(dir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`来源目录必须是 vault 内普通目录: ${path.relative(root, dir)}`);
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name)
+    .sort();
+  return { dir, files };
+}
+
+function readMarkdownFile(root: string, dir: string, name: string): string {
+  const file = guardPath(root, path.join(dir, name));
+  const stat = lstatSync(file);
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`来源不是普通文件: ${name}`);
+  return readFileSync(file, "utf8");
+}
+
 /** canonical location 对象(读面: kind 优先, entity_type fallback —— B1 口径同 objects.ts)。 */
 function readCanonicalLocations(
   root: string,
 ): Array<{ slug: string; name: string; aliases: string[]; importance: number }> {
-  const dir = paths(root).world.objects;
-  if (!existsSync(dir)) return [];
+  const { dir, files } = listMarkdownFiles(root, paths(root).world.objects);
   const out: Array<{ slug: string; name: string; aliases: string[]; importance: number }> = [];
-  // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
-  const files = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith(".md"))
-    .map((e) => e.name)
-    .sort();
   for (const f of files) {
-    const { data } = parseFrontmatter(readFileSync(path.join(dir, f), "utf8"));
+    const { data } = parseFrontmatter(readMarkdownFile(root, dir, f));
     const kind = String(data.kind ?? data.entity_type ?? "");
     if (kind !== "location" || String(data.status ?? "") !== "canonical") continue;
     out.push({
@@ -123,16 +136,10 @@ function readCanonicalLocations(
 
 /** 世界书页(canonical 必选; includeDrafts 时 draft 可选; 文本 = free_text/body 字段 + 正文拼接)。 */
 export function listBiblePages(root: string, includeDrafts = false): BiblePageInfo[] {
-  const dir = paths(root).bible.dir;
-  if (!existsSync(dir)) return [];
+  const { dir, files } = listMarkdownFiles(root, paths(root).bible.dir);
   const pages: BiblePageInfo[] = [];
-  // R9(目录枚举扫描): 只接收 .md 普通文件; symlink(含指向 vault 外)忽略, 不跟随。
-  const files = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith(".md"))
-    .map((e) => e.name)
-    .sort();
   for (const f of files) {
-    const { data, body } = parseFrontmatter(readFileSync(path.join(dir, f), "utf8"));
+    const { data, body } = parseFrontmatter(readMarkdownFile(root, dir, f));
     const status = String(data.status ?? "");
     if (status !== "canonical" && !(includeDrafts && status === "draft")) continue;
     const linkedSlugs = new Set<string>();

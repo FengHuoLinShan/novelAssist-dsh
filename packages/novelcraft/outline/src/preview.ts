@@ -7,9 +7,9 @@
 //     由 DSH 侧在 adoptGuarded 审批内执行)。
 // 暂存记录带 promptFingerprint(模型可见⟺可回放)与 input 摘要 hash, apply 时校验
 // 记录完整性; 记录是 .assistant 机器态, 不经审批(与 proposals 先例同口径)。
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { paths } from "@novelcraft/vault";
+import { guardPath, paths } from "@novelcraft/vault";
 import { runStep, type Provider, type StepResult } from "@novelcraft/llm-step";
 import { registerOutlineSpecs } from "./specs-outline.js";
 import { writeOutline, writeStructureAsset } from "./structure.js";
@@ -104,36 +104,52 @@ function inputHash(input: string): string {
   return createHash("sha256").update(input, "utf8").digest("hex").slice(0, 16);
 }
 
+function proposalDirectory(root: string, create = false): string | undefined {
+  const dir = guardPath(root, paths(root).assistant.proposals);
+  if (!existsSync(dir)) {
+    if (!create) return undefined;
+    mkdirSync(dir, { recursive: true });
+  }
+  const stat = lstatSync(dir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("preview proposals 路径必须是 vault 内普通目录");
+  return dir;
+}
+
 function writePreview(root: string, record: OutlinePreviewRecord): string {
-  const dir = paths(root).assistant.proposals;
-  mkdirSync(dir, { recursive: true });
+  proposalDirectory(root, true);
   const name =
     record.kind === "story_outline"
       ? `outline-${record.run_id}`
       : `outline-item-${record.target}-${record.run_id}`;
-  const file = paths(root).assistant.proposalFile(name);
-  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  const file = guardPath(root, paths(root).assistant.proposalFile(name));
+  if (lstatSync(file, { throwIfNoEntry: false }) !== undefined) throw new Error(`preview 记录已存在，拒绝覆盖: ${name}`);
+  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", { encoding: "utf8", flag: "wx" });
   return file;
 }
 
 function readPreview(root: string, kind: OutlinePreviewRecord["kind"], runId: string): OutlinePreviewRecord {
-  const dir = paths(root).assistant.proposals;
+  const dir = proposalDirectory(root);
   // 按命名约定定位(run_id 是 p<base36 ts> 段, 匹配唯一)。
   // 匹配带 target(review P2-3): outline_item 的匹配含 target 段, 消除不同 target
   // 同 run_id 时宽匹配选错记录的歧义; proposalFile 对 target 的 slug 化保持 ASCII 安全。
-  const dirEntries = existsSync(dir) ? listProposalFiles(dir) : [];
+  const dirEntries = dir === undefined ? [] : listProposalFiles(dir);
   const match =
     kind === "story_outline"
       ? dirEntries.find((n) => n === `outline-${runId}.json`)
       : dirEntries.find((n) => n.startsWith("outline-item-") && n.includes(`-${runId}.json`));
-  if (match === undefined) {
+  if (dir === undefined || match === undefined) {
     throw new Error(
       `preview 记录不存在: ${kind}/${runId}。请先生成 preview(.assistant/proposals/ 下无对应记录)`,
     );
   }
+  const file = guardPath(root, `${dir}/${match}`);
+  const stat = lstatSync(file, { throwIfNoEntry: false });
+  if (stat === undefined || stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`preview 记录不是普通文件: ${match}`);
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(`${dir}/${match}`, "utf8"));
+    parsed = JSON.parse(readFileSync(file, "utf8"));
   } catch (err) {
     throw new Error(`preview 记录损坏(非 JSON): ${match}: ${(err as Error).message}`);
   }
@@ -145,18 +161,24 @@ function readPreview(root: string, kind: OutlinePreviewRecord["kind"], runId: st
 }
 
 function listProposalFiles(dir: string): string[] {
-  return readdirSync(dir).filter((n) => n.endsWith(".json")).sort();
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 /** Author workbench read: valid ordinary outline preview files, newest first. */
 export function listOutlinePreviews(root: string): OutlinePreviewRecord[] {
-  const dir = paths(root).assistant.proposals;
-  if (!existsSync(dir)) return [];
+  const dir = proposalDirectory(root);
+  if (dir === undefined) return [];
   const records: OutlinePreviewRecord[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !/^outline(?:-item-(?:plot_thread|outline_arc))?-.+\.json$/.test(entry.name)) continue;
     try {
-      const record = JSON.parse(readFileSync(`${dir}/${entry.name}`, "utf8")) as OutlinePreviewRecord;
+      const file = guardPath(root, `${dir}/${entry.name}`);
+      const stat = lstatSync(file);
+      if (stat.isSymbolicLink() || !stat.isFile()) continue;
+      const record = JSON.parse(readFileSync(file, "utf8")) as OutlinePreviewRecord;
       const expected = record.kind === "story_outline"
         ? `outline-${record.run_id}.json`
         : record.kind === "outline_item" && (record.target === "plot_thread" || record.target === "outline_arc")

@@ -15,6 +15,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -68,15 +69,25 @@ function manifestHash(entries) {
   return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
 }
 
-function assertNoCredentialFiles(entries) {
+function assertNoCredentialFiles(root, entries) {
   const blocked = entries.find((entry) => {
     const parts = entry.path.replace(/\/$/, '').split('/');
     const base = parts.at(-1)?.toLowerCase() ?? '';
     return base === '.env' || base.startsWith('.env.') ||
+      ['.git-credentials', '.netrc', '.npmrc', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'].includes(base) ||
       base === 'credentials.json' || base === 'secrets.json' ||
-      parts.some((part) => ['credentials', 'secrets'].includes(part.toLowerCase()));
+      /\.(?:key|pem|p12|pfx)$/.test(base) ||
+      parts.some((part) => ['credentials', 'secrets', '.aws', '.ssh'].includes(part.toLowerCase()));
   });
   if (blocked) fail(`vault 内发现凭据文件 ${blocked.path}；凭据必须留在 DSH credentials 子系统`);
+  for (const rel of ['.git/config', '.gitmodules']) {
+    const entry = entries.find((candidate) => candidate.path === rel && candidate.type === 'file');
+    if (!entry) continue;
+    const text = readFileSync(path.join(root, rel), 'utf8');
+    if (/\bhttps?:\/\/[^\s/@]+(?::[^\s/@]*)?@/i.test(text) || /^\s*extraheader\s*=\s*authorization\s*:/im.test(text)) {
+      fail(`${rel} 含内嵌认证信息；请先改用 DSH credentials 或系统 credential helper`);
+    }
+  }
 }
 
 function assertVaultShape(entries) {
@@ -96,31 +107,38 @@ function sidecarOf(vault) {
   return `${vault}.manifest.json`;
 }
 
+function entryExists(file) {
+  return lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+}
+
 export function verifyPortableVault(vaultPath) {
   const vault = realpathSync(path.resolve(vaultPath));
   if (!statSync(vault).isDirectory()) fail(`不是目录: ${vault}`);
   const sidecar = sidecarOf(vault);
-  if (!existsSync(sidecar)) fail(`缺少清单: ${sidecar}`);
+  const sidecarStat = lstatSync(sidecar, { throwIfNoEntry: false });
+  if (sidecarStat === undefined) fail(`缺少清单: ${sidecar}`);
+  if (sidecarStat.isSymbolicLink() || !sidecarStat.isFile()) fail(`清单必须是普通文件: ${sidecar}`);
   const receipt = JSON.parse(readFileSync(sidecar, 'utf8'));
   if (receipt?.schema !== SCHEMA || !Array.isArray(receipt.entries)) fail(`清单形态非法: ${sidecar}`);
   if (receipt.manifest_sha256 !== manifestHash(receipt.entries)) fail(`清单自身哈希失配: ${sidecar}`);
   const current = manifest(vault);
   assertVaultShape(current);
-  assertNoCredentialFiles(current);
+  assertNoCredentialFiles(vault, current);
   if (!sameManifest(receipt.entries, current)) fail(`vault 与清单不一致: ${vault}`);
   return { ok: true, vault, manifest_sha256: receipt.manifest_sha256, entries: current.length };
 }
 
 function assertSafeDestination(source, destination) {
-  if (existsSync(destination)) fail(`目标已存在，拒绝覆盖: ${destination}`);
-  if (existsSync(sidecarOf(destination))) fail(`目标清单已存在，拒绝覆盖: ${sidecarOf(destination)}`);
   const parent = realpathSync(path.dirname(destination));
   if (!statSync(parent).isDirectory()) fail(`目标父目录不可用: ${parent}`);
-  const relative = path.relative(source, destination);
+  const resolved = path.join(parent, path.basename(destination));
+  if (entryExists(resolved)) fail(`目标已存在，拒绝覆盖: ${resolved}`);
+  if (entryExists(sidecarOf(resolved))) fail(`目标清单已存在，拒绝覆盖: ${sidecarOf(resolved)}`);
+  const relative = path.relative(source, resolved);
   if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
     fail('目标不得位于源 vault 内部');
   }
-  return parent;
+  return { parent, destination: resolved };
 }
 
 export function copyPortableVault(mode, sourcePath, destinationPath) {
@@ -128,11 +146,11 @@ export function copyPortableVault(mode, sourcePath, destinationPath) {
   const source = realpathSync(path.resolve(sourcePath));
   if (!statSync(source).isDirectory()) fail(`源不是目录: ${source}`);
   if (mode === 'restore') verifyPortableVault(source);
-  const destination = path.resolve(destinationPath);
-  const parent = assertSafeDestination(source, destination);
+  const target = assertSafeDestination(source, path.resolve(destinationPath));
+  const { parent, destination } = target;
   const before = manifest(source);
   assertVaultShape(before);
-  assertNoCredentialFiles(before);
+  assertNoCredentialFiles(source, before);
   const digest = manifestHash(before);
   const token = randomUUID();
   const temporary = path.join(parent, `.${path.basename(destination)}.novelcraft-copy-${token}`);
@@ -181,6 +199,8 @@ function selfTest() {
     mkdirSync(path.join(source, 'world', 'atlas', 'images'), { recursive: true });
     writeFileSync(path.join(source, 'book.yml'), 'title: test\n');
     writeFileSync(path.join(source, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    const safeGitConfig = '[remote "origin"]\n\turl = https://github.com/example/novel.git\n';
+    writeFileSync(path.join(source, '.git', 'config'), safeGitConfig);
     writeFileSync(path.join(source, '.assistant', 'workflows', 'run.json'), '{"status":"running"}\n');
     writeFileSync(path.join(source, 'world', 'atlas', 'images', 'map.bin'), Buffer.from([0, 1, 2, 255]));
     const sourceHash = manifestHash(manifest(source));
@@ -193,8 +213,40 @@ function selfTest() {
     if (manifestHash(manifest(source)) !== sourceHash || manifestHash(manifest(restored)) !== sourceHash) {
       fail('self-test 源/恢复哈希不一致');
     }
-    writeFileSync(path.join(backup, 'book.yml'), 'tampered\n');
     let rejected = false;
+    try { copyPortableVault('backup', source, backup); } catch { rejected = true; }
+    if (!rejected) fail('self-test 未拒绝已有目标');
+    const danglingDestination = path.join(root, 'dangling-sidecar-target');
+    const danglingSidecar = sidecarOf(danglingDestination);
+    symlinkSync(path.join(root, 'missing-sidecar-target'), danglingSidecar);
+    rejected = false;
+    try { copyPortableVault('backup', source, danglingDestination); } catch { rejected = true; }
+    if (!rejected || !lstatSync(danglingSidecar).isSymbolicLink() || entryExists(danglingDestination)) {
+      fail('self-test 未保留并拒绝 dangling sidecar');
+    }
+    rmSync(danglingSidecar, { force: true });
+    const backupSidecar = sidecarOf(backup);
+    const receiptBytes = readFileSync(backupSidecar);
+    const externalReceipt = path.join(root, 'external-receipt.json');
+    writeFileSync(externalReceipt, receiptBytes);
+    rmSync(backupSidecar);
+    symlinkSync(externalReceipt, backupSidecar);
+    rejected = false;
+    try { verifyPortableVault(backup); } catch { rejected = true; }
+    if (!rejected || !lstatSync(backupSidecar).isSymbolicLink()) fail('self-test 未拒绝外部 sidecar symlink');
+    rmSync(backupSidecar);
+    writeFileSync(backupSidecar, receiptBytes);
+    const nested = path.join(source, 'nested-target');
+    const nestedLink = path.join(root, 'nested-link');
+    mkdirSync(nested);
+    symlinkSync(nested, nestedLink, 'dir');
+    rejected = false;
+    try { copyPortableVault('backup', source, path.join(nestedLink, 'blocked')); } catch { rejected = true; }
+    if (!rejected || existsSync(path.join(nested, 'blocked'))) fail('self-test 未拒绝经 symlink 落入源 vault 的目标');
+    rmSync(nestedLink, { force: true });
+    rmSync(nested, { recursive: true, force: true });
+    writeFileSync(path.join(backup, 'book.yml'), 'tampered\n');
+    rejected = false;
     try { verifyPortableVault(backup); } catch { rejected = true; }
     if (!rejected) fail('self-test 未拒绝被篡改备份');
     writeFileSync(path.join(source, '.env'), 'SECRET=must-not-copy\n');
@@ -202,6 +254,12 @@ function selfTest() {
     try { copyPortableVault('backup', source, path.join(root, 'blocked')); } catch { rejected = true; }
     if (!rejected || existsSync(path.join(root, 'blocked'))) fail('self-test 未拒绝 vault 内凭据');
     rmSync(path.join(source, '.env'));
+    writeFileSync(path.join(source, '.git', 'config'), '[remote "origin"]\n\turl = https://token-value@github.com/example/novel.git\n');
+    rejected = false;
+    try { copyPortableVault('backup', source, path.join(root, 'blocked-git-token')); } catch { rejected = true; }
+    if (!rejected || existsSync(path.join(root, 'blocked-git-token'))) fail('self-test 未拒绝 Git 配置内嵌凭据');
+    writeFileSync(path.join(source, '.git', 'config'), safeGitConfig);
+    if (manifestHash(manifest(source)) !== sourceHash) fail('self-test 结束时源 vault 发生变化');
     return { self_test: 'ok', entries: manifest(source).length, manifest_sha256: sourceHash };
   } finally {
     rmSync(root, { recursive: true, force: true });

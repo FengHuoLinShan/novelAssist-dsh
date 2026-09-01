@@ -97,6 +97,20 @@ describe("listOutlinePreviews(作者工作台读面)", () => {
     symlinkSync(join(dir, "outline-p1.json"), join(dir, "outline-p3.json"));
     expect(listOutlinePreviews(root).map((record) => record.run_id)).toEqual(["p2", "p1"]);
   });
+
+  it("proposals 根 symlink 不读取 Vault 外 preview", () => {
+    const root = makeRoot();
+    const dir = join(root, ".assistant", "proposals");
+    const outside = mkdtempSync(join(tmpdir(), "nco-outside-"));
+    dirs.push(outside);
+    writeFileSync(join(outside, "outline-pexternal.json"), JSON.stringify({
+      kind: "story_outline", run_id: "pexternal", generated_at: "2026-09-01T00:00:00Z",
+      input_hash: "x", result: { title: "EXTERNAL-OUTLINE-MARKER" },
+    }));
+    rmSync(dir, { recursive: true, force: true });
+    symlinkSync(outside, dir, "dir");
+    expect(() => listOutlinePreviews(root)).toThrow(/symlink|escapes vault root/i);
+  });
 });
 
 describe("总纲 outline.md 单文件(adjudication #1)", () => {

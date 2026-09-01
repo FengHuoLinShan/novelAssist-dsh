@@ -12,10 +12,10 @@
 //   不触碰 canonical 创作资产(铁律 2: git 本身是回滚面, 资产撤销走 git revert/版本面)。
 // 纪律: 本文件不直接写 canonical; abandon 的 git 写只用 store 的精确 pathspec
 // (gitAdd/gitCommit), 与 check-git-writers 允许表一致。
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { gitAdd, gitCommit, hasStagedOutside } from '@novelcraft/store';
-import { assertSafePathSegment } from '@novelcraft/vault';
+import { assertSafePathSegment, guardPath } from '@novelcraft/vault';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import * as imports from '@novelcraft/imports';
 import type { Agent } from '@deepseek-ai/dsh-agent';
@@ -37,8 +37,14 @@ interface CheckpointDoc {
 }
 
 function readCheckpointSummary(root: string): WorkflowCheckpointSummary | undefined {
-  const cpPath = join(root, '.assistant', 'checkpoint.json');
-  if (!existsSync(cpPath)) return undefined;
+  let cpPath: string;
+  try {
+    cpPath = guardPath(root, join(root, '.assistant', 'checkpoint.json'));
+    const stat = lstatSync(cpPath, { throwIfNoEntry: false });
+    if (stat === undefined || stat.isSymbolicLink() || !stat.isFile()) return undefined;
+  } catch {
+    return undefined;
+  }
   try {
     const doc: unknown = JSON.parse(readFileSync(cpPath, 'utf8'));
     const plan = (doc as CheckpointDoc)?.plan;

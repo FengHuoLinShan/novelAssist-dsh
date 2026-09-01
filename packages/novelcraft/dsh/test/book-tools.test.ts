@@ -1,7 +1,7 @@
 // M11/N42 行为契约: 书库生命周期工具组。
 // 断言依据: 后续开发计划.md M11 + §6.13(去 developer-only 挂载) + 铁律 3(create/open
 // 审批 fail-closed) + N34 精神(无 agent 拒; 不接受模型路径, 目标书按名经 rootForBook)。
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -82,6 +82,36 @@ describe('book 工具组(M11/N42)', () => {
     await expect(exec(env, 'novelcraft_book_list', {}, null))
       .rejects.toMatchObject({ code: 'WORKSPACE_ISOLATION' });
     env.cleanup();
+  });
+
+  it('list/open: 不跟随书目录或 book.yml symlink，也不打开半初始化 Vault', async () => {
+    const env = await setup();
+    const vaultsDir = path.dirname(env.root);
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'nc-book-outside-'));
+    try {
+      writeFileSync(path.join(outside, 'book.yml'), 'title: 外部绝密标记\n');
+      symlinkSync(outside, path.join(vaultsDir, '外部链接书'), 'dir');
+      const fileLinkBook = path.join(vaultsDir, '文件链接书');
+      mkdirSync(fileLinkBook);
+      symlinkSync(path.join(outside, 'book.yml'), path.join(fileLinkBook, 'book.yml'));
+      const brokenBook = path.join(vaultsDir, '半初始化书');
+      mkdirSync(brokenBook);
+      writeFileSync(path.join(brokenBook, 'book.yml'), 'title: 半初始化书\n');
+
+      const listed = await exec(env, 'novelcraft_book_list', {}) as { books: Array<{ book: string; title: string }> };
+      expect(listed.books.map((book) => book.book)).not.toContain('外部链接书');
+      expect(listed.books.map((book) => book.book)).not.toContain('文件链接书');
+      expect(JSON.stringify(listed)).not.toContain('外部绝密标记');
+      const approvals = env.h.approval.requests.length;
+      await expect(exec(env, 'novelcraft_book_open', { book: '半初始化书' }))
+        .rejects.toMatchObject({ code: 'BOOK_NOT_FOUND' });
+      await expect(exec(env, 'novelcraft_book_create', { book: '半初始化书' }))
+        .rejects.toMatchObject({ code: 'BOOK_INVALID' });
+      expect(env.h.approval.requests).toHaveLength(approvals);
+    } finally {
+      env.cleanup();
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('未绑定会话可用(review P0-1 修复): list/create/open 不被工厂拦截(首绑入口不死锁)', async () => {

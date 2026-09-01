@@ -8,9 +8,10 @@
 // 隔离纪律: 无 agent(无会话上下文)一律 WORKSPACE_ISOLATION(工具 execute 自验);
 // 不接受模型提供的绝对路径 —— 目标书一律按书名(rootForBook + validateBookDirName
 // + guardPath 防穿越), 与 N34 的「不退回任意 root 访问」同口径。
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
+import { validateInitializedVault } from '@novelcraft/vault';
 import { expandHome, type Config } from './config.js';
 import type { NovelCraftService } from './service.js';
 
@@ -52,12 +53,13 @@ export function bookList(config: Config, currentRoot?: string): BookListItem[] {
     const root = join(dir, name);
     let isDir = false;
     try {
-      isDir = statSync(root).isDirectory();
+      const stat = lstatSync(root);
+      isDir = stat.isDirectory() && !stat.isSymbolicLink();
     } catch {
       continue;
     }
     if (!isDir) continue;
-    if (!existsSync(join(root, 'book.yml'))) continue; // 非书目录(含 .zcode 等杂项)
+    if (!validateInitializedVault(root).ok) continue; // 非书目录、半初始化或 symlink 骨架
     const title = readBookTitle(root) ?? name;
     out.push({ book: name, title, root, current: currentRoot !== undefined && root === currentRoot });
   }
@@ -79,8 +81,17 @@ export async function bookCreateGuarded(
   book: string,
 ): Promise<{ book: string; root: string; created: boolean }> {
   // 校验先于审批(review P2-1): 非法书名零审批拒绝(rootForBook 内 validateBookDirName)。
-  service.vaults.rootForBook(book);
-  const existed = service.vaults.readVault(service.vaults.rootForBook(book)) !== undefined;
+  const targetRoot = service.vaults.rootForBook(book);
+  const existed = existsSync(targetRoot);
+  if (existed) {
+    const validated = validateInitializedVault(targetRoot);
+    if (!validated.ok) {
+      throw new HarnessError(
+        `同名目录存在但不是完整 Vault: ${book}(${validated.reason})。为避免覆盖残留数据，拒绝自动修复`,
+        'BOOK_INVALID',
+      );
+    }
+  }
   const decision = await service.approval.request(agent, {
     action: '创建新书',
     summary: `在书库创建新书「${book}」(初始化 book.yml + 目录骨架 + git 仓库)` +
@@ -102,10 +113,12 @@ export async function bookOpenGuarded(
   book: string,
 ): Promise<{ book: string; root: string; activated: boolean; count: number }> {
   // 校验先于审批(review P2-1): 目标书不存在零审批拒绝; 摘要写明从哪本切到哪本。
-  const target = service.vaults.readVault(service.vaults.rootForBook(book));
+  const targetRoot = service.vaults.rootForBook(book);
+  const validated = validateInitializedVault(targetRoot);
+  const target = validated.ok ? service.vaults.readVault(targetRoot) : undefined;
   if (target === undefined) {
     throw new HarnessError(
-      `书不存在: ${book}(vaultsDir 下无此 book.yml)。请先 book_list 确认或 book_create 创建`,
+      `书不存在或未完整初始化: ${book}${validated.reason ? `(${validated.reason})` : ''}。请先 book_list 确认或 book_create 创建`,
       'BOOK_NOT_FOUND',
     );
   }

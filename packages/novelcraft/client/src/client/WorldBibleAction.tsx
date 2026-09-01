@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcCaller } from './index.ts'
 import { NS } from './locales.ts'
-import { useWorldWorkspace } from './useWatch.ts'
+import { BOOK_CHANGED_EVENT, matchesBookChangedSession, useWorldWorkspace, type BookChangedDetail } from './useWatch.ts'
 import css from './novelcraft.module.css'
 
 export type WorldBibleActionProps =
@@ -31,6 +31,22 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
   const [newPage, setNewPage] = useState(true)
   const [notice, setNotice] = useState('')
   const { data, loading, refresh } = useWorldWorkspace(connection, sessionId)
+
+  useEffect(() => {
+    const reset = (event?: Event) => {
+      if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
+      setOpen(false)
+      setMode('chat')
+      setTask('')
+      setSources([])
+      setIncludeDrafts(false)
+      setNewPage(true)
+      setNotice('')
+    }
+    reset()
+    window.addEventListener(BOOK_CHANGED_EVENT, reset)
+    return () => window.removeEventListener(BOOK_CHANGED_EVENT, reset)
+  }, [sessionId])
 
   const send = (prompt: string): void => {
     if (chatDraft.trim()) {

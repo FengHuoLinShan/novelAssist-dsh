@@ -238,6 +238,16 @@ describe("objects symlink fail-closed(R9: 同目录内部 symlink 也不跟随, 
     expect(() => listObjects(root)).toThrow(/symlink/i);
   });
 
+  it.skipIf(!symlinksSupported())("listObjects 根目录 symlink 不读取 Vault 外对象", () => {
+    const root = makeRoot();
+    const outside = mkdtempSync(join(tmpdir(), "ncwd-objects-outside-"));
+    dirs.push(outside);
+    writeFileSync(join(outside, "external.md"), objFm("external", "EXTERNAL-OBJECT-MARKER", "canonical"));
+    rmSync(join(root, "world", "objects"), { recursive: true, force: true });
+    symlinkSync(outside, join(root, "world", "objects"), process.platform === "win32" ? "junction" : "dir");
+    expect(() => listObjects(root)).toThrow(/symlink|escapes vault root|普通目录/i);
+  });
+
   it.skipIf(!symlinksSupported())("readPendingObject/listPending 内部 symlink 同样拒绝", async () => {
     const root = makeRoot();
     const y = join(root, "world", "pending", "pend-y.md");

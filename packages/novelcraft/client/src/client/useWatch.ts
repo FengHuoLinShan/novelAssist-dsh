@@ -120,6 +120,10 @@ export interface BookChangedDetail {
   book: string | null
 }
 
+export function bookIdentityChanged(previousRoot: string | null, nextRoot: string | null): boolean {
+  return previousRoot !== nextRoot
+}
+
 /** Only views for the changed session may clear themselves. */
 export function matchesBookChangedSession(detail: BookChangedDetail | undefined, sessionId: string | undefined): boolean {
   return detail?.sessionId === sessionId
@@ -235,6 +239,7 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
   sessionRef.current = sessionId
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastRef = useRef<WatchSnapshot>(EMPTY_WATCH)
+  const lastRootRef = useRef<string | null>(null)
   const gateRef = useRef<SeqGate | null>(null)
   if (gateRef.current === null) gateRef.current = createSeqGate()
   const gate = gateRef.current
@@ -256,8 +261,10 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
         radarRunning: value.radarRunning,
         plotSummary: value.plotSummary ?? null,
       }
-      const bookChanged = next.book !== lastRef.current.book
+      const nextRoot = value.bound?.root ?? null
+      const bookChanged = bookIdentityChanged(lastRootRef.current, nextRoot)
       const changed =
+        bookChanged ||
         next.bound !== lastRef.current.bound ||
         next.book !== lastRef.current.book ||
         next.open !== lastRef.current.open ||
@@ -266,6 +273,7 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
         next.radarRunning !== lastRef.current.radarRunning ||
         next.plotSummary !== lastRef.current.plotSummary
       lastRef.current = next
+      lastRootRef.current = nextRoot
       if (changed) setSnapshot(next)
       if (bookChanged) {
         window.dispatchEvent(new CustomEvent<BookChangedDetail>(BOOK_CHANGED_EVENT, {

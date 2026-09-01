@@ -18,10 +18,16 @@ export function exists(p: string): boolean {
 export function listFilesRecursive(dir: string): string[] {
   const base = path.resolve(dir);
   if (!fs.existsSync(base)) return [];
+  const baseStat = fs.lstatSync(base);
+  if (baseStat.isSymbolicLink() || !baseStat.isDirectory()) {
+    throw new Error(`scan root must be an ordinary directory: ${base}`);
+  }
   const out: string[] = [];
   const stack: string[] = [base];
   while (stack.length) {
     const d = stack.pop()!;
+    const stat = fs.lstatSync(d);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`scan directory replaced by symlink/non-directory: ${d}`);
     for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
       const full = path.join(d, entry.name);
       if (entry.isDirectory()) stack.push(full);

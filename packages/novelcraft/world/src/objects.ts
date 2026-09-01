@@ -4,7 +4,7 @@
 // 而是经 @novelcraft/store.executeCanonicalWrite(kind='canonical', ADR-0021): 首写前
 // 产出完整确定性 writeSet(输出字节 + 计划时刻当前字节 expected), 内容 CAS/预存 staged
 // fail-closed/崩溃 durable intent 条件回滚由事务层承接; 无关 unstaged/untracked 允许。
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { assertNoSymlinkOnPath, guardPath, paths, slugify } from "@novelcraft/vault";
 import {
   executePreparedCanonicalWrite,
@@ -101,12 +101,15 @@ function toWorldObject(slug: string, data: Record<string, unknown>, file: string
 /** 限定目录内 .md 文件逐个 guardPath + 最终目标 symlink 检查: 指向目录外的
  * symlink(外部)与 vault 内同目录 symlink(内部)一律 fail-closed 抛错。 */
 function readDirObjects(root: string, dir: string): WorldObject[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => {
-      const slug = f.replace(/\.md$/, "");
-      const file = guardedFile(root, dir, f); // R9: 限定目录 containment + symlink 拒绝。
+  const safeDir = guardPath(root, dir);
+  if (!existsSync(safeDir)) return [];
+  const stat = lstatSync(safeDir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`对象目录必须是 vault 内普通目录: ${safeDir}`);
+  return readdirSync(safeDir, { withFileTypes: true })
+    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
+    .map((entry) => {
+      const slug = entry.name.replace(/\.md$/, "");
+      const file = guardedFile(root, safeDir, entry.name); // R9: 限定目录 containment + symlink 拒绝。
       const { data } = parseFrontmatter(readFileSync(file, "utf8"));
       return toWorldObject(slug, data, file);
     });

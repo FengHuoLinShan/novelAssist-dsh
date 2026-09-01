@@ -1,7 +1,7 @@
 // M12-b/N44 行为契约: outline 生成 preview/apply 拆分 + world 生成中心只读模式。
 // 断言依据: 后续开发计划.md M12-b + 台账 §6.18.2(preview 不写资产, apply 显式审批) +
 // §6.17(页面建议只落工作稿) + 铁律 3(apply 必过 approval fail-closed) + N38(prompt 指纹可回放)。
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -193,6 +193,34 @@ describe('outline preview/apply(M12-b/N44)', () => {
       .rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
     expect(existsSync(path.join(env.root, 'structure', 'outline.md'))).toBe(false); // 零写
     env.cleanup();
+  });
+
+  it('proposal 文件 symlink 指向 Vault 外时，审批后仍零 canonical 写且不读取外部记录', async () => {
+    const env = await setup();
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'nc-outline-outside-'));
+    try {
+      const external = path.join(outside, 'proposal.json');
+      writeFileSync(external, JSON.stringify({
+        kind: 'story_outline', run_id: 'pexternal', generated_at: '2026-09-01T00:00:00Z',
+        input_hash: 'x', result: { title: 'EXTERNAL-OUTLINE-MARKER', outline_markdown: '不得采用' },
+        context_receipt: {
+          context_hash: '0'.repeat(64), budget_tokens: 1, total_tokens: 0,
+          source_manifest: [], omitted_source_ids: [], warnings: [], source_snapshot: [],
+        },
+      }));
+      const dir = path.join(env.root, '.assistant', 'proposals');
+      mkdirSync(dir, { recursive: true });
+      symlinkSync(external, path.join(dir, 'outline-pexternal.json'));
+      const approvals = env.h.approval.requests.length;
+      await expect(exec(env, 'novelcraft_outline_apply', { root: env.root, run_id: 'pexternal' }))
+        .rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
+      expect(env.h.approval.requests).toHaveLength(approvals + 1);
+      expect(existsSync(path.join(env.root, 'structure', 'outline.md'))).toBe(false);
+      expect(readFileSync(external, 'utf8')).toContain('EXTERNAL-OUTLINE-MARKER');
+    } finally {
+      env.cleanup();
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('公开 apply 必须携带冻结 context receipt', async () => {

@@ -2,7 +2,7 @@
 // 断言引设计文档 §9/§17 + wire 契约: watch/state 四态数据、inbox/list 卡片
 // (作者语言)、inbox/act 四动词回 assistant.act(adopt 指引给助手, UI 不写资产);
 // 未绑定 → capability 缺省, 不炸通道。
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
@@ -112,6 +112,8 @@ describe('novelcraft RPC 处理器', () => {
     const result = await h.workflowView({ sessionId: 's1' });
     expect(result.ok).toBe(true);
     if (result.ok) {
+      expect(result.value.bound).toEqual({ book: '测试书' });
+      expect(JSON.stringify(result.value)).not.toContain(env.root);
       expect(result.value.runs.map((run) => run.state)).toEqual([
         'running', 'needs-attention', 'completed', 'failed',
       ]);
@@ -382,6 +384,26 @@ describe('novelcraft RPC 处理器', () => {
     env.cleanup();
   });
 
+  it('story/map: scenes 根 symlink 不把 Vault 外 Scene 或绝对路径投影到浏览器', async () => {
+    const env = setup();
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'nc-client-scenes-outside-'));
+    try {
+      const { serializeFrontmatter } = await import('@novelcraft/store');
+      writeFileSync(path.join(outside, 'external.md'), serializeFrontmatter({
+        id: 'external', title: 'EXTERNAL-SCENE-MARKER', status: 'canonical', scene_index: 1,
+      }, '不得投影'));
+      rmSync(path.join(env.root, 'scenes'), { recursive: true, force: true });
+      symlinkSync(outside, path.join(env.root, 'scenes'), 'dir');
+      const result = await createNovelcraftHandlers(env.ctx).storyMap({ sessionId: 's1' });
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain('EXTERNAL-SCENE-MARKER');
+      expect(JSON.stringify(result)).not.toContain(outside);
+    } finally {
+      env.cleanup();
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it('world/workspace: 对象/世界书作者卡，草稿可发布且不暴露 raw JSON', async () => {
     const env = setup();
     const { serializeFrontmatter } = await import('@novelcraft/store');
@@ -409,6 +431,26 @@ describe('novelcraft RPC 处理器', () => {
     const unbound = await h.worldWorkspace({ sessionId: 'unknown' });
     expect(unbound).toMatchObject({ ok: true, value: { bound: null, objects: [], pages: [] } });
     env.cleanup();
+  });
+
+  it('world/workspace: bible 根 symlink 不把 Vault 外页面投影到浏览器', async () => {
+    const env = setup();
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'nc-client-bible-outside-'));
+    try {
+      const { serializeFrontmatter } = await import('@novelcraft/store');
+      writeFileSync(path.join(outside, 'external.md'), serializeFrontmatter({
+        id: 'external', page_key: 'external', title: 'EXTERNAL-BIBLE-MARKER',
+        page_type: 'setting', status: 'canonical', version_number: 1,
+      }, '不得投影'));
+      rmSync(path.join(env.root, 'bible'), { recursive: true, force: true });
+      symlinkSync(outside, path.join(env.root, 'bible'), 'dir');
+      const result = await createNovelcraftHandlers(env.ctx).worldWorkspace({ sessionId: 's1' });
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain('EXTERNAL-BIBLE-MARKER');
+    } finally {
+      env.cleanup();
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('writing/desk: 四模式数据(守望信号/计划结构/参照对象/评审摘要)', async () => {

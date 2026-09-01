@@ -9,9 +9,11 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -72,9 +74,21 @@ function git(root, args) {
   }
 }
 
+function assertHeadFile(root, rel, currentSha256) {
+  let committed;
+  try {
+    committed = execFileSync('git', ['-C', root, 'show', `HEAD:${rel}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch {
+    fail('DIRTY_SOURCE', `${rel} 未被当前 HEAD 跟踪，不能发布`);
+  }
+  if (sha256(committed) !== currentSha256) fail('DIRTY_SOURCE', `${rel} 与当前 HEAD 字节不一致，请先完成受控保存`);
+}
+
 function readChapters(root) {
   const dir = path.join(root, 'chapters');
   if (!existsSync(dir)) fail('NO_CHAPTERS', '缺少 chapters 目录');
+  const dirStat = lstatSync(dir);
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) fail('INVALID_CHAPTER_PATH', 'chapters 必须是 vault 内普通目录');
   const chapters = [];
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (entry.isDirectory() && entry.name === 'pending') continue;
@@ -107,8 +121,13 @@ function readChapters(root) {
 }
 
 function readResources(root) {
-  const base = path.join(root, 'world', 'atlas', 'images');
-  if (!existsSync(base)) return [];
+  let base = root;
+  for (const segment of ['world', 'atlas', 'images']) {
+    base = path.join(base, segment);
+    if (!existsSync(base)) return [];
+    const stat = lstatSync(base);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) fail('INVALID_RESOURCE', `${path.relative(root, base)} 必须是 vault 内普通目录`);
+  }
   const resources = [];
   const walk = (dir, prefix = '') => {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -117,7 +136,14 @@ function readResources(root) {
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) fail('INVALID_RESOURCE', `Atlas 资源不得是符号链接: ${rel}`);
       if (stat.isDirectory()) walk(full, rel);
-      else if (stat.isFile()) resources.push({ rel, full, size: stat.size, sha256: sha256(readFileSync(full)) });
+      else if (stat.isFile()) {
+        const bytes = readFileSync(full);
+        const ext = path.extname(rel).toLowerCase();
+        const png = ext === '.png' && bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        const jpeg = (ext === '.jpg' || ext === '.jpeg') && bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        if (!png && !jpeg) fail('INVALID_RESOURCE', `Atlas 资源只允许 magic 匹配的 PNG/JPEG: ${rel}`);
+        resources.push({ rel, full, size: stat.size, sha256: sha256(bytes) });
+      }
       else fail('INVALID_RESOURCE', `Atlas 资源不是普通文件: ${rel}`);
     }
   };
@@ -127,7 +153,9 @@ function readResources(root) {
 
 function sourceSnapshot(root) {
   const bookFile = path.join(root, 'book.yml');
-  if (!existsSync(bookFile) || !statSync(bookFile).isFile()) fail('INVALID_VAULT', '缺少 book.yml');
+  if (!existsSync(bookFile)) fail('INVALID_VAULT', '缺少 book.yml');
+  const bookStat = lstatSync(bookFile);
+  if (bookStat.isSymbolicLink() || !bookStat.isFile()) fail('INVALID_VAULT', 'book.yml 必须是 vault 内普通文件');
   const dirty = git(root, ['status', '--porcelain=v1', '--', 'book.yml', 'chapters']);
   if (dirty) fail('DIRTY_SOURCE', '书籍元数据或当前章节存在未接收修改，请先通过保存流程同步');
   const bookBytes = readFileSync(bookFile);
@@ -135,6 +163,8 @@ function sourceSnapshot(root) {
   try { book = parseYaml(bookBytes.toString('utf8')); } catch { fail('INVALID_VAULT', 'book.yml 无法解析'); }
   const title = typeof book?.title === 'string' && book.title.trim() ? book.title.trim() : path.basename(root);
   const chapters = readChapters(root);
+  assertHeadFile(root, 'book.yml', sha256(bookBytes));
+  for (const chapter of chapters) assertHeadFile(root, chapter.file, chapter.file_sha256);
   const resources = readResources(root);
   const snapshot = {
     head: git(root, ['rev-parse', '--verify', 'HEAD']),
@@ -268,15 +298,22 @@ function writeFailure(destination, source, error) {
 }
 
 export function publishVault(vaultPath, destinationPath) {
-  const source = path.resolve(vaultPath);
-  const destination = path.resolve(destinationPath);
+  const sourcePath = path.resolve(vaultPath);
+  if (!existsSync(sourcePath) || !statSync(sourcePath).isDirectory()) fail('INVALID_VAULT', '源 vault 不存在');
+  const source = realpathSync(sourcePath);
+  const requestedDestination = path.resolve(destinationPath);
+  const requestedParent = path.dirname(requestedDestination);
+  if (!existsSync(requestedParent) || !statSync(requestedParent).isDirectory()) fail('INVALID_TARGET', '目标父目录不存在');
+  const parent = realpathSync(requestedParent);
+  const destination = path.join(parent, path.basename(requestedDestination));
+  const relative = path.relative(source, destination);
+  if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+    fail('INVALID_TARGET', '目标不得位于源 vault 内部');
+  }
   let temporary;
   try {
-    if (!existsSync(source) || !statSync(source).isDirectory()) fail('INVALID_VAULT', '源 vault 不存在');
     if (existsSync(destination)) fail('TARGET_EXISTS', `目标已存在，拒绝覆盖: ${destination}`);
     if (existsSync(`${destination}.failure.json`)) fail('FAILURE_RECEIPT_EXISTS', '旧失败回执存在，请先审阅并归档');
-    const parent = path.dirname(destination);
-    if (!existsSync(parent) || !statSync(parent).isDirectory()) fail('INVALID_TARGET', '目标父目录不存在');
     const before = sourceSnapshot(source);
     temporary = path.join(parent, `.${path.basename(destination)}.novelcraft-publish-${randomUUID()}`);
     mkdirSync(temporary);
@@ -329,7 +366,7 @@ function selfTest(keep) {
       const body = `${text}\n`;
       writeFileSync(path.join(vault, 'chapters', `${String(index).padStart(3, '0')}.md`), `---\nchapter_index: ${index}\nstatus: published\ntitle: ${title}\ncontent_hash: ${sha256(body)}\n---\n${body}`, 'utf8');
     }
-    writeFileSync(path.join(vault, 'world', 'atlas', 'images', 'city', 'map.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    writeFileSync(path.join(vault, 'world', 'atlas', 'images', 'city', 'map.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     git(vault, ['init', '-q']);
     git(vault, ['config', 'user.name', 'NovelCraft Test']);
     git(vault, ['config', 'user.email', 'test@novelcraft.invalid']);
@@ -340,9 +377,62 @@ function selfTest(keep) {
     if (docx.readUInt32LE(0) !== 0x04034b50 || !zipNames(docx).includes('word/document.xml')) fail('SELF_TEST', 'DOCX 不是有效 OOXML ZIP');
     const manifest = JSON.parse(readFileSync(result.manifest, 'utf8'));
     if (manifest.source.chapters.length !== 2 || manifest.resource_count !== 1 || manifest.artifact.sha256 !== sha256(docx)) fail('SELF_TEST', '发布 manifest 不闭合');
+    const nestedParent = path.join(vault, 'exports');
+    const nestedLink = path.join(root, 'nested-link');
+    mkdirSync(nestedParent);
+    symlinkSync(nestedParent, nestedLink, 'dir');
+    let rejected = false;
+    try { publishVault(vault, path.join(nestedLink, 'nested-bundle')); } catch (error) { rejected = error instanceof PublishError && error.code === 'INVALID_TARGET'; }
+    if (!rejected || existsSync(path.join(nestedParent, 'nested-bundle')) || existsSync(path.join(nestedParent, 'nested-bundle.failure.json'))) {
+      fail('SELF_TEST', '未拒绝经 symlink 落入源 vault 的发布目标');
+    }
+    rmSync(nestedLink, { force: true });
+    rmSync(nestedParent, { recursive: true, force: true });
+    const images = path.join(vault, 'world', 'atlas', 'images');
+    const savedImages = path.join(vault, 'world', 'atlas', 'saved-images');
+    const outsideImages = path.join(root, 'outside-images');
+    renameSync(images, savedImages);
+    mkdirSync(outsideImages);
+    writeFileSync(path.join(outsideImages, 'credentials.json'), '{"token":"must-not-export"}\n');
+    symlinkSync(outsideImages, images, 'dir');
+    rejected = false;
+    try { publishVault(vault, path.join(root, 'resource-symlink-bundle')); } catch (error) { rejected = error instanceof PublishError && error.code === 'INVALID_RESOURCE'; }
+    if (!rejected || existsSync(path.join(root, 'resource-symlink-bundle'))) fail('SELF_TEST', '未拒绝 Atlas 资源根 symlink');
+    rmSync(images, { force: true });
+    renameSync(savedImages, images);
+    const externalChapters = path.join(root, 'external-chapters');
+    const symlinkVault = path.join(root, 'symlink-vault');
+    mkdirSync(externalChapters);
+    const externalBody = '不应被导出的外部正文。\n';
+    writeFileSync(path.join(externalChapters, '001.md'), `---\nchapter_index: 1\nstatus: published\ntitle: 外部正文\ncontent_hash: ${sha256(externalBody)}\n---\n${externalBody}`);
+    mkdirSync(symlinkVault);
+    writeFileSync(path.join(symlinkVault, 'book.yml'), 'title: symlink test\n');
+    symlinkSync(externalChapters, path.join(symlinkVault, 'chapters'), 'dir');
+    git(symlinkVault, ['init', '-q']);
+    git(symlinkVault, ['config', 'user.name', 'NovelCraft Test']);
+    git(symlinkVault, ['config', 'user.email', 'test@novelcraft.invalid']);
+    git(symlinkVault, ['add', 'book.yml', 'chapters']);
+    git(symlinkVault, ['commit', '-q', '-m', 'fixture']);
+    rejected = false;
+    try { publishVault(symlinkVault, path.join(root, 'chapter-symlink-bundle')); } catch (error) { rejected = error instanceof PublishError && error.code === 'INVALID_CHAPTER_PATH'; }
+    if (!rejected || existsSync(path.join(root, 'chapter-symlink-bundle'))) fail('SELF_TEST', '未拒绝 chapters 根 symlink');
+    const ignoredVault = path.join(root, 'ignored-vault');
+    mkdirSync(path.join(ignoredVault, 'chapters'), { recursive: true });
+    writeFileSync(path.join(ignoredVault, '.gitignore'), 'book.yml\nchapters/\n');
+    writeFileSync(path.join(ignoredVault, 'book.yml'), 'title: ignored assets\n');
+    const ignoredBody = '未进入 Git 的正文。\n';
+    writeFileSync(path.join(ignoredVault, 'chapters', '001.md'), `---\nchapter_index: 1\nstatus: published\ntitle: 未跟踪\ncontent_hash: ${sha256(ignoredBody)}\n---\n${ignoredBody}`);
+    git(ignoredVault, ['init', '-q']);
+    git(ignoredVault, ['config', 'user.name', 'NovelCraft Test']);
+    git(ignoredVault, ['config', 'user.email', 'test@novelcraft.invalid']);
+    git(ignoredVault, ['add', '.gitignore']);
+    git(ignoredVault, ['commit', '-q', '-m', 'fixture']);
+    rejected = false;
+    try { publishVault(ignoredVault, path.join(root, 'ignored-assets-bundle')); } catch (error) { rejected = error instanceof PublishError && error.code === 'DIRTY_SOURCE'; }
+    if (!rejected || existsSync(path.join(root, 'ignored-assets-bundle'))) fail('SELF_TEST', '未拒绝未被 HEAD 跟踪的 book/chapters');
     writeFileSync(path.join(vault, 'chapters', '001.md'), `${readFileSync(path.join(vault, 'chapters', '001.md'), 'utf8')}\n未接收修改`, 'utf8');
     const failedDestination = path.join(root, 'failed-bundle');
-    let rejected = false;
+    rejected = false;
     try { publishVault(vault, failedDestination); } catch { rejected = true; }
     const failure = JSON.parse(readFileSync(`${failedDestination}.failure.json`, 'utf8'));
     if (!rejected || existsSync(failedDestination) || failure.status !== 'failed' || failure.code !== 'DIRTY_SOURCE') {

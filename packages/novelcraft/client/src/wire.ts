@@ -525,7 +525,7 @@ export interface WorkflowRunCard {
 }
 
 export interface WorkflowViewValue {
-  bound: { book: string; root: string } | null;
+  bound: { book: string } | null;
   runs: WorkflowRunCard[];
   restart_scope: { start_chapter: number; end_chapter: number } | null;
 }

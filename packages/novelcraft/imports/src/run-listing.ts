@@ -5,8 +5,9 @@
 // 逐 run 读 manifest 提取白名单字段(与 git-run-persistence MANIFEST_TOP_FIELDS 同词汇),
 // 容错列出: 目录缺失 → 空表; 单 run manifest 坏/缺 → corrupt 标注仍列出(R12 目录容错口径)。
 // 纯确定性读面, 零写、零 intent 收敛 —— 供 DSH workflowInspect 能力与作者恢复面消费。
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { join } from "node:path";
+import { guardPath } from "@novelcraft/vault";
 
 export type ListedRunKind = "deep-import" | "map-atlas";
 
@@ -41,9 +42,20 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function readListedManifest(nsRoot: string, runId: string): Record<string, unknown> | string {
-  const manifestPath = join(nsRoot, runId, "manifest.json");
+function readListedManifest(root: string, runAbs: string): Record<string, unknown> | string {
+  let manifestPath: string;
+  try {
+    manifestPath = guardPath(root, join(runAbs, "manifest.json"));
+  } catch (err) {
+    return `manifest.json 路径越界: ${(err as Error).message}`;
+  }
   if (!existsSync(manifestPath)) return "manifest.json 缺失(run 尚未完成 bootstrap 提交, 或为非目录残留)";
+  try {
+    const stat = lstatSync(manifestPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) return "manifest.json 不是普通文件(symlink/非文件拒绝)";
+  } catch (err) {
+    return `manifest.json 检查失败: ${(err as Error).message}`;
+  }
   let text: string;
   try {
     text = readFileSync(manifestPath, "utf8");
@@ -63,25 +75,39 @@ function readListedManifest(nsRoot: string, runId: string): Record<string, unkno
 export function listWorkflowRuns(root: string): ListedWorkflowRun[] {
   const out: ListedWorkflowRun[] = [];
   for (const { prefix, kind } of RUN_NAMESPACES) {
-    const nsRoot = join(root, prefix);
-    if (!existsSync(nsRoot)) continue;
-    let entries: string[];
+    let nsRoot: string;
     try {
-      entries = readdirSync(nsRoot).sort();
+      nsRoot = guardPath(root, join(root, prefix));
+    } catch {
+      continue;
+    }
+    if (!existsSync(nsRoot)) continue;
+    try {
+      const stat = lstatSync(nsRoot);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(nsRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     } catch {
       continue; // namespace 目录不可读 → 该域空表(容错)
     }
-    for (const runId of entries) {
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const runId = entry.name;
       const runAbs = join(nsRoot, runId);
       let isDir = false;
       try {
-        isDir = statSync(runAbs).isDirectory();
+        const stat = lstatSync(runAbs);
+        isDir = stat.isDirectory() && !stat.isSymbolicLink();
       } catch {
         continue;
       }
       if (!isDir) continue;
       const runDir = `${prefix}/${runId}`;
-      const manifest = readListedManifest(nsRoot, runId);
+      const manifest = readListedManifest(root, runAbs);
       if (typeof manifest === "string") {
         out.push({
           kind,

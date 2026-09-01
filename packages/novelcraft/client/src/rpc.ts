@@ -594,7 +594,8 @@ export function createNovelcraftHandlers(ctx: Context) {
         outline_previews: ui.view.outlinePreviews(binding.root).map(outlinePreviewCard),
       });
     } catch (err) {
-      return rpcFail(err instanceof Error ? err.message : String(err));
+      void err;
+      return rpcFail('剧情资料无法安全读取，请检查当前书的目录结构后刷新。');
     }
   },
 
@@ -1079,11 +1080,11 @@ export function createNovelcraftHandlers(ctx: Context) {
     const binding = await resolveRoot(novelcraft, payload);
     if (!binding || !novelcraft?.ui) return rpcOk({ bound: null, runs: [], restart_scope: null });
     const inspect = novelcraft.ui.view.workflowInspect;
-    if (!inspect) return rpcOk({ bound: { book: binding.book, root: binding.root }, runs: [], restart_scope: null });
+    if (!inspect) return rpcOk({ bound: { book: binding.book }, runs: [], restart_scope: null });
     try {
       const view = inspect(binding.root);
       return rpcOk({
-        bound: { book: binding.book, root: binding.root },
+        bound: { book: binding.book },
         runs: view.runs.map((run) => {
           const state = workflowAuthorState(run.status);
           const message = run.corrupt
@@ -1160,7 +1161,8 @@ export function createNovelcraftHandlers(ctx: Context) {
           .sort((a, b) => a.title.localeCompare(b.title)),
       });
     } catch (error) {
-      return rpcFail(error instanceof Error ? error.message : String(error));
+      void error;
+      return rpcFail('世界工作区资料无法安全读取，请检查当前书的目录结构后刷新。');
     }
   },
   };
