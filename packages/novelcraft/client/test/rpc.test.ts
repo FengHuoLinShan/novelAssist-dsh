@@ -28,7 +28,7 @@ interface TestEnv {
 
 function setup(overrides: {
   service?: Partial<NovelcraftHostService>;
-  llm?: { listProviders?: () => string[] };
+  llm?: { listProviders?: () => Array<{ id: string; name?: string }> };
 } = {}): TestEnv {
   const ctx = new Context();
   const root = mkdtempSync(path.join(os.tmpdir(), 'nc-client-'));
@@ -531,7 +531,10 @@ describe('novelcraft RPC 处理器', () => {
           ],
         },
       },
-      llm: { listProviders: () => ['deepseek', 'fake'] },
+      llm: { listProviders: () => [
+        { id: 'deepseek', name: 'DeepSeek' },
+        { id: 'fake', name: 'Fake' },
+      ] },
     });
     const { writeFileSync, mkdirSync } = await import('node:fs');
     mkdirSync(path.join(env.root, '.assistant'), { recursive: true });

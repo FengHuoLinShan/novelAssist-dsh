@@ -320,8 +320,8 @@ function presetCard(p: PresetLike, seedNames: ReadonlySet<string>): ContentPrese
 /** 已注册 provider 路由 id 列表(ctx.llm); 服务缺省/抛错 → 空数组, 不炸。 */
 function listAvailableProviders(ctx: Context): string[] {
   try {
-    const llm = ctx.get('llm') as { listProviders?: () => string[] } | undefined;
-    return llm?.listProviders?.() ?? [];
+    const llm = ctx.get('llm') as { listProviders?: () => Array<{ id: string }> } | undefined;
+    return llm?.listProviders?.().map((provider) => provider.id) ?? [];
   } catch {
     return [];
   }
