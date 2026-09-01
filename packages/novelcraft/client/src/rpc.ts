@@ -49,6 +49,8 @@ import type {
   IntakeStageValue,
   PresetsListPayload,
   PresetsListValue,
+  PresetsEffortSelectPayload,
+  PresetsEffortSelectValue,
   AtlasAnnotationRequestPayload,
   AtlasAnnotationRequestValue,
   AtlasImageIntakeStagePayload,
@@ -92,6 +94,7 @@ export type PresetLike = {
   label?: string;
   provider?: string;
   model?: string;
+  reasoning_effort?: string;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -186,6 +189,19 @@ export interface NovelcraftHostService {
     };
     config: {
       selectPreset(root: string, preset: string | null): void;
+      reasoningOptions?(root: string): Promise<{
+        provider: string;
+        model: string;
+        selected: string | null;
+        adapterDefault: string | null;
+        efforts: Array<{ id: string; name: string; description?: string }>;
+      }>;
+      selectReasoningEffort?(root: string, effort: string | null): Promise<void>;
+      selectPresetValidated?(
+        root: string,
+        preset: string,
+        route: { provider: string; model: string; reasoningEffort?: string },
+      ): Promise<void>;
     };
   };
 }
@@ -309,6 +325,7 @@ function presetCard(p: PresetLike, seedNames: ReadonlySet<string>): ContentPrese
     ...(p.label !== undefined ? { label: p.label } : {}),
     ...(p.provider !== undefined ? { provider: p.provider } : {}),
     ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.reasoning_effort !== undefined ? { reasoning_effort: p.reasoning_effort } : {}),
     ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
     ...(p.top_p !== undefined ? { top_p: p.top_p } : {}),
     ...(p.max_tokens !== undefined ? { max_tokens: p.max_tokens } : {}),
@@ -732,12 +749,42 @@ export function createNovelcraftHandlers(ctx: Context) {
     const registered = await listPresets(novelcraft);
     const list = registered.length > 0 ? registered : seeds;
     const seedNames = new Set(seeds.map((s) => s.name));
+    const route = defaultRouteOf(novelcraft);
+    let reasoning: PresetsListValue['reasoning'] = null;
+    if (binding) {
+      if (!novelcraft?.ui?.config.reasoningOptions) {
+        reasoning = {
+          status: 'unavailable', provider: route.provider, model: route.model,
+          selected: null, adapter_default: null, options: [], message: '宿主未提供思考等级能力查询',
+        };
+      } else {
+        try {
+          const live = await novelcraft.ui.config.reasoningOptions(binding.root);
+          reasoning = {
+            status: live.efforts.length > 0 ? 'ready' : 'unavailable',
+            provider: live.provider,
+            model: live.model,
+            selected: live.selected,
+            adapter_default: live.adapterDefault,
+            options: live.efforts,
+            message: live.efforts.length > 0 ? '' : '当前模型未公开可选思考等级',
+          };
+        } catch (err) {
+          reasoning = {
+            status: 'unavailable', provider: route.provider, model: route.model,
+            selected: null, adapter_default: null, options: [],
+            message: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+    }
     return rpcOk({
       bound: binding ? { book: binding.book, root: binding.root } : null,
       presets: list.map((p) => presetCard(p, seedNames)),
       active: binding && novelcraft?.ui ? (novelcraft.ui.view.vaultPolicy(binding.root).llm.preset ?? null) : null,
-      defaultRoute: defaultRouteOf(novelcraft),
+      defaultRoute: route,
       availableProviders: listAvailableProviders(ctx),
+      reasoning,
     });
   },
 
@@ -760,7 +807,21 @@ export function createNovelcraftHandlers(ctx: Context) {
       // 写边界(N19): 只允许经宿主 ui.config.selectPreset 写 llm.yml 的 preset 单键
       // (配置非资产, 不过 approval)。
       try {
-        ui.config.selectPreset(binding.root, name);
+        const route = defaultRouteOf(novelcraft);
+        const provider = found.provider ?? route.provider;
+        const model = found.model ?? route.model;
+        if (found.reasoning_effort !== undefined) {
+          if (!ui.config.selectPresetValidated) {
+            return rpcFail('宿主未提供思考等级写前校验，预设未写入');
+          }
+          await ui.config.selectPresetValidated(binding.root, name, {
+            provider,
+            model,
+            reasoningEffort: found.reasoning_effort,
+          });
+        } else {
+          ui.config.selectPreset(binding.root, name);
+        }
       } catch (err) {
         return rpcFail(err instanceof Error ? err.message : String(err));
       }
@@ -771,7 +832,7 @@ export function createNovelcraftHandlers(ctx: Context) {
       return rpcOk({
         ok: true,
         active: ui.view.vaultPolicy(binding.root).llm.preset ?? null,
-        message: `内容手已切到「${label}」(${provider}·${model})`,
+        message: `内容手已切到「${label}」(${provider}·${model}${found.reasoning_effort ? `·${found.reasoning_effort}` : ''})`,
       });
     }
     // name === null: 恢复默认(移除 llm.yml 的 preset 键, 其余键原样保留)。
@@ -785,6 +846,24 @@ export function createNovelcraftHandlers(ctx: Context) {
       active: ui.view.vaultPolicy(binding.root).llm.preset ?? null,
       message: '已恢复默认(内容手继承助手配置)',
     });
+  },
+
+  async presetsEffortSelect(payload: PresetsEffortSelectPayload): Promise<RpcResult<PresetsEffortSelectValue>> {
+    const binding = await resolveRoot(novelcraft, payload);
+    if (!binding) return rpcFail('未绑定工作区: 请先在助手侧打开这本书的会话。');
+    if (payload.effort !== null && typeof payload.effort !== 'string') return rpcFail('思考等级格式错误');
+    const select = novelcraft?.ui?.config.selectReasoningEffort;
+    if (!select) return rpcFail('宿主未提供思考等级配置能力');
+    try {
+      await select(binding.root, payload.effort);
+      return rpcOk({
+        ok: true,
+        selected: payload.effort,
+        message: payload.effort === null ? '已恢复模型默认思考等级' : `思考等级已设为「${payload.effort}」`,
+      });
+    } catch (err) {
+      return rpcFail(err instanceof Error ? err.message : String(err));
+    }
   },
 
   // ---- map-atlas(Phase 6; 只读视图 + 标注队列请求, 不写资产; 铁律 3) ----

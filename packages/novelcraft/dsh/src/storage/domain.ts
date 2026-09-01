@@ -51,6 +51,7 @@ const presetSchema = z.object({
   label: z.string().optional(),
   provider: z.string().optional(),
   model: z.string().optional(),
+  reasoning_effort: z.string().optional(),
   temperature: z.number().optional(),
   top_p: z.number().optional(),
   max_tokens: z.number().optional(),

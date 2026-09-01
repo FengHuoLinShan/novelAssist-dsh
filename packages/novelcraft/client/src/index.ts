@@ -87,6 +87,7 @@ export function apply(ctx: Context): void {
       [ENDPOINTS.chapterStageEdit]: (p) => handlers.chapterStageEdit(p),
       [ENDPOINTS.presetsList]: (p) => handlers.presetsList(p),
       [ENDPOINTS.presetsSelect]: (p) => handlers.presetsSelect(p),
+      [ENDPOINTS.presetsEffortSelect]: (p) => handlers.presetsEffortSelect(p),
       [ENDPOINTS.atlasView]: (p) => handlers.atlasView(p),
       [ENDPOINTS.atlasAnnotationRequest]: (p) => handlers.atlasAnnotationRequest(p),
     };

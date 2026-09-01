@@ -3,14 +3,15 @@
 //         D13(多模型预设)/铁律 6(Key 不进任何文件——本测试全链无 Key 字段)。
 // withAbortSignal 套件: 工具取消信号与 llm-step timeout 的合并/清理(工具取消贯通)。
 import { getEventListeners } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ReasoningEffortId, type LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm';
 import { selectPresetInLlmYml } from '@novelcraft/llm-step';
 import type { Provider, ProviderRequest, ProviderResponse } from '@novelcraft/llm-step';
 import { NovelCraftService, withAbortSignal, withResolvedDefaults } from '../src/index.js';
-import { makeContext, type HarnessServices } from './helpers.js';
+import { FakeAdapter, makeContext, type HarnessServices } from './helpers.js';
 
 const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
 
@@ -42,6 +43,20 @@ async function setup(): Promise<TestEnv> {
   };
 }
 
+class LiveReasoningAdapter extends FakeAdapter {
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return {
+      provider,
+      id: model,
+      name: model,
+      reasoning: {
+        efforts: ['high', 'max'].map((id) => ({ id: ReasoningEffortId(id), name: id.toUpperCase() })),
+        defaultEffort: ReasoningEffortId('high'),
+      },
+    };
+  }
+}
+
 describe('ContentPresetRegistry(N20 插件自建预设层)', () => {
   it('种子四张兜底 + upsert/list/remove + 同名存储覆盖种子', async () => {
     const env = await setup();
@@ -49,9 +64,10 @@ describe('ContentPresetRegistry(N20 插件自建预设层)', () => {
     expect(names).toContain('default');
     expect(names).toContain('writing-day');
     // upsert 合法卡
-    expect(await env.service.presets.upsert({ name: 'my-card', provider: 'fake', model: 'fake-x', temperature: 0.33, workflow_budget: 12_345 })).toEqual([]);
+    expect(await env.service.presets.upsert({ name: 'my-card', provider: 'fake', model: 'fake-x', reasoning_effort: 'vendor-max', temperature: 0.33, workflow_budget: 12_345 })).toEqual([]);
     const persisted = (await env.service.presets.list()).find((p) => p.name === 'my-card');
     expect(persisted?.workflow_budget).toBe(12_345);
+    expect(persisted?.reasoning_effort).toBe('vendor-max');
     // 非法卡被拒绝(校验问题非空)
     expect((await env.service.presets.upsert({ name: '坏 名字' })).length).toBeGreaterThan(0);
     // 同名覆盖种子
@@ -66,13 +82,14 @@ describe('ContentPresetRegistry(N20 插件自建预设层)', () => {
 
   it('resolveDefaults: llm.yml preset 名 → 预设参数; llm.yml 直键覆盖预设; 未知名 fail-soft 空', async () => {
     const env = await setup();
-    await env.service.presets.upsert({ name: 'my-card', provider: 'fake', model: 'fake-x', temperature: 0.33, max_tokens: 1234 });
+    await env.service.presets.upsert({ name: 'my-card', provider: 'fake', model: 'fake-x', reasoning_effort: 'vendor-high', temperature: 0.33, max_tokens: 1234 });
     selectPresetInLlmYml(env.root, 'my-card');
     const d1 = await env.service.presets.resolveDefaults(env.root);
     expect(d1.provider).toBe('fake');
     expect(d1.model).toBe('fake-x');
     expect(d1.temperature).toBe(0.33);
     expect(d1.maxTokens).toBe(1234);
+    expect(d1.reasoning_effort).toBe('vendor-high');
     // 未知预设名 → 空默认(fail-soft, 不炸)
     selectPresetInLlmYml(env.root, 'ghost');
     expect(await env.service.presets.resolveDefaults(env.root)).toEqual({});
@@ -91,14 +108,52 @@ describe('withResolvedDefaults(请求级优先)', () => {
         return { text: '{}' };
       },
     };
-    const wrapped = withResolvedDefaults(inner, { provider: 'fake', model: 'fake-x', temperature: 0.2, maxTokens: 999 });
+    const wrapped = withResolvedDefaults(inner, { provider: 'fake', model: 'fake-x', reasoning_effort: 'vendor-high', temperature: 0.2, maxTokens: 999 });
     await wrapped.complete({ messages: [] });
     expect(seen[0].provider).toBe('fake');
     expect(seen[0].model).toBe('fake-x');
     expect(seen[0].maxTokens).toBe(999);
-    await wrapped.complete({ messages: [], model: 'req-model', provider: 'req-provider' });
+    expect(seen[0].reasoning_effort).toBe('vendor-high');
+    await wrapped.complete({ messages: [], model: 'req-model', provider: 'req-provider', reasoning_effort: 'vendor-max' });
     expect(seen[1].model).toBe('req-model');
     expect(seen[1].provider).toBe('req-provider');
+    expect(seen[1].reasoning_effort).toBe('vendor-max');
+  });
+});
+
+describe('live exact-model effort 写前校验(M3b)', () => {
+  it('未知 effort 零写入；合法内容卡的下一次 receipt 显示实际值', async () => {
+    const env = await setup();
+    const adapter = new LiveReasoningAdapter();
+    env.h.ctx.llm.registerAdapter(['effort-live'], adapter);
+    await env.service.presets.upsert({
+      name: 'effort-card', provider: 'effort-live', model: 'model-x', reasoning_effort: 'max',
+    });
+    const file = path.join(env.root, '.assistant', 'llm.yml');
+    const snapshot = () => existsSync(file) ? readFileSync(file, 'utf8') : null;
+    const before = snapshot();
+    await expect(env.service.ui.config.selectPresetValidated(env.root, 'effort-card', {
+      provider: 'effort-live', model: 'model-x', reasoningEffort: 'low',
+    })).rejects.toThrow('不支持思考等级');
+    expect(snapshot()).toBe(before);
+
+    await env.service.ui.config.selectPresetValidated(env.root, 'effort-card', {
+      provider: 'effort-live', model: 'model-x', reasoningEffort: 'max',
+    });
+    const live = await env.service.ui.config.reasoningOptions(env.root);
+    expect(live).toMatchObject({
+      provider: 'effort-live', model: 'model-x', selected: 'max', adapterDefault: 'high',
+    });
+    expect(live.efforts.map((effort) => effort.id)).toEqual(['high', 'max']);
+
+    adapter.enqueue({ deltas: ['{"findings":[],"verdict":"通过"}'] });
+    const result = await env.service.runStep({ specRef: 'semantic_review', input: '正文' }, env.root);
+    expect(result.ok).toBe(true);
+    expect(adapter.requests[0].reasoningEffort).toBe('max');
+    expect(result.effective).toMatchObject({
+      requested_effort: 'max', effective_effort: 'max', effort_source: 'request',
+    });
+    env.cleanup();
   });
 });
 

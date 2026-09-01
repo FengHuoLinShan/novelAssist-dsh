@@ -11,6 +11,7 @@ import type {
   InboxListValue,
   IntakeStageValue,
   PresetsListValue,
+  PresetsEffortSelectValue,
   PresetsSelectValue,
   StoryMapValue,
   WatchStateValue,
@@ -409,7 +410,7 @@ export function useWritingDesk(connection: RpcCaller | undefined, sessionId: str
   return { data, refresh }
 }
 
-/** 模型预设数据源(presets/list + presets/select; N20/D13)。select 失败返回 {ok:false, message}。 */
+/** 模型预设数据源(presets/list + presets/select; N20/D13)。写入成功即刷新。 */
 export function useModelPresets(connection: RpcCaller | undefined, sessionId: string | undefined) {
   const [data, setData] = useState<PresetsListValue | null>(null)
   const [busy, setBusy] = useState(false)
@@ -445,7 +446,25 @@ export function useModelPresets(connection: RpcCaller | undefined, sessionId: st
     [connection, sessionId, refresh],
   )
 
-  return { data, busy, refresh, select }
+  const selectEffort = useCallback(
+    async (effort: string | null): Promise<{ ok: boolean; message: string } | null> => {
+      setBusy(true)
+      try {
+        const value = await call<PresetsEffortSelectValue>(connection, ENDPOINTS.presetsEffortSelect, {
+          sessionId,
+          effort,
+        })
+        if (value === null) return null
+        if (value.ok) void refresh()
+        return { ok: value.ok, message: value.message }
+      } finally {
+        setBusy(false)
+      }
+    },
+    [connection, sessionId, refresh],
+  )
+
+  return { data, busy, refresh, select, selectEffort }
 }
 
 /** 章节档案数据源(chapter/dossier; §17.5.1 每章一整页钻取; chapterIndex 变化重取, null 清空)。 */

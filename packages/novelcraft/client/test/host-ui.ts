@@ -4,7 +4,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { act, inboxView, plotSummaryLine, pushSignal, scanHealthSignals } from '@novelcraft/assistant';
-import { DEFAULT_CONTENT_PRESETS, resolvePolicy, selectPresetInLlmYml } from '@novelcraft/llm-step';
+import {
+  DEFAULT_CONTENT_PRESETS,
+  resolvePolicy,
+  selectPresetInLlmYml,
+  selectReasoningEffortInLlmYml,
+} from '@novelcraft/llm-step';
 import {
   chapterDossier,
   chapterHistoryCardView,
@@ -168,6 +173,26 @@ export function makeHostUi(): NovelcraftHostService['ui'] {
     },
     config: {
       selectPreset: (root, preset) => {
+        selectPresetInLlmYml(root, preset);
+      },
+      reasoningOptions: async (root) => ({
+        provider: resolvePolicy(root).llm.provider ?? 'deepseek',
+        model: resolvePolicy(root).llm.model ?? 'deepseek-v4-flash',
+        selected: resolvePolicy(root).llm.reasoning_effort ?? null,
+        adapterDefault: 'high',
+        efforts: [
+          { id: 'high', name: 'High' },
+          { id: 'max', name: 'Max' },
+        ],
+      }),
+      selectReasoningEffort: async (root, effort) => {
+        if (effort !== null && !['high', 'max'].includes(effort)) throw new Error('当前模型不支持该思考等级');
+        selectReasoningEffortInLlmYml(root, effort);
+      },
+      selectPresetValidated: async (root, preset, route) => {
+        if (route.reasoningEffort !== undefined && !['high', 'max'].includes(route.reasoningEffort)) {
+          throw new Error('当前模型不支持该思考等级');
+        }
         selectPresetInLlmYml(root, preset);
       },
     },

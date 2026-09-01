@@ -14,6 +14,8 @@ export interface ContentPreset {
   provider?: string;
   /** 模型 id; 缺省 = 继承插件 Config.llm.model */
   model?: string;
+  /** Adapter-owned opaque reasoning effort id. */
+  reasoning_effort?: string;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -24,10 +26,10 @@ export interface ContentPreset {
 /** 种子预设(可在预设面板增删改; 模型槽位按用户 DSH 已配置 provider 选择)。 */
 export const DEFAULT_CONTENT_PRESETS: ContentPreset[] = [
   { name: "default", label: "默认(继承助手配置)" },
-  // DSH rc.8 GenerateOptions 尚无 top_p transport；种子卡不得默认携带不可执行参数。
-  { name: "writing-day", label: "写作日", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.7 },
-  { name: "import-day", label: "导入日", provider: "deepseek", model: "deepseek-v4-flash", temperature: 0.2, timeout_ms: 900_000 },
-  { name: "polish", label: "精修校对", provider: "deepseek", model: "deepseek-v4-pro", temperature: 0.25 },
+  // DeepSeek V4 thinking 模式忽略 temperature/top_p；种子卡只保留可执行的 high effort。
+  { name: "writing-day", label: "写作日", provider: "deepseek", model: "deepseek-v4-pro", reasoning_effort: "high" },
+  { name: "import-day", label: "导入日", provider: "deepseek", model: "deepseek-v4-flash", reasoning_effort: "high", timeout_ms: 900_000 },
+  { name: "polish", label: "精修校对", provider: "deepseek", model: "deepseek-v4-pro", reasoning_effort: "high" },
 ];
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/;
@@ -46,6 +48,9 @@ export function validateContentPreset(v: unknown): string[] {
   }
   if (o.model !== undefined && (typeof o.model !== "string" || o.model === "")) {
     issues.push("model 必须是非空字符串");
+  }
+  if (o.reasoning_effort !== undefined && (typeof o.reasoning_effort !== "string" || !/^\S{1,64}$/.test(o.reasoning_effort))) {
+    issues.push("reasoning_effort 必须是非空无空白标识(≤64)");
   }
   if (o.temperature !== undefined && (typeof o.temperature !== "number" || o.temperature < 0 || o.temperature > 2)) {
     issues.push("temperature 必须在 [0,2]");
@@ -80,6 +85,7 @@ export function parseContentPresets(v: unknown): ContentPreset[] {
       ...(p.label !== undefined ? { label: p.label } : {}),
       ...(p.provider !== undefined ? { provider: p.provider } : {}),
       ...(p.model !== undefined ? { model: p.model } : {}),
+      ...(p.reasoning_effort !== undefined ? { reasoning_effort: p.reasoning_effort } : {}),
       ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
       ...(p.top_p !== undefined ? { top_p: p.top_p } : {}),
       ...(p.max_tokens !== undefined ? { max_tokens: p.max_tokens } : {}),
@@ -95,6 +101,28 @@ export function findPreset(presets: ContentPreset[], name: string): ContentPrese
   return presets.find((p) => p.name === name);
 }
 
+function selectLlmYmlKey(
+  root: string,
+  key: "preset" | "reasoning_effort" | "embedding",
+  value: string | null,
+): void {
+  const file = paths(root).assistant.llm;
+  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n") : [];
+  const out: string[] = [];
+  let wrote = false;
+  for (const line of lines) {
+    if (!/^\s/.test(line) && line.match(/^([A-Za-z_]+)\s*:/)?.[1] === key) {
+      if (value !== null) out.push(`${key}: ${value}`);
+      wrote = true;
+    } else {
+      out.push(line);
+    }
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+  if (!wrote && value !== null) out.push(`${key}: ${value}`);
+  writeFileSync(file, out.join("\n") + "\n", "utf8");
+}
+
 /**
  * 把预设名写入 .assistant/llm.yml(N19: 只动 preset 一键; 其余键原样保留)。
  * name = null → 移除 preset 键(回退继承); 非法名抛错(NAME_RE 防 YAML 注入)。
@@ -104,25 +132,15 @@ export function selectPresetInLlmYml(root: string, name: string | null): void {
   if (name !== null && !NAME_RE.test(name)) {
     throw new Error(`预设名非法: ${name}(slug 风格, 字母数字起头)`);
   }
-  const file = paths(root).assistant.llm;
-  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n") : [];
-  const out: string[] = [];
-  let wrote = false;
-  for (const line of lines) {
-    // 顶层 preset 键(缩进行属嵌套节, 不动)
-    if (!/^[\s]/.test(line) && /^preset\s*:/.test(line)) {
-      if (name !== null) out.push(`preset: ${name}`);
-      wrote = true;
-      continue;
-    }
-    out.push(line);
+  selectLlmYmlKey(root, "preset", name);
+}
+
+/** 写入/清除书级 reasoning effort；live exact-model 校验由 DSH client face 在写前完成。 */
+export function selectReasoningEffortInLlmYml(root: string, value: string | null): void {
+  if (value !== null && !/^\S{1,64}$/.test(value)) {
+    throw new Error("reasoning_effort 必须是非空无空白标识(≤64)");
   }
-  if (!wrote && name !== null) {
-    while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
-    out.push(`preset: ${name}`);
-  }
-  while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
-  writeFileSync(file, out.join("\n") + "\n", "utf8");
+  selectLlmYmlKey(root, "reasoning_effort", value);
 }
 /** L2 嵌入后端合法值(llm.yml embedding 键)。 */
 export type EmbeddingBackendKey = "off" | "bge-local-v1";
@@ -139,23 +157,5 @@ export function selectEmbeddingInLlmYml(root: string, value: "off" | "bge-local-
   if (value !== null && !EMBEDDING_KEYS.includes(value)) {
     throw new Error(`嵌入后端值非法: ${String(value)}(可选: off / bge-local-v1)`);
   }
-  const file = paths(root).assistant.llm;
-  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n") : [];
-  const out: string[] = [];
-  let wrote = false;
-  for (const line of lines) {
-    // 顶层 embedding 键(缩进行属嵌套节, 不动)
-    if (!/^[\s]/.test(line) && /^embedding\s*:/.test(line)) {
-      if (value !== null) out.push(`embedding: ${value}`);
-      wrote = true;
-      continue;
-    }
-    out.push(line);
-  }
-  if (!wrote && value !== null) {
-    while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
-    out.push(`embedding: ${value}`);
-  }
-  while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
-  writeFileSync(file, out.join("\n") + "\n", "utf8");
+  selectLlmYmlKey(root, "embedding", value);
 }

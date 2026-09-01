@@ -79,6 +79,7 @@ export class ContentPresetRegistry {
       ...(preset.label !== undefined ? { label: preset.label } : {}),
       ...(preset.provider !== undefined ? { provider: preset.provider } : {}),
       ...(preset.model !== undefined ? { model: preset.model } : {}),
+      ...(preset.reasoning_effort !== undefined ? { reasoning_effort: preset.reasoning_effort } : {}),
       ...(preset.temperature !== undefined ? { temperature: preset.temperature } : {}),
       ...(preset.top_p !== undefined ? { top_p: preset.top_p } : {}),
       ...(preset.max_tokens !== undefined ? { max_tokens: preset.max_tokens } : {}),
@@ -155,12 +156,14 @@ export class ContentPresetRegistry {
     return {
       ...(preset?.provider ? { provider: preset.provider } : {}),
       ...(preset?.model ? { model: preset.model } : {}),
+      ...(preset?.reasoning_effort !== undefined ? { reasoning_effort: preset.reasoning_effort } : {}),
       ...(preset?.temperature !== undefined ? { temperature: preset.temperature } : {}),
       ...(preset?.top_p !== undefined ? { top_p: preset.top_p } : {}),
       ...(preset?.max_tokens !== undefined ? { maxTokens: preset.max_tokens } : {}),
       ...(preset?.timeout_ms !== undefined ? { timeoutMs: preset.timeout_ms } : {}),
       // llm.yml 直键覆盖预设同名参数(N5 键划分: llm.yml 是项目级 LLM 设置)。
       ...(llm.model ? { model: llm.model } : {}),
+      ...(llm.reasoning_effort !== undefined ? { reasoning_effort: llm.reasoning_effort } : {}),
       ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
       ...(llm.top_p !== undefined ? { top_p: llm.top_p } : {}),
       ...(llm.max_tokens !== undefined ? { maxTokens: llm.max_tokens } : {}),

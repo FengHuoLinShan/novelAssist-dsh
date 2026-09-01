@@ -66,6 +66,8 @@ describe('parseLlmYmlStrict(未知键/secret/类型/数字/小数/越界 fail-cl
     ['provider 含空白', 'provider: "deep seek"\n'],
     ['model 空值', 'model: ""\n'],
     ['model 含空白', 'model: "bad model"\n'],
+    ['reasoning_effort 空值', 'reasoning_effort: ""\n'],
+    ['reasoning_effort 含空白', 'reasoning_effort: "vendor high"\n'],
     ['embedding 非法值', 'embedding: llama-local\n'],
     ['重复键', 'model: a\nmodel: b\n'],
     ['嵌套节(执行面不允许)', '  model: x\n'],
@@ -85,11 +87,12 @@ describe('parseLlmYmlStrict(未知键/secret/类型/数字/小数/越界 fail-cl
   }
 
   it('合法最小配置 → 全部严格字段解析', () => {
-    const out = parseLlmYmlStrict('preset: import-day\nmodel: deepseek-v4-flash\nprovider: deepseek\ntemperature: 0.2\ntop_p: 0.8\nmax_tokens: 8192\ntimeout_ms: 900000\nembedding: off\n');
+    const out = parseLlmYmlStrict('preset: import-day\nmodel: deepseek-v4-flash\nprovider: deepseek\nreasoning_effort: high\ntemperature: 0.2\ntop_p: 0.8\nmax_tokens: 8192\ntimeout_ms: 900000\nembedding: off\n');
     expect(out).toEqual({
       preset: 'import-day',
       model: 'deepseek-v4-flash',
       provider: 'deepseek',
+      reasoning_effort: 'high',
       temperature: 0.2,
       top_p: 0.8,
       max_tokens: 8192,

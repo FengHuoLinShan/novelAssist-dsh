@@ -233,6 +233,7 @@ export async function resolveExecutionProfile(
       assignDefined(raw, {
         provider: preset.provider,
         model: preset.model,
+        reasoning_effort: preset.reasoning_effort,
         temperature: preset.temperature,
         top_p: preset.top_p,
         maxTokens: preset.max_tokens,
@@ -247,6 +248,7 @@ export async function resolveExecutionProfile(
     assignDefined(raw, {
       provider: llm.provider,
       model: llm.model,
+      reasoning_effort: llm.reasoning_effort,
       temperature: llm.temperature,
       top_p: llm.top_p,
       maxTokens: llm.max_tokens,

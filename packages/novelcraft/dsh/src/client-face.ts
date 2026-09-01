@@ -6,15 +6,23 @@
 // stage/records 的信号推送尽力而为(通道缺省静默)。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Context } from '@deepseek-ai/cordis';
+import type { LlmRuntime, LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm';
 import path from 'node:path';
 import * as assistant from '@novelcraft/assistant';
-import { DEFAULT_CONTENT_PRESETS, resolvePolicy, selectPresetInLlmYml, type ResolvedPolicy } from '@novelcraft/llm-step';
+import {
+  DEFAULT_CONTENT_PRESETS,
+  resolvePolicy,
+  selectPresetInLlmYml,
+  selectReasoningEffortInLlmYml,
+  type ResolvedPolicy,
+} from '@novelcraft/llm-step';
 import * as store from '@novelcraft/store';
 import { assertNoSymlinkOnPath, assertSafePathSegment, guardPath, paths, type StagedFileIntake } from '@novelcraft/vault';
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import type { NovelCraftCapabilities } from './capabilities.js';
 import { pushSignalsChanged } from './push.js';
+import { svc } from './ctx.js';
 import type { NovelCraftService } from './service.js';
 
 /** 图片预览上限: ≤2MB 给 base64 data URL, 大图只回元数据与相对路径(计划 Phase 6)。 */
@@ -26,6 +34,7 @@ export type PresetLike = {
   label?: string;
   provider?: string;
   model?: string;
+  reasoning_effort?: string;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -106,7 +115,25 @@ export interface NovelcraftUiFace {
   readonly config: {
     /** 选预设卡(N19: 配置非资产, 不过审批; 只写 llm.yml preset 单键; 未知名由调用方校验)。 */
     selectPreset(root: string, preset: string | null): void;
+    /** Exact-model reasoning options; every call resolves the live adapter and does not cache. */
+    reasoningOptions(root: string): Promise<ReasoningOptionsView>;
+    /** Validate against the current exact route, then write only reasoning_effort. */
+    selectReasoningEffort(root: string, effort: string | null): Promise<void>;
+    /** Validate a preset's effort against its own exact route before writing preset. */
+    selectPresetValidated(
+      root: string,
+      preset: string,
+      route: { provider: string; model: string; reasoningEffort?: string },
+    ): Promise<void>;
   };
+}
+
+export interface ReasoningOptionsView {
+  provider: string;
+  model: string;
+  selected: string | null;
+  adapterDefault: string | null;
+  efforts: Array<{ id: string; name: string; description?: string }>;
 }
 
 function bestEffortPush(ctx: Context, root: string): void {
@@ -119,6 +146,32 @@ function bestEffortPush(ctx: Context, root: string): void {
 
 /** 构建 service.ui(构造期一次; 深冻结防运行时替换)。ctx 显式传入(Service.ctx 为 protected)。 */
 export function createNovelcraftClientFace(ctx: Context, service: NovelCraftService): NovelcraftUiFace {
+  const resolveReasoning = async (
+    provider: string,
+    model: string,
+    selected: string | null,
+  ): Promise<ReasoningOptionsView> => {
+    const llm = svc<LlmRuntime>(ctx, 'llm');
+    if (!llm) throw new Error('DSH llm 服务不可用，无法读取思考等级');
+    const info: LlmResolvedModelInfo = await llm.resolveModelInfo(provider, model);
+    return {
+      provider,
+      model,
+      selected,
+      adapterDefault: info.reasoning?.defaultEffort ?? null,
+      efforts: (info.reasoning?.efforts ?? []).map((effort) => ({
+        id: effort.id,
+        name: effort.name,
+        ...(effort.description !== undefined ? { description: effort.description } : {}),
+      })),
+    };
+  };
+  const assertEffort = async (provider: string, model: string, effort: string): Promise<void> => {
+    const options = await resolveReasoning(provider, model, effort);
+    if (!options.efforts.some((candidate) => candidate.id === effort)) {
+      throw new Error(`当前模型不支持思考等级「${effort}」，配置未写入`);
+    }
+  };
   const face: NovelcraftUiFace = {
     read: service.capabilities.read,
     view: Object.freeze({
@@ -221,6 +274,25 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
     }),
     config: Object.freeze({
       selectPreset: (root, preset) => {
+        selectPresetInLlmYml(root, preset);
+      },
+      reasoningOptions: async (root) => {
+        const profile = await service.resolveProfile(root);
+        if (!profile.provider || !profile.model) throw new Error('当前书未解析出 provider/model');
+        return resolveReasoning(profile.provider, profile.model, profile.reasoning_effort ?? null);
+      },
+      selectReasoningEffort: async (root, effort) => {
+        if (effort !== null) {
+          const profile = await service.resolveProfile(root);
+          if (!profile.provider || !profile.model) throw new Error('当前书未解析出 provider/model');
+          await assertEffort(profile.provider, profile.model, effort);
+        }
+        selectReasoningEffortInLlmYml(root, effort);
+      },
+      selectPresetValidated: async (root, preset, route) => {
+        if (route.reasoningEffort !== undefined) {
+          await assertEffort(route.provider, route.model, route.reasoningEffort);
+        }
         selectPresetInLlmYml(root, preset);
       },
     }),

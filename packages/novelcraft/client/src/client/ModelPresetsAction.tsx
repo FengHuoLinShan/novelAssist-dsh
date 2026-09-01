@@ -20,9 +20,10 @@ export type ModelPresetsActionProps =
 /** 参数摘要行(对齐父仓库 presetSummary「T x · P y」; 无 T/P 时回退 max_tokens/超时)。 */
 function paramSummary(p: ContentPresetCard): string {
   const parts: string[] = []
+  if (p.reasoning_effort !== undefined) parts.push(`R ${p.reasoning_effort}`)
   if (p.temperature !== undefined) parts.push(`T ${p.temperature}`)
   if (p.top_p !== undefined) parts.push(`P ${p.top_p}`)
-  if (parts.length === 0) {
+  if (p.temperature === undefined && p.top_p === undefined) {
     if (p.max_tokens !== undefined) parts.push(`max ${p.max_tokens}`)
     if (p.timeout_ms !== undefined) parts.push(`${Math.round(p.timeout_ms / 1000)}s`)
   }
@@ -33,7 +34,7 @@ export function ModelPresetsAction(props: ModelPresetsActionProps): JSX.Element 
   const { t, connection, sessionId } = props
   const [open, setOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const { data, busy, select } = useModelPresets(connection, sessionId)
+  const { data, busy, select, selectEffort } = useModelPresets(connection, sessionId)
 
   const bound = data?.bound != null
   // 顶卡即「默认(继承助手配置)」(preset=null), 网格去重同名 seed 卡。
@@ -52,6 +53,12 @@ export function ModelPresetsAction(props: ModelPresetsActionProps): JSX.Element 
     }
     // 宿主消息即作者语言; 兜底用文案键。
     setNotice(result.ok ? result.message || t('preset.select.ok') : result.message || t('preset.select.fail'))
+  }
+
+  const applyEffort = async (effort: string | null): Promise<void> => {
+    setNotice(null)
+    const result = await selectEffort(effort)
+    setNotice(result?.message ?? t('preset.select.fail'))
   }
 
   return (
@@ -124,6 +131,25 @@ export function ModelPresetsAction(props: ModelPresetsActionProps): JSX.Element 
             <div className={css.presetMeta}>
               {t('preset.available')}: {availableProviders.length > 0 ? availableProviders.join(' / ') : '—'}
             </div>
+            {data.reasoning?.status === 'ready' ? (
+              <label className={css.presetControl}>
+                <span>{t('preset.effort')}</span>
+                <select
+                  value={data.reasoning.selected ?? ''}
+                  onChange={(event) => void applyEffort(event.currentTarget.value || null)}
+                  disabled={busy}
+                >
+                  <option value="">{t('preset.effort.default')}</option>
+                  {data.reasoning.options.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}{option.id === data.reasoning?.adapter_default ? ` · ${t('preset.effort.adapterDefault')}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : data.reasoning?.message ? (
+              <div className={css.presetMeta}>{t('preset.effort')}: {data.reasoning.message}</div>
+            ) : null}
             {notice ? <div className={css.message}>{notice}</div> : null}
           </div>
         )}

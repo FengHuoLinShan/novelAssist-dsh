@@ -16,6 +16,7 @@ export const ENDPOINTS = {
   chapterStageEdit: 'chapter/stage-edit',
   presetsList: 'presets/list',
   presetsSelect: 'presets/select',
+  presetsEffortSelect: 'presets/effort-select',
   atlasView: 'atlas/view',
   atlasAnnotationRequest: 'atlas/annotation-request',
 } as const;
@@ -337,6 +338,7 @@ export interface ContentPresetCard {
   label?: string;
   provider?: string;
   model?: string;
+  reasoning_effort?: string;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -355,6 +357,18 @@ export interface PresetsListValue {
   defaultRoute: { provider: string; model: string };
   /** 已注册 provider 路由 id 列表(ctx.llm; 最小 profile 空数组, 不炸)。 */
   availableProviders: string[];
+  /** 当前 exact-model 的 live reasoning 列表；未绑定时 null。 */
+  reasoning: ReasoningOptionsCard | null;
+}
+
+export interface ReasoningOptionsCard {
+  status: 'ready' | 'unavailable';
+  provider: string;
+  model: string;
+  selected: string | null;
+  adapter_default: string | null;
+  options: Array<{ id: string; name: string; description?: string }>;
+  message: string;
 }
 
 export interface PresetsSelectPayload {
@@ -369,6 +383,17 @@ export interface PresetsSelectValue {
   /** 写入后生效的预设名(null = 默认/继承助手配置)。 */
   active: string | null;
   /** 作者语言结果消息。 */
+  message: string;
+}
+
+export interface PresetsEffortSelectPayload {
+  sessionId?: string;
+  effort: string | null;
+}
+
+export interface PresetsEffortSelectValue {
+  ok: boolean;
+  selected: string | null;
   message: string;
 }
 

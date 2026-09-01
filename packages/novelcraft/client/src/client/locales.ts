@@ -106,6 +106,9 @@ export type NovelcraftKey =
   | 'preset.default.name'
   | 'preset.default.desc'
   | 'preset.available'
+  | 'preset.effort'
+  | 'preset.effort.default'
+  | 'preset.effort.adapterDefault'
   | 'preset.select.ok'
   | 'preset.select.fail'
   | 'preset.source.seed'
@@ -255,6 +258,9 @@ export const zh: Record<NovelcraftKey, string> = {
   'preset.default.name': '默认(继承助手配置)',
   'preset.default.desc': '不指定预设, 内容手跟随助手当前模型配置。',
   'preset.available': '可用模型服务',
+  'preset.effort': '思考等级',
+  'preset.effort.default': '跟随模型默认',
+  'preset.effort.adapterDefault': '接口默认',
   'preset.select.ok': '已应用',
   'preset.select.fail': '应用失败, 请稍后再试',
   'preset.source.seed': '内置',
@@ -405,6 +411,9 @@ export const en: Record<NovelcraftKey, string> = {
   'preset.default.name': 'Default (inherit assistant config)',
   'preset.default.desc': "No preset — the content hand follows the assistant's current model settings.",
   'preset.available': 'Available providers',
+  'preset.effort': 'Reasoning effort',
+  'preset.effort.default': 'Use model default',
+  'preset.effort.adapterDefault': 'Adapter default',
   'preset.select.ok': 'Applied',
   'preset.select.fail': 'Apply failed, please try again later',
   'preset.source.seed': 'Built-in',

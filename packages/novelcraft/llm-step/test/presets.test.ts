@@ -13,6 +13,7 @@ import {
   runStep,
   selectEmbeddingInLlmYml,
   selectPresetInLlmYml,
+  selectReasoningEffortInLlmYml,
   validateContentPreset,
 } from "../src/index";
 
@@ -40,6 +41,10 @@ describe("内容手预设卡(N20)", () => {
       expect(validateContentPreset(p)).toEqual([]);
     }
     expect(DEFAULT_CONTENT_PRESETS[0].provider).toBeUndefined();
+    for (const p of DEFAULT_CONTENT_PRESETS.slice(1)) {
+      expect(p.reasoning_effort).toBe("high");
+      expect(p.temperature).toBeUndefined();
+    }
   });
 
   it("校验: name 规则/参数边界(temperature [0,2], top_p [0,1], timeout 上界)", () => {
@@ -49,6 +54,7 @@ describe("内容手预设卡(N20)", () => {
     expect(validateContentPreset({ name: "ok", top_p: 1.5 })).not.toEqual([]);
     expect(validateContentPreset({ name: "ok", timeout_ms: 500 })).not.toEqual([]);
     expect(validateContentPreset({ name: "ok", max_tokens: 200_001 })).not.toEqual([]);
+    expect(validateContentPreset({ name: "ok", reasoning_effort: "bad effort" })).not.toEqual([]);
     expect(validateContentPreset({ name: "ok", provider: "deepseek", model: "m", temperature: 0.7 })).toEqual([]);
   });
 
@@ -62,6 +68,7 @@ describe("内容手预设卡(N20)", () => {
     ]);
     expect(out).toHaveLength(1);
     expect(out[0].model).toBe("m1");
+    expect(parseContentPresets([{ name: "b", reasoning_effort: "vendor-max" }])[0].reasoning_effort).toBe("vendor-max");
     expect(parseContentPresets("not-array")).toEqual([]);
   });
 
@@ -100,6 +107,7 @@ describe("policy preset 键(N5: llm.yml 只存预设名与参数)", () => {
     const p = resolvePolicy(root);
     expect(p.llm.preset).toBe("writing-day");
     expect(p.llm.model).toBe("deepseek-v4-pro");
+    expect(p.llm.reasoning_effort).toBeUndefined();
   });
 
   it("selectPresetInLlmYml 只动 preset 一键(N19): 其余键保留, null 移除, 非法名抛错", () => {
@@ -122,6 +130,23 @@ describe("policy preset 键(N5: llm.yml 只存预设名与参数)", () => {
     expect(text).toContain("model: m1");
     // 非法名(NAME_RE 防 YAML 注入)
     expect(() => selectPresetInLlmYml(root, "坏: 名字")).toThrow();
+  });
+
+  it("selectReasoningEffortInLlmYml 只动 reasoning_effort；非法值零写入", () => {
+    const root = makeRoot();
+    writeFileSync(paths(root).assistant.llm, 'preset: writing-day\nmodel: m1\n', "utf8");
+    selectReasoningEffortInLlmYml(root, "vendor-max");
+    let text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).toContain("reasoning_effort: vendor-max");
+    expect(text).toContain("preset: writing-day");
+    expect(text).toContain("model: m1");
+    const before = text;
+    expect(() => selectReasoningEffortInLlmYml(root, "bad effort")).toThrow();
+    expect(readFileSync(paths(root).assistant.llm, "utf8")).toBe(before);
+    selectReasoningEffortInLlmYml(root, null);
+    text = readFileSync(paths(root).assistant.llm, "utf8");
+    expect(text).not.toContain("reasoning_effort:");
+    expect(text).toContain("model: m1");
   });
 });
 describe("policy embedding 键 + selectEmbeddingInLlmYml(M6 Track B, L2)", () => {

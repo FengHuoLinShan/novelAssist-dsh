@@ -1,6 +1,6 @@
 // policy 覆盖链(N5 键划分): 默认值 → policy.yml → llm.yml → calibration.md。
 // 默认值依据 specs/rules/policy-defaults.md; llm.yml 只承载 provider 级键
-// (model/temperature/top_p/max_tokens/timeout), Key 绝不进文件(D13/§22.5)。
+// (model/reasoning_effort/temperature/top_p/max_tokens/timeout), Key 绝不进文件(D13/§22.5)。
 // N34/ADR-0023 §6(独立审查 P3 修复): 本文件新增 strict llm.yml 单次快照解析
 // (parseLlmYmlStrict / resolveExecutionLlmYml)—— 执行入口(DSH ExecutionProfile 组合)
 // 一律走 strict: 未知键/secret/非法 preset 类型/非数字/NaN/小数/越界/temperature/
@@ -25,6 +25,7 @@ export interface ResolvedPolicy {
     /** 内容手预设卡名(N20; llm.yml 只存预设名与参数, Key 永不进文件, N5) */
     preset?: string;
     model?: string;
+    reasoning_effort?: string;
     temperature?: number;
     top_p?: number;
     max_tokens?: number;
@@ -113,6 +114,7 @@ export function resolvePolicy(root: string): ResolvedPolicy {
   const llmYml = read(p.assistant.llm);
   base.llm.preset = str(llmYml.preset);
   base.llm.model = str(llmYml.model);
+  base.llm.reasoning_effort = str(llmYml.reasoning_effort);
   base.llm.temperature = llmYml.temperature === undefined ? undefined : num(llmYml.temperature, NaN);
   base.llm.top_p = llmYml.top_p === undefined ? undefined : num(llmYml.top_p, NaN);
   base.llm.max_tokens = llmYml.max_tokens === undefined ? undefined : num(llmYml.max_tokens, NaN);
@@ -146,6 +148,8 @@ export interface StrictLlmYml {
   provider?: string;
   /** 模型 id 覆盖(可选; 非空无空白字符串) */
   model?: string;
+  /** Adapter-owned opaque reasoning effort id */
+  reasoning_effort?: string;
   /** 单步温度 [0,2] 有限数字 */
   temperature?: number;
   /** top_p [0,1] 有限数字 */
@@ -174,6 +178,7 @@ const STRICT_KNOWN_KEYS = new Set([
   "preset",
   "provider",
   "model",
+  "reasoning_effort",
   "temperature",
   "top_p",
   "max_tokens",
@@ -183,7 +188,7 @@ const STRICT_KNOWN_KEYS = new Set([
 ]);
 /** 整数键: 拒绝任何小数表示(10.0 也算小数表示, 一律 fail-closed)。 */
 const STRICT_INT_KEYS = new Set(["max_tokens", "timeout_ms", "workflow_budget"]);
-const STRICT_STRING_KEYS = new Set(["preset", "provider", "model", "embedding"]);
+const STRICT_STRING_KEYS = new Set(["preset", "provider", "model", "reasoning_effort", "embedding"]);
 const PRESET_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/;
 const NO_WS_RE = /^\S+$/;
 const NUMERIC_RE = /^-?\d+(\.\d+)?$/;
@@ -197,6 +202,9 @@ function strictStringValue(key: string, raw: string, lineNo: number): { value?: 
   }
   if ((key === "provider" || key === "model") && (!NO_WS_RE.test(value) || value.length > (key === "provider" ? 64 : 128))) {
     return { issue: `第 ${lineNo} 行 ${key} 必须是非空无空白字符串(≤${key === "provider" ? 64 : 128})` };
+  }
+  if (key === "reasoning_effort" && (!NO_WS_RE.test(value) || value.length > 64)) {
+    return { issue: `第 ${lineNo} 行 reasoning_effort 必须是非空无空白标识(≤64)` };
   }
   if (key === "embedding" && value !== "off" && value !== "bge-local-v1") {
     return { issue: `第 ${lineNo} 行 embedding 必须是 off | bge-local-v1` };

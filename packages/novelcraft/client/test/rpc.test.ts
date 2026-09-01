@@ -509,6 +509,7 @@ describe('novelcraft RPC 处理器', () => {
       expect(result.value.active).toBeNull();
       expect(result.value.defaultRoute).toEqual({ provider: 'deepseek', model: 'deepseek-v4-flash' });
       expect(result.value.availableProviders).toEqual([]);
+      expect(result.value.reasoning).toBeNull();
       // 最小 profile(宿主无 presets 面)→ 种子兜底, 全部 source=seed
       const names = result.value.presets.map((p) => p.name);
       expect(names).toContain('default');
@@ -547,6 +548,17 @@ describe('novelcraft RPC 处理器', () => {
       expect(result.value.active).toBe('writing-day'); // llm.yml preset 键反映
       expect(result.value.defaultRoute).toEqual({ provider: 'deepseek', model: 'deepseek-v4-pro' });
       expect(result.value.availableProviders).toEqual(['deepseek', 'fake']);
+      expect(result.value.reasoning).toMatchObject({
+        status: 'ready',
+        provider: 'deepseek',
+        model: 'old-model',
+        selected: null,
+        adapter_default: 'high',
+        options: [
+          { id: 'high', name: 'High' },
+          { id: 'max', name: 'Max' },
+        ],
+      });
       const myCard = result.value.presets.find((p) => p.name === 'my-card');
       expect(myCard).toMatchObject({
         label: '我的卡', provider: 'fake', model: 'fake-x', temperature: 0.33, source: 'stored',
@@ -601,6 +613,45 @@ describe('novelcraft RPC 处理器', () => {
     const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
     expect(content).not.toContain('preset:');
     expect(content).toContain('model: gpt-x');
+    env.cleanup();
+  });
+
+  it('presets/select: 卡片 effort 不在宿主 live 列表时零写入', async () => {
+    const env = setup({
+      service: {
+        presets: { list: async () => [
+          { name: 'bad-effort', provider: 'deepseek', model: 'm', reasoning_effort: 'low' },
+        ] },
+      },
+    });
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(env.root, '.assistant'), { recursive: true });
+    const file = path.join(env.root, '.assistant', 'llm.yml');
+    writeFileSync(file, 'model: stable\n', 'utf8');
+    const before = readFileSync(file, 'utf8');
+    const result = await createNovelcraftHandlers(env.ctx).presetsSelect({ sessionId: 's1', preset: 'bad-effort' });
+    expect(result.ok).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    env.cleanup();
+  });
+
+  it('presets/effort-select: 只接受宿主 live effort，未知值零写入', async () => {
+    const env = setup();
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(env.root, '.assistant'), { recursive: true });
+    const file = path.join(env.root, '.assistant', 'llm.yml');
+    writeFileSync(file, 'model: stable\n', 'utf8');
+    const h = createNovelcraftHandlers(env.ctx);
+    const before = readFileSync(file, 'utf8');
+    expect((await h.presetsEffortSelect({ sessionId: 's1', effort: 'low' })).ok).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+
+    const selected = await h.presetsEffortSelect({ sessionId: 's1', effort: 'max' });
+    expect(selected.ok).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe('model: stable\nreasoning_effort: max\n');
+    const cleared = await h.presetsEffortSelect({ sessionId: 's1', effort: null });
+    expect(cleared.ok).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe('model: stable\n');
     env.cleanup();
   });
 
@@ -796,6 +847,16 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
     const res = await env.dispatch('atlas/nope', {});
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error?.message).toContain('unknown endpoint');
+    env.cleanup();
+  });
+
+  it('ENDPOINTS.presetsEffortSelect 经通道分发到宿主写前校验', async () => {
+    const env = setupDispatchApp();
+    const rejected = await env.dispatch(ENDPOINTS.presetsEffortSelect, { sessionId: 's1', effort: 'low' });
+    expect(rejected.ok).toBe(false);
+    const accepted = await env.dispatch(ENDPOINTS.presetsEffortSelect, { sessionId: 's1', effort: 'max' });
+    expect(accepted.ok).toBe(true);
+    expect(readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8')).toContain('reasoning_effort: max');
     env.cleanup();
   });
 
