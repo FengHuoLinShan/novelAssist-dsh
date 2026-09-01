@@ -39,7 +39,7 @@ jobs:
           NODE
       - name: Build default packages (topological order, excludes BGE adapter)
         run: |
-          for p in vault trace llm-step memory store context outline writing imports rag world assistant dsh client; do
+          for p in vault trace llm-step memory store context outline rag writing imports world assistant dsh client; do
             name=@novelcraft/$p
             test "$p" = client && name=@novelcraft/dsh-client
             npm run build -w "$name"
@@ -63,7 +63,7 @@ jobs:
         run: npm run check:git-writers
       - name: Test default workspaces (excludes BGE capability tests)
         run: |
-          for p in vault trace llm-step memory store context outline writing imports rag world assistant dsh client; do
+          for p in vault trace llm-step memory store context outline rag writing imports world assistant dsh client; do
             name=@novelcraft/$p
             test "$p" = client && name=@novelcraft/dsh-client
             npm test -w "$name"
@@ -71,7 +71,7 @@ jobs:
           npm test -w @novelcraft/preset
       - name: Typecheck default workspaces (excludes BGE adapter)
         run: |
-          for p in vault trace llm-step memory store context outline writing imports rag world assistant dsh client; do
+          for p in vault trace llm-step memory store context outline rag writing imports world assistant dsh client; do
             name=@novelcraft/$p
             test "$p" = client && name=@novelcraft/dsh-client
             npm run typecheck -w "$name"

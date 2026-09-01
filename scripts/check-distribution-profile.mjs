@@ -209,7 +209,7 @@ if (skillEntries.length !== 9) failures.push(`@novelcraft/preset must ship exact
 
 // N36/N37: default CI 只验证 optional 缺失与文本链降级，不构建/测试 BGE capability；
 // 显式 bge-profile 才 include optional 并执行 rag-bge tests/audit。
-const FULL_BUILD_ORDER = ['vault', 'trace', 'llm-step', 'memory', 'store', 'context', 'outline', 'writing', 'imports', 'rag', 'rag-bge', 'world', 'assistant', 'dsh', 'client']
+const FULL_BUILD_ORDER = ['vault', 'trace', 'llm-step', 'memory', 'store', 'context', 'outline', 'rag', 'writing', 'imports', 'rag-bge', 'world', 'assistant', 'dsh', 'client']
 const DEFAULT_BUILD_ORDER = FULL_BUILD_ORDER.filter((name) => name !== 'rag-bge')
 const BGE_BUILD_ORDER = ['vault', 'llm-step', 'memory', 'store', 'rag', 'rag-bge']
 const DEFAULT_WORKSPACES = DEFAULT_BUILD_ORDER.join(' ')
