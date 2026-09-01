@@ -9,7 +9,7 @@ function fakeService(): NovelCraftService {
   const methods = [
     'viewMapAtlas', 'inbox', 'ragSearch', 'chapterCurrent', 'chapterHistory', 'chapterDiff', 'chapterReview', 'receiptLimit',
     'runStep', 'actOnSignal', 'planMapAtlas', 'importAtlasImage', 'updateAtlasPrompt',
-    'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'ingestTextFile',
+    'createAtlasUploadNode', 'proposeNextChapter', 'generateNextChapter', 'generateNextChapterFromProposal', 'ingestTextFile',
     'reviewChapter', 'reviseChapter', 'rejectChapterFinding', 'rejectChapterCandidate', 'scanHealth',
     'radarSweep', 'refreshIndex', 'ragSync', 'ragEmbed', 'applyAtlasAnnotationQueue', 'adoptGuarded',
     'worldCreateGuarded', 'worldUpdateGuarded', 'reviewMapAtlasGuarded', 'deepImport',

@@ -650,7 +650,7 @@ export class NovelCraftService extends Service {
     // 审查项 1: profile 参数 brand 校验(fail-closed, 见 runStep; 普通对象不得跳过 root 解析)。
     const resolved =
       profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
-    return writing.proposeNextChapter(await this.contentProviderFor(root, signal, resolved), root, chapterIndex);
+    return writing.proposeNextChapterAuditable(await this.contentProviderFor(root, signal, resolved), root, chapterIndex);
   }
 
   /** 便捷: 续写提案第二阶段(选定方向 → writing_generate → chapters/pending 候选)。
@@ -667,6 +667,22 @@ export class NovelCraftService extends Service {
     const resolved =
       profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
     return writing.generateNextChapter(await this.contentProviderFor(root, signal, resolved), root, chapterIndex, opts);
+  }
+
+  /** 公开安全续写入口：只消费冻结 proposal run/id，不接受调用方重述方向。 */
+  async generateNextChapterFromProposal(
+    root: string,
+    opts: writing.GenerateFromProposalOptions,
+    signal?: AbortSignal,
+    profile?: ExecutionProfile,
+  ): Promise<writing.GenerateResult> {
+    const resolved =
+      profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
+    return writing.generateNextChapterFromProposal(
+      await this.contentProviderFor(root, signal, resolved),
+      root,
+      opts,
+    );
   }
 
   /** 便捷: 结构健康信号扫描(确定性, 幂等落盘收件箱)。 */

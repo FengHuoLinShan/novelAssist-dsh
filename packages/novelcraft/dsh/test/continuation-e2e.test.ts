@@ -104,6 +104,16 @@ const proposalJson = JSON.stringify({
   ],
 });
 
+async function freezeDirection(env: TestEnv): Promise<{ run_id: string; proposal_id: string }> {
+  env.h.adapter.enqueue({ deltas: [proposalJson] });
+  const propose = tool(env, 'novelcraft_propose_next_chapter');
+  const out = await propose.execute(
+    { root: env.root, chapter: 1 },
+    { ...env.exec, name: 'novelcraft_propose_next_chapter' },
+  ) as { run_id: string; proposals: Array<{ proposal_id: string }> };
+  return { run_id: out.run_id, proposal_id: out.proposals[0].proposal_id };
+}
+
 describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
   it('提案链: 计划台提案落 .assistant/proposals/(铁律 5 临时预览, 无正文写入)', async () => {
     const env = await setup();
@@ -113,10 +123,13 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
     const out = (await t.execute(
       { root: env.root, chapter: 1 },
       { ...env.exec, name: 'novelcraft_propose_next_chapter' },
-    )) as { ok: boolean; next_chapter: number; proposals: unknown[] };
+    )) as { ok: boolean; next_chapter: number; run_id: string; context_hash: string; proposals: Array<{ proposal_id: string }> };
     expect(out.ok).toBe(true);
     expect(out.next_chapter).toBe(2);
     expect(out.proposals).toHaveLength(2);
+    expect(out.run_id).toMatch(/^p\d+$/);
+    expect(out.context_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(out.proposals[0].proposal_id).toMatch(/^proposal_[0-9a-f]{20}$/);
     // 临时预览落盘(铁律 5): .assistant/proposals/next-001-*.json。
     const dir = path.join(env.root, '.assistant', 'proposals');
     const files = readdirSync(dir).filter((f) => /^next-001-.*\.json$/.test(f));
@@ -131,10 +144,11 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
   it('生成候选: writing_generate → chapters/pending/002.md(status=candidate, 不直写正文)', async () => {
     const env = await setup();
     seedChapterOne(env);
+    const frozen = await freezeDirection(env);
     env.h.adapter.enqueue({ deltas: ['第二章正文候选'], usage: { inputTokens: 80, outputTokens: 300 } });
     const t = tool(env, 'novelcraft_generate_next_chapter');
     const out = (await t.execute(
-      { root: env.root, chapter: 1, proposal_title: '雨夜对峙', premise: '主角与反派在桥头摊牌' },
+      { root: env.root, run_id: frozen.run_id, proposal_id: frozen.proposal_id },
       { ...env.exec, name: 'novelcraft_generate_next_chapter' },
     )) as { ok: boolean; file: string };
     expect(out.ok).toBe(true);
@@ -154,10 +168,11 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
   it('采用放行: allowed-once → chapter_candidate 采用 → draft + commit(铁律 3)', async () => {
     const env = await setup('allowed-once');
     seedChapterOne(env);
+    const frozen = await freezeDirection(env);
     env.h.adapter.enqueue({ deltas: ['第二章正文候选'] });
     const gen = tool(env, 'novelcraft_generate_next_chapter');
     await gen.execute(
-      { root: env.root, chapter: 1, proposal_title: '雨夜对峙' },
+      { root: env.root, run_id: frozen.run_id, proposal_id: frozen.proposal_id },
       { ...env.exec, name: 'novelcraft_generate_next_chapter' },
     );
     const generic = tool(env, 'novelcraft_store_adopt');
@@ -189,10 +204,11 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
     async (outcome) => {
       const env = await setup(outcome);
       seedChapterOne(env);
+      const frozen = await freezeDirection(env);
       env.h.adapter.enqueue({ deltas: ['第二章正文候选'] });
       const gen = tool(env, 'novelcraft_generate_next_chapter');
       await gen.execute(
-        { root: env.root, chapter: 1, proposal_title: '雨夜对峙' },
+        { root: env.root, run_id: frozen.run_id, proposal_id: frozen.proposal_id },
         { ...env.exec, name: 'novelcraft_generate_next_chapter' },
       );
       await reviewCandidate(env);

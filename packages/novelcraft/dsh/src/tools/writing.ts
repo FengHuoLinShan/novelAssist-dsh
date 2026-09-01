@@ -37,7 +37,12 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         properties: {
           ok: { type: 'boolean', required: true },
           next_chapter: { type: 'integer', required: true },
+          run_id: { type: 'string', required: true },
+          context_hash: { type: 'string', required: true },
           proposals: { type: 'array', required: true },
+          source_manifest: { type: 'array', required: true },
+          omitted_source_ids: { type: 'array', required: true },
+          warnings: { type: 'array', required: true },
           message: { type: 'string', required: true },
         },
       },
@@ -50,12 +55,32 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         return {
           ok: true,
           next_chapter: result.proposal.next_chapter,
+          run_id: result.proposal.run_id,
+          context_hash: result.proposal.context_hash ?? '',
           proposals: result.proposal.proposals.map((proposal) => ({
+            proposal_id: proposal.proposal_id ?? '',
             title: proposal.title,
             premise: proposal.premise,
             basis: proposal.basis ?? [],
             cost: proposal.cost ?? '',
             risk: proposal.risk ?? '',
+          })),
+          source_manifest: (result.proposal.source_manifest ?? []).map((source) => ({
+            source_id: source.source_id,
+            source_type: source.source_type,
+            name: source.name,
+            source_status: source.source_status ?? '',
+            open_target: JSON.stringify(source.open_target ?? {}),
+            source_hash: source.source_hash,
+            included_content_hash: source.included_content_hash,
+            included_range: { start: source.included_range.start, end: source.included_range.end },
+            truncated: source.truncated,
+          })),
+          omitted_source_ids: result.proposal.omitted_source_ids ?? [],
+          warnings: (result.proposal.warnings ?? []).map((warning) => ({
+            code: warning.code,
+            message: warning.message,
+            source_id: 'source_id' in warning ? warning.source_id : '',
           })),
           message: `已生成 ${result.proposal.proposals.length} 条下一章方案(选定后可按需 writing_generate 出正文候选)。`,
         };
@@ -69,31 +94,34 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
         '候选写 chapters/pending/{NNN}.md(status=candidate, 只读); 采用另走 novelcraft_store_adopt(必经审批)。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        chapter: { type: 'integer', required: true, description: '当前最后一章序号(1 起); 生成其下一章' },
-        proposal_title: { type: 'string', required: true, description: '选定提案标题(作者语言方向)' },
-        premise: { type: 'string', description: '选定提案前提(可空)' },
+        run_id: { type: 'string', required: true, description: '提案回执 run_id' },
+        proposal_id: { type: 'string', required: true, description: '该 run 内选定的冻结 proposal_id' },
       },
       output: {
         type: 'object',
         additionalProperties: false,
         properties: {
           ok: { type: 'boolean', required: true },
+          chapter: { type: 'integer', required: true },
           file: { type: 'string', required: true },
+          context_hash: { type: 'string', required: true },
           message: { type: 'string', required: true },
         },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.propose.generateNextChapter(requireRoot(run), args.chapter, {
-          proposalTitle: args.proposal_title,
-          ...(args.premise ? { premise: args.premise } : {}),
+        const result = await run.service.capabilities.propose.generateNextChapterFromProposal(requireRoot(run), {
+          runId: args.run_id,
+          proposalId: args.proposal_id,
         }, run.signal);
         if (!result.ok) throw llmError(result.error?.kind, result.error?.message ?? '生成失败');
         await run.afterMutation({ radars: ['generate'] });
         return {
           ok: true,
+          chapter: result.chapter_index ?? 0,
           file: result.file ?? '',
-          message: `已生成第 ${args.chapter + 1} 章候选(chapters/pending); 采用请走 novelcraft_store_adopt。`,
+          context_hash: result.context_hash ?? '',
+          message: `已按冻结提案生成第 ${result.chapter_index ?? 0} 章候选(chapters/pending); 采用请走 novelcraft_store_adopt。`,
         };
       },
     }),

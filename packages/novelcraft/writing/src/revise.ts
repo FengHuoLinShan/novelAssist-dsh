@@ -32,6 +32,12 @@ import {
 import { chapterBody, latestCandidateReview, latestReview, registerWritingSpecsOnce } from "./review.js";
 import type { ReviewFinding } from "./review.js";
 import { chapterBodyText, contentHashOf } from "./ingest.js";
+import {
+  assertFrozenProposalCurrent,
+  buildAuditableProposalContext,
+  frozenProposalById,
+  proposalRecordByRunId,
+} from "./propose.js";
 
 export interface ReviseResult {
   ok: boolean;
@@ -233,6 +239,27 @@ function oldConventionBodyHash(body: string): string {
   return contentHashOf(body.replace(/\n$/, ""));
 }
 
+/** 新安全续写候选采用前重建 proposal + generate 两层冻结上下文；旧候选兼容放行。 */
+function assertGeneratedProposalBaseline(root: string, fm: Record<string, unknown>, ref: string): void {
+  const fields = [fm.proposal_run_id, fm.proposal_id, fm.context_hash];
+  if (fields.every((value) => value === undefined)) return;
+  if (fields.some((value) => typeof value !== "string") || !/^[0-9a-f]{64}$/.test(String(fm.context_hash ?? ""))) {
+    throw new StoreError("BAD_CANDIDATE", `续写候选 ${ref} 的冻结提案字段不完整`);
+  }
+  const record = proposalRecordByRunId(root, String(fm.proposal_run_id));
+  const proposal = frozenProposalById(record, String(fm.proposal_id));
+  const baseChapter = Number(fm.base_chapter);
+  const baseHash = String(fm.base_content_hash ?? "");
+  if (baseChapter !== record.chapter_index || baseHash !== record.base_content_hash || fm.proposal_title !== proposal.title) {
+    throw new StoreError("CONFLICT", `续写候选 ${ref} 与冻结提案身份不一致，拒绝采用`);
+  }
+  assertFrozenProposalCurrent(root, record);
+  const current = buildAuditableProposalContext(root, record.chapter_index, { selected: proposal });
+  if (current.context_hash !== fm.context_hash || current.base_content_hash !== baseHash) {
+    throw new StoreError("CONFLICT", `续写候选 ${ref} 的来源已变化，保持 pending；请重新生成`);
+  }
+}
+
 /** Public adoption must freeze both the reviewed candidate bytes and its current/base facts. */
 export function prepareReviewedChapterCandidateAdopt(
   root: string,
@@ -274,6 +301,7 @@ function prepareChapterCandidateAdopt(
     targetCurrent = readFileSync(paths(root).chapters.chapterFile(chapterIndex), "utf8");
     if (current.file !== targetRel) throw new StoreError("BAD_CANDIDATE", `章节候选 ${ref} 目标章不一致`);
   } else if (fm.source === "writing_generate") {
+    assertGeneratedProposalBaseline(root, fm, asset.slug);
     if (existsSync(paths(root).chapters.chapterFile(chapterIndex))) {
       throw new StoreError("CONFLICT", `第 ${chapterIndex} 章已存在, 拒绝采用旧续写候选`);
     }
@@ -318,6 +346,9 @@ function prepareChapterCandidateAdopt(
     ], {
       purpose: `adopt(chapter): ${asset.slug} -> ${targetRel}`,
       expectedHead: gitHead(root),
+      ...(fm.source === "writing_generate"
+        ? { validate: (target: string) => { if (target === targetRel) assertGeneratedProposalBaseline(root, fm, asset.slug); } }
+        : {}),
       ...(opts.tx ? { tx: opts.tx } : {}),
     }),
     result: Object.freeze({

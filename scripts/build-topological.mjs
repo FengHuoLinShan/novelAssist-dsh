@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 // 源码包经 dist 解析 workspace 依赖；顺序必须覆盖 package.json 的直接依赖。
-const order = ['vault', 'trace', 'llm-step', 'memory', 'store', 'context', 'outline', 'writing', 'imports', 'rag', 'rag-bge', 'world', 'assistant', 'dsh', 'client']
+const order = ['vault', 'trace', 'llm-step', 'memory', 'store', 'context', 'outline', 'rag', 'writing', 'imports', 'rag-bge', 'world', 'assistant', 'dsh', 'client']
 for (const workspace of order) {
   // rc.8 reserves a trailing `/client` as the browser subpath marker.
   const packageName = workspace === 'client' ? '@novelcraft/dsh-client' : `@novelcraft/${workspace}`
