@@ -84,6 +84,9 @@ export interface NovelcraftUiFace {
     workflowInspect(root: string): ReturnType<NovelCraftService['workflowInspect']>;
     /** Outline previews for the author workbench(P1-U3). */
     outlinePreviews(root: string): ReturnType<typeof outline.listOutlinePreviews>;
+    /** World objects and Bible pages for the author workbench(P1-U4). */
+    worldObjects(root: string): ReturnType<typeof world.listObjects>;
+    biblePages(root: string): ReturnType<typeof world.listBiblePages>;
   };
   readonly stage: {
     /** 文本手稿收据(会话绑定; 零正史写)+ 摄入提示信号 + 信号变化推送。 */
@@ -231,6 +234,8 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
       presetSeeds: () => DEFAULT_CONTENT_PRESETS,
       workflowInspect: (root) => service.workflowInspect(root),
       outlinePreviews: (root) => outline.listOutlinePreviews(root),
+      worldObjects: (root) => world.listObjects(root),
+      biblePages: (root) => world.listBiblePages(root, true),
     }),
     stage: Object.freeze({
       stageTextIntake: (root, sessionId, fileName, bytes) => {

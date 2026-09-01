@@ -614,11 +614,17 @@
 
 .presetControl select {
   width: 100%;
+  min-height: 44px;
   padding: 6px 8px;
   border: 1px solid var(--dsw-alias-border);
   border-radius: 6px;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-fill-secondary);
+}
+
+.presetControl select:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline-offset: 2px;
 }
 
 /* 持续长文本操作只占 conversation.view；原生表单控件 + Git diff，无第二套写入面。 */

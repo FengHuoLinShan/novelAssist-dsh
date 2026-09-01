@@ -66,6 +66,10 @@ export type {
   WorkflowRunCard,
   WorkflowViewPayload,
   WorkflowViewValue,
+  WorldWorkspacePayload,
+  WorldWorkspaceValue,
+  WorldObjectCard,
+  BiblePageCard,
 } from './wire.js';
 export type { NovelcraftHostService } from './rpc.js';
 export { createNovelcraftHandlers, wireRefError } from './rpc.js';
@@ -101,6 +105,7 @@ export function apply(ctx: Context): void {
       [ENDPOINTS.atlasAnnotationRequest]: (p) => handlers.atlasAnnotationRequest(p),
       [ENDPOINTS.workflowView]: (p) => handlers.workflowView(p),
       [ENDPOINTS.booksList]: (p) => handlers.booksList(p),
+      [ENDPOINTS.worldWorkspace]: (p) => handlers.worldWorkspace(p),
     };
     const route = routes[endpoint];
     if (route === undefined) {

@@ -92,6 +92,26 @@ export type NovelcraftKey =
   | 'outline.apply'
   | 'outline.chatBusy'
   | 'outline.requested'
+  | 'world.title'
+  | 'world.unbound'
+  | 'world.mode'
+  | 'world.mode.chat'
+  | 'world.mode.converge'
+  | 'world.mode.explore'
+  | 'world.mode.inspect'
+  | 'world.mode.bible'
+  | 'world.task'
+  | 'world.objects'
+  | 'world.objects.empty'
+  | 'world.pages'
+  | 'world.pages.empty'
+  | 'world.page.noSummary'
+  | 'world.publish'
+  | 'world.includeDrafts'
+  | 'world.newPage'
+  | 'world.run'
+  | 'world.chatBusy'
+  | 'world.requested'
   | 'desk.title'
   | 'desk.empty'
   | 'desk.unbound'
@@ -287,6 +307,26 @@ export const zh: Record<NovelcraftKey, string> = {
   'outline.apply': '审批采用',
   'outline.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
   'outline.requested': '请求已交给助手；预览不写正史，采用仍需审批。',
+  'world.title': '世界书',
+  'world.unbound': '当前会话还没有绑定一本书。',
+  'world.mode': '工作方式',
+  'world.mode.chat': '共创讨论',
+  'world.mode.converge': '收束矛盾与缺口',
+  'world.mode.explore': '探索相邻方向',
+  'world.mode.inspect': '检视已有设定',
+  'world.mode.bible': '生成世界书草稿',
+  'world.task': '写下要讨论、检视或补全的世界观问题…',
+  'world.objects': '世界对象',
+  'world.objects.empty': '还没有已采用的世界对象。',
+  'world.pages': '世界书页',
+  'world.pages.empty': '还没有世界书页。',
+  'world.page.noSummary': '本页暂无摘要。',
+  'world.publish': '审批发布草稿',
+  'world.includeDrafts': '允许本次显式选中的草稿来源',
+  'world.newPage': '创建新页（取消勾选表示基于已有页提议）',
+  'world.run': '交给助手',
+  'world.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
+  'world.requested': '请求已交给助手；讨论/检视零写入，草稿发布仍需审批。',
   'desk.title': '写作台',
   'desk.empty': '暂无内容。',
   'desk.unbound': '这本书还没绑定工作区。',
@@ -483,6 +523,26 @@ export const en: Record<NovelcraftKey, string> = {
   'outline.apply': 'Adopt with approval',
   'outline.chatBusy': 'Chat has an unsent draft. Send or clear it first.',
   'outline.requested': 'The request was sent to the assistant; previews do not write canon, and adoption still requires approval.',
+  'world.title': 'World Bible',
+  'world.unbound': 'This session is not bound to a book yet.',
+  'world.mode': 'Mode',
+  'world.mode.chat': 'Co-create',
+  'world.mode.converge': 'Converge conflicts and gaps',
+  'world.mode.explore': 'Explore adjacent directions',
+  'world.mode.inspect': 'Inspect existing lore',
+  'world.mode.bible': 'Draft a Bible page',
+  'world.task': 'Describe the worldbuilding question to discuss, inspect, or develop…',
+  'world.objects': 'World objects',
+  'world.objects.empty': 'No adopted world objects yet.',
+  'world.pages': 'Bible pages',
+  'world.pages.empty': 'No Bible pages yet.',
+  'world.page.noSummary': 'This page has no summary yet.',
+  'world.publish': 'Publish draft with approval',
+  'world.includeDrafts': 'Allow explicitly selected draft sources for this request',
+  'world.newPage': 'Create a new page (clear to suggest changes to an existing page)',
+  'world.run': 'Send to assistant',
+  'world.chatBusy': 'Chat has an unsent draft. Send or clear it first.',
+  'world.requested': 'The request was sent to the assistant; discussion and inspection are read-only, and draft publication still requires approval.',
   'desk.title': 'Writing Desk',
   'desk.empty': 'Nothing here yet.',
   'desk.unbound': 'No vault bound for this book.',

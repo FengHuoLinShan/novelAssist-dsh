@@ -21,6 +21,7 @@ export const ENDPOINTS = {
   atlasAnnotationRequest: 'atlas/annotation-request',
   workflowView: 'workflow/view',
   booksList: 'books/list',
+  worldWorkspace: 'world/workspace',
 } as const;
 
 /** Browser intake limit; the writing core rechecks the decoded byte length. */
@@ -546,4 +547,36 @@ export interface BookCard {
 export interface BooksListValue {
   bound: { book: string } | null;
   books: BookCard[];
+}
+
+// ---------------------------------------------------------------------------
+// World/Bible author workbench(P1-U4)
+// ---------------------------------------------------------------------------
+
+export interface WorldWorkspacePayload {
+  sessionId?: string;
+}
+
+export interface WorldObjectCard {
+  name: string;
+  entity_type: string;
+  status: string;
+  tags: string[];
+  source_ref: string;
+}
+
+export interface BiblePageCard {
+  title: string;
+  status: string;
+  page_type: string;
+  version_number: number;
+  summary: string;
+  source_ref: string;
+  can_publish: boolean;
+}
+
+export interface WorldWorkspaceValue {
+  bound: { book: string } | null;
+  objects: WorldObjectCard[];
+  pages: BiblePageCard[];
 }

@@ -23,6 +23,8 @@ import { WorkflowAction } from './WorkflowAction.tsx'
 import type { WorkflowActionProps } from './WorkflowAction.tsx'
 import { BookLibraryAction } from './BookLibraryAction.tsx'
 import type { BookLibraryActionProps } from './BookLibraryAction.tsx'
+import { WorldBibleAction } from './WorldBibleAction.tsx'
+import type { WorldBibleActionProps } from './WorldBibleAction.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -32,7 +34,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps, MapAtlasActionProps, ChapterWorkspaceViewProps, WorkflowActionProps, BookLibraryActionProps }
+export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps, MapAtlasActionProps, ChapterWorkspaceViewProps, WorkflowActionProps, BookLibraryActionProps, WorldBibleActionProps }
 export { NS }
 export { PetAction } from './PetAction.tsx'
 export { StoryMapAction } from './StoryMapAction.tsx'
@@ -43,6 +45,7 @@ export { MapAtlasAction } from './MapAtlasAction.tsx'
 export { ChapterWorkspaceView } from './ChapterWorkspaceView.tsx'
 export { WorkflowAction } from './WorkflowAction.tsx'
 export { BookLibraryAction } from './BookLibraryAction.tsx'
+export { WorldBibleAction } from './WorldBibleAction.tsx'
 
 /** 浏览器侧连接投影(结构面; 与 dsh-client-connection/client 的 ConnectionHandle 对齐)。 */
 export interface RpcCaller {
@@ -144,6 +147,16 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: (): { connection: RpcCaller | undefined } => actionSlot(),
     }, MapAtlasAction),
+  )
+  ctx.slots.inject(
+    'conversation.session.header.actions',
+    () => ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'novelcraft-world-bible',
+      order: 80,
+      locale: NS,
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
+    }, WorldBibleAction),
   )
 
   // 订阅宿主推送(ADR-0018 §1): client/push 帧到达 → 广播 DOM 事件, useWatch 据此即时刷新。

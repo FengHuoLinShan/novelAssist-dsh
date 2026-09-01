@@ -85,10 +85,12 @@ interface LocationCandidate {
   bibleLinked: boolean;
 }
 
-interface BiblePageInfo {
+export interface BiblePageInfo {
   slug: string;
   status: string;
   title: string;
+  pageType: string;
+  versionNumber: number;
   linkedSlugs: Set<string>;
   text: string;
 }
@@ -120,7 +122,7 @@ function readCanonicalLocations(
 }
 
 /** 世界书页(canonical 必选; includeDrafts 时 draft 可选; 文本 = free_text/body 字段 + 正文拼接)。 */
-function readBiblePages(root: string, includeDrafts: boolean): BiblePageInfo[] {
+export function listBiblePages(root: string, includeDrafts = false): BiblePageInfo[] {
   const dir = paths(root).bible.dir;
   if (!existsSync(dir)) return [];
   const pages: BiblePageInfo[] = [];
@@ -149,7 +151,15 @@ function readBiblePages(root: string, includeDrafts: boolean): BiblePageInfo[] {
       .map((s) => s.trim())
       .filter(Boolean)
       .join("\n");
-    pages.push({ slug: f.replace(/\.md$/, ""), status, title: String(data.title ?? ""), linkedSlugs, text });
+    pages.push({
+      slug: f.replace(/\.md$/, ""),
+      status,
+      title: String(data.title ?? ""),
+      pageType: String(data.page_type ?? ""),
+      versionNumber: Number(data.version_number ?? 0),
+      linkedSlugs,
+      text,
+    });
   }
   return pages;
 }
@@ -226,7 +236,7 @@ export async function compileAtlasContext(
   opts?: AtlasContextOptions,
 ): Promise<AtlasContextResult> {
   const includeDrafts = opts?.include_working_drafts === true;
-  const biblePages = readBiblePages(root, includeDrafts);
+  const biblePages = listBiblePages(root, includeDrafts);
   const tree = readAtlasTree(root);
   // "已有 atlas 节点"口径定死: 只算 nodes/(已采用+暂存), 不算 pending 候选(review F5)。
   const atlasLocationRefs = new Set(

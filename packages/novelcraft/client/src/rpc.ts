@@ -75,6 +75,8 @@ import type {
   WorkflowAuthorState,
   WorkflowViewPayload,
   WorkflowViewValue,
+  WorldWorkspacePayload,
+  WorldWorkspaceValue,
 } from './wire.js';
 import { ENDPOINTS, MAX_TEXT_INTAKE_BYTES } from './wire.js';
 
@@ -174,6 +176,12 @@ export interface NovelcraftHostService {
         kind: 'story_outline' | 'outline_item'; run_id: string; target?: 'plot_thread' | 'outline_arc';
         generated_at: string; result: Record<string, unknown>;
         context_receipt?: { source_manifest: unknown[]; warnings: unknown[] };
+      }>;
+      worldObjects(root: string): Array<{
+        slug: string; name: string; entity_type: string; status: string; tags: string[];
+      }>;
+      biblePages(root: string): Array<{
+        slug: string; title: string; status: string; pageType: string; versionNumber: number; text: string;
       }>;
     };
     stage: {
@@ -1118,6 +1126,38 @@ export function createNovelcraftHandlers(ctx: Context) {
         bound: binding ? { book: binding.book } : null,
         // Root is an implementation detail and is deliberately not projected to the browser.
         books: novelcraft.ui.read.bookList(binding?.root).map(({ book, title, current }) => ({ book, title, current })),
+      });
+    } catch (error) {
+      return rpcFail(error instanceof Error ? error.message : String(error));
+    }
+  },
+
+  async worldWorkspace(payload: WorldWorkspacePayload): Promise<RpcResult<WorldWorkspaceValue>> {
+    const binding = await resolveRoot(novelcraft, payload);
+    if (!binding || !novelcraft?.ui) return rpcOk({ bound: null, objects: [], pages: [] });
+    try {
+      return rpcOk({
+        bound: { book: binding.book },
+        objects: novelcraft.ui.view.worldObjects(binding.root)
+          .map((object) => ({
+            name: object.name,
+            entity_type: object.entity_type,
+            status: object.status,
+            tags: object.tags,
+            source_ref: `world/objects/${object.slug}.md`,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        pages: novelcraft.ui.view.biblePages(binding.root)
+          .map((page) => ({
+            title: page.title,
+            status: page.status,
+            page_type: page.pageType,
+            version_number: page.versionNumber,
+            summary: page.text.replace(/^#+\s*/gm, '').replace(/\s+/g, ' ').trim().slice(0, 400),
+            source_ref: `bible/${page.slug}.md`,
+            can_publish: page.status === 'draft',
+          }))
+          .sort((a, b) => a.title.localeCompare(b.title)),
       });
     } catch (error) {
       return rpcFail(error instanceof Error ? error.message : String(error));

@@ -30,6 +30,8 @@ import {
 import {
   atlasAnnotationQueueStatus,
   latestAtlasRun,
+  listBiblePages,
+  listObjects,
   readAtlasRun,
   readAtlasTree,
   stageAtlasImageIntake,
@@ -98,6 +100,8 @@ export function makeHostUi(
       },
       presetSeeds: () => DEFAULT_CONTENT_PRESETS,
       outlinePreviews: (root) => listOutlinePreviews(root),
+      worldObjects: (root) => listObjects(root),
+      biblePages: (root) => listBiblePages(root, true),
     },
     stage: {
       stageTextIntake: (root, sessionId, fileName, bytes): StagedFileIntake => {

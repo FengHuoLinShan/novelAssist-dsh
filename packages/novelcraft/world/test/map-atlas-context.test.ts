@@ -11,6 +11,7 @@ import {
   ATLAS_MAX_LOCATIONS,
   ATLAS_WIKI_PER_LOCATION,
   compileAtlasContext,
+  listBiblePages,
   validatePlanSources,
   writeAtlasNode,
 } from "../src/index";
@@ -166,6 +167,14 @@ describe("compileAtlasContext 地点选择(计划 §4 Phase 2)", () => {
 });
 
 describe("compileAtlasContext 世界书证据(计划 §2/§4 Phase 2)", () => {
+  it("作者读面可列 canonical，仅显式开启时列 draft", () => {
+    const root = makeRoot();
+    writeBiblePage(root, { slug: "bp-c", title: "正式页", status: "canonical" }, "正文");
+    writeBiblePage(root, { slug: "bp-d", title: "草稿页", status: "draft" }, "草稿");
+    expect(listBiblePages(root).map((page) => page.title)).toEqual(["正式页"]);
+    expect(listBiblePages(root, true).map((page) => page.title)).toEqual(["正式页", "草稿页"]);
+  });
+
   it("canonical 必选; draft 默认不选, include_working_drafts=true 时可选(计划 §2)", async () => {
     const root = makeRoot();
     writeObject(root, { id: "loc-a", name: "临水城" });

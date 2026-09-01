@@ -22,6 +22,7 @@ import type {
   AtlasAnnotationRequestValue,
   WorkflowViewValue,
   BooksListValue,
+  WorldWorkspaceValue,
 } from '../wire.ts'
 import { ENDPOINTS, RPC_CHANNEL } from '../wire.ts'
 
@@ -489,6 +490,10 @@ export function useModelPresets(connection: RpcCaller | undefined, sessionId: st
 /** 书库发现读面; 未绑定也可列出。 */
 export function useBookLibrary(connection: RpcCaller | undefined, sessionId: string | undefined) {
   return useSessionView<BooksListValue>(connection, sessionId, ENDPOINTS.booksList)
+}
+
+export function useWorldWorkspace(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  return useSessionView<WorldWorkspaceValue>(connection, sessionId, ENDPOINTS.worldWorkspace)
 }
 
 /** 章节档案数据源(chapter/dossier; §17.5.1 每章一整页钻取; chapterIndex 变化重取, null 清空)。 */

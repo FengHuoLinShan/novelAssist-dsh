@@ -382,6 +382,35 @@ describe('novelcraft RPC 处理器', () => {
     env.cleanup();
   });
 
+  it('world/workspace: 对象/世界书作者卡，草稿可发布且不暴露 raw JSON', async () => {
+    const env = setup();
+    const { serializeFrontmatter } = await import('@novelcraft/store');
+    writeFileSync(path.join(env.root, 'world', 'objects', 'obj-secret.md'), serializeFrontmatter({
+      id: 'obj-secret', name: '雾城', kind: 'location', status: 'canonical', tags: ['北境'], aliases: ['raw-alias'],
+    }, '不应投影的对象正文'), 'utf8');
+    writeFileSync(path.join(env.root, 'bible', 'mist.md'), serializeFrontmatter({
+      id: 'mist', page_key: 'mist', title: '雾城志', page_type: 'location', status: 'draft', version_number: 0,
+      provenance: { raw: 'internal' },
+    }, '# 雾城志\n\n冬季只开北闸。'), 'utf8');
+    const h = createNovelcraftHandlers(env.ctx);
+    const result = await h.worldWorkspace({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bound).toEqual({ book: '测试书' });
+      expect(result.value.objects[0]).toMatchObject({ name: '雾城', entity_type: 'location', status: 'canonical', tags: ['北境'] });
+      expect(result.value.pages[0]).toMatchObject({
+        title: '雾城志', status: 'draft', page_type: 'location', version_number: 0, can_publish: true,
+      });
+      expect(result.value.pages[0].summary).toContain('冬季只开北闸');
+      expect(JSON.stringify(result.value)).not.toContain('raw-alias');
+      expect(JSON.stringify(result.value)).not.toContain('internal');
+      expect(result.value.pages[0]).not.toHaveProperty('slug');
+    }
+    const unbound = await h.worldWorkspace({ sessionId: 'unknown' });
+    expect(unbound).toMatchObject({ ok: true, value: { bound: null, objects: [], pages: [] } });
+    env.cleanup();
+  });
+
   it('writing/desk: 四模式数据(守望信号/计划结构/参照对象/评审摘要)', async () => {
     const env = setup();
     pushSignal(env.root, {
