@@ -1,0 +1,15 @@
+# NovelCraft official DSH bundle: host service, tools, loopback RPC, and Web UI.
+- insert:
+    - id: novelcraft
+      name: novelcraft-dsh
+      config:
+        llm:
+          provider: deepseek
+          model: deepseek-v4-flash
+        vaultsDir: ~/Novels
+        watch:
+          enabled: false
+          intervalMinutes: 60
+
+    - id: novelcraft-client
+      name: novelcraft-dsh/client-host

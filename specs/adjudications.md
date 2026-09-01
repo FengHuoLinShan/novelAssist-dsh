@@ -156,3 +156,9 @@
 | # | 裁定 | 决定 |
 |---|---|---|
 | N48 | clean-build 拓扑与六工具组显式归位 | ①源码 workspace 构建顺序必须满足 package.json 直接依赖；当前全量顺序为 vault→trace→llm-step→memory→store→context→outline→writing→imports→rag→rag-bge→world→assistant→dsh→client，default profile 排除 rag-bge，BGE profile 只构建其依赖闭包；distribution gate 从 manifest 验证拓扑，旧 dist 不得作为 clean-build 通过证据。②39 个工具显式归 writing(15)/mapAtlas(6)/workflow(4)/book(3)/world(7)/outline(4)；N43/N44 的「world/outline 归 writing」仅此项被取代，工具名/schema/顺序、capability 三分、ApprovalGate、workspace isolation 与写入语义不变。③Config.tools 六键均进入 Schemastery 且缺省开启；根服务通过 `ctx.inject(['tools'])` 跟随 provider 生命周期注册，六个 internal 工具插件硬依赖 novelcraft+tools，只供程序化组合，不新增 YAML subpath/npm 包。④删除 dsh 对 context/memory 的冗余直接依赖；真实依赖仍由 writing/store 各自声明。依据: 后续开发计划 §0 插件纪律 + N35/N37 + 2026-09-01 clean CI/插件边界复核。 |
+
+## 第十五批(DSH 公开插件包发布, 2026-09-02 用户确认)
+
+| # | 裁定 | 决定 |
+|---|---|---|
+| N49 | 单一公开 bundle 取代 source-only 对外安装 | 新增公开 npm 包 `novelcraft-dsh`，按 DSH `dsh.bundle.patch` + `dsh.client` 形态一次安装宿主插件、loopback RPC 与 Web client；13 核心及 dsh/client/preset 源码 workspace 仍保持 `private: true`，发布构建把默认运行闭包预打包进单一产物，不公开内部包拓扑。首发针对 DSH `0.1.2-alpha.4`，必须通过 tarball 安装、无 peer 警告、profile 合成、Web boot 和 client 清单验证后才发布。默认包不携带可选 BGE/Transformers 链，embedding 继续默认 off 并保留文本降级；9 册 Skill/4 套 preset 本批不冒充为自动安装。本裁定只取代 N36/N37 的「仅源码分发」对外安装条款，内部 workspace 私有、Node 24、optional BGE、audit baseline 与其余安全约束不变。 |

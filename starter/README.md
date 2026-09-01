@@ -4,19 +4,18 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 
 ## 前置
 
-- Node ≥ 22
-- DSH `@deepseek-ai/dsh` **0.1.0-rc.8**(D21 锁定; 兼容矩阵见下)
+- Node ≥ 24.11
+- DSH `@deepseek-ai/dsh` **0.1.2-alpha.4**(首发实际安装/启动验证版本)
 - 作者在 DSH 侧保存模型连接(编排脑默认 deepseek-v4-flash + high, D13)
 
-## 当前 source-only 挂载
+## 安装并启动
 
 ```sh
-# 1. 在 DSH 开发 profile 挂本仓库 workspace 的 @novelcraft/dsh 与 @novelcraft/dsh-client。
-# 2. 用 rc.8 patch-list 同时插入宿主与 UI 行(见 dev-profile/cordis.patch.yml)。
-# 3. 将 DSH agent preset 的 system root 指向
-#    <repo>/packages/novelcraft/preset/presets；不要只复制单个 preset 子目录。
-# 4. 打开已初始化并绑定到 session 的 NovelCraft Vault。
+dsh plugin --profile web add novelcraft-dsh
+dsh --profile web
 ```
+
+公开包一次安装宿主、RPC 与 Web client；默认 Vault 目录为 `~/Novels`。
 
 ## 开发模式(本仓库内)
 
@@ -42,10 +41,10 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 
 | 依赖面 | 版本 | 备注 |
 |---|---|---|
-| DSH | 0.1.0-rc.8 | 精确锁版本; 升级窗口随官方破坏性变更公告单独评估 |
-| seam: llm / approval / storage-domain / jobs / credentials / tools | rc.8 行为 | **挂载阶段 A 已实现**于 `@novelcraft/dsh`; 升级前跑全仓行为契约 |
-| seam: client-modules / schedule / Skill | rc.8 行为 | client UI 与 9 册原生 Skill 已实现; 低频巡检默认关(D6) |
-| Node | ≥ 22 | |
+| DSH | 0.1.2-alpha.4 | npm bundle 安装、profile 合成、Web boot 与客户端清单已验证 |
+| seam: llm / approval / storage-domain / jobs / credentials / tools | 0.1.2-alpha.4 运行时 | 无 peer 重复安装，宿主能力由 DSH 安装树提供 |
+| seam: client-modules / schedule / Skill | 0.1.2-alpha.4 运行时 | client 进入 `__DSH_BOOT__`；9 册 Skill 仍由源码 preset 面管理 |
+| Node | ≥ 24.11 | |
 | git | 任意现代版本 | 每书一个 git 仓库(版本真相) |
 
 ## 数据与安全(继承设计文档)

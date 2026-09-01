@@ -3,6 +3,15 @@
 本文件是 novelAssist-dsh(M4 DSH 插件族 monorepo)所有编码 Agent 的硬约束与协作协议。
 用户指令优先, 但不得绕过安全、工作区隔离、真实数据保护或危险操作确认。
 
+## 上游 DSH 主要约束
+
+- [deepseek-harness/AGENTS.md](https://github.com/deepseek-ai/deepseek-harness/blob/master/AGENTS.md)
+  是本项目的主要上游开发约束之一。修改 DSH/Cordis 插件、profile、生命周期、能力 seam、
+  client-module 或 `@deepseek-ai/*` 集成前, Agent 必须阅读并遵守其中适用条款。
+- 上游规则与本仓库的架构铁律、安全边界或用户明确指令冲突时, 以后三者为准;
+  只适用于上游仓库布局的条款不得机械套用。仓库内镜像
+  `docs/agent/dsh-upstream/AGENTS.md` 仅作离线参考; 与上游链接不一致时以上游当前版本为准。
+
 ## 架构铁律(不可违反)
 
 1. **核心包零 DSH 运行时依赖**: `packages/novelcraft/*` 的 13 个核心包是纯 TS 确定性库,

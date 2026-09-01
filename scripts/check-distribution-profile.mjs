@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Static N34/N36/N37 distribution contract for the source-only monorepo. */
+/** Static N34/N36/N37/N49 distribution contract for private workspaces plus one public DSH bundle. */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -173,6 +173,22 @@ if (!Array.isArray(rootPkg.workspaces) || !rootPkg.workspaces.includes('packages
   failures.push('root workspaces must include packages/novelcraft/*')
 }
 if (rootPkg.overrides !== undefined) failures.push('destructive root overrides are forbidden by N36')
+const pluginPkg = JSON.parse(readFileSync(join(root, 'plugin', 'package.json'), 'utf8'))
+if (pluginPkg.name !== 'novelcraft-dsh' || pluginPkg.private === true) failures.push('public plugin package must be novelcraft-dsh')
+if (pluginPkg.publishConfig?.access !== 'public') failures.push('novelcraft-dsh must publish publicly')
+if (pluginPkg.dsh?.bundle?.patch !== './cordis.patch.yml' || pluginPkg.dsh?.client?.platform !== 'web') {
+  failures.push('novelcraft-dsh must declare both bundle and web client faces')
+}
+if (pluginPkg.dependencies !== undefined || pluginPkg.peerDependencies !== undefined) {
+  failures.push('novelcraft-dsh must use the DSH installation runtime without profile-level dependency duplication')
+}
+const pluginPatch = readFileSync(join(root, 'plugin', 'cordis.patch.yml'), 'utf8')
+if (!pluginPatch.includes('name: novelcraft-dsh') || !pluginPatch.includes('name: novelcraft-dsh/client-host')) {
+  failures.push('novelcraft-dsh patch must mount both host faces')
+}
+for (const script of ['build:plugin', 'check:plugin', 'pack:plugin', 'publish:plugin']) {
+  if (typeof rootPkg.scripts?.[script] !== 'string') failures.push(`missing root plugin release script: ${script}`)
+}
 const bgePkg = JSON.parse(readFileSync(join(packagesRoot, 'rag-bge', 'package.json'), 'utf8'))
 if (bgePkg.optionalDependencies?.['@huggingface/transformers'] !== '4.2.0') {
   failures.push('@huggingface/transformers must be a pinned rag-bge optionalDependency')
@@ -315,4 +331,4 @@ if (failures.length > 0) {
   console.error(`distribution profile failed:\n- ${failures.join('\n- ')}`)
   process.exit(1)
 }
-console.log(`distribution profile OK: ${workspaceNames.length} private workspaces, node ${expectedEngine}, ${corePackages.size} core runtimes DSH-free`)
+console.log(`distribution profile OK: ${workspaceNames.length} private workspaces + novelcraft-dsh public bundle, node ${expectedEngine}, ${corePackages.size} core runtimes DSH-free`)
