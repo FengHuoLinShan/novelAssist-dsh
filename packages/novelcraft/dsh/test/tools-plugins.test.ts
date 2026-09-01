@@ -104,6 +104,8 @@ describe('config.tools 六组开关(profile 即产品)', () => {
     });
     expect(Config({}).llm).toMatchObject({ provider: 'deepseek', model: 'deepseek-v4-flash' });
     expect(DEFAULT_CONFIG.llm).toEqual({ provider: 'deepseek', model: 'deepseek-v4-flash' });
+    expect(Config({ llm: { provider: 'custom', model: 'user-explicit-model' } }).llm)
+      .toMatchObject({ provider: 'custom', model: 'user-explicit-model' });
     expect(readFileSync(new URL('../../../../starter/dev-profile/cordis.patch.yml', import.meta.url), 'utf8'))
       .toContain('model: deepseek-v4-flash');
     expect(() => Config({ tools: { world: 'false' as unknown as boolean } })).toThrow();

@@ -556,6 +556,16 @@ describe('novelcraft RPC 处理器', () => {
     env.cleanup();
   });
 
+  it('presets/list: provider 枚举异常时 availableProviders 降级为空数组', async () => {
+    const env = setup({
+      llm: { listProviders: () => { throw new Error('provider registry unavailable'); } },
+    });
+    const result = await createNovelcraftHandlers(env.ctx).presetsList({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.availableProviders).toEqual([]);
+    env.cleanup();
+  });
+
   it('presets/select: 写入只动 preset 键(先写 model 键再 select, model 原样保留)', async () => {
     const env = setup();
     const { writeFileSync, readFileSync, mkdirSync } = await import('node:fs');
@@ -734,7 +744,10 @@ interface CapturedChannel {
   }>;
 }
 
-type SetupOptions = { service?: Partial<NovelcraftHostService>; llm?: { listProviders?: () => string[] } };
+type SetupOptions = {
+  service?: Partial<NovelcraftHostService>;
+  llm?: { listProviders?: () => Array<{ id: string; name?: string }> };
+};
 
 /** setup() + 注册假 connection + 跑宿主 apply; 返回可经通道分发的 handler。 */
 function setupDispatchApp(overrides: SetupOptions = {}) {
