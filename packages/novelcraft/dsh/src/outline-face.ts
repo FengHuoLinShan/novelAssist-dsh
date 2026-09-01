@@ -22,17 +22,17 @@ async function providerFor(service: NovelCraftService, root: string, signal?: Ab
 
 /** 总纲 preview: 暂存 proposals, 不写 structure/outline.md。 */
 export async function outlinePreview(
-  service: NovelCraftService, root: string, input: string, signal?: AbortSignal,
+  service: NovelCraftService, root: string, selection: outline.OutlineContextSelection, signal?: AbortSignal,
 ): Promise<OutlinePreviewOk | OutlinePreviewErr> {
-  return outline.previewStoryOutline(await providerFor(service, root, signal), root, input);
+  return outline.previewStoryOutlineSelected(await providerFor(service, root, signal), root, selection);
 }
 
 /** P20 当前层 preview: 暂存 proposals, 不写 thread/arc。 */
 export async function outlineItemPreview(
-  service: NovelCraftService, root: string, target: 'plot_thread' | 'outline_arc', input: string,
+  service: NovelCraftService, root: string, target: 'plot_thread' | 'outline_arc', selection: outline.OutlineContextSelection,
 signal?: AbortSignal,
 ): Promise<OutlinePreviewOk | OutlinePreviewErr> {
-  return outline.previewOutlineItem(await providerFor(service, root, signal), root, target, input);
+  return outline.previewOutlineItemSelected(await providerFor(service, root, signal), root, target, selection);
 }
 
 /** apply 总纲 preview(审批内执行 canonical 写)。 */
@@ -44,7 +44,7 @@ export async function outlineApplyGuarded(
     summary: `把 preview ${runId} 的总纲生成结果写入 structure/outline.md(canonical 覆写, 历史走 git)`,
     items: [`preview: ${runId}`],
   }, async () => {
-    outline.applyStoryOutlinePreview(root, runId);
+    outline.applyStoryOutlinePreviewSelected(root, runId);
     return { file: 'structure/outline.md' };
   });
 }
@@ -58,32 +58,32 @@ export async function outlineItemApplyGuarded(
     summary: `把 preview ${runId} 的 P20 生成结果写入 structure/(thread/arc, canonical)`,
     items: [`preview: ${runId}`],
   }, async () => {
-    const slug = outline.applyOutlineItemPreview(root, runId);
+    const slug = outline.applyOutlineItemPreviewSelected(root, runId);
     return { slug };
   });
 }
 
 // —— world 生成中心只读模式(propose; 纯 LLM 调用零写) ——
 
-export async function worldGenChat(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
-  return world.worldChat(await providerFor(service, root, signal), input);
+export async function worldGenChat(service: NovelCraftService, root: string, selection: world.WorldContextSelection, signal?: AbortSignal) {
+  return world.worldChatSelected(await providerFor(service, root, signal), root, selection);
 }
 
-export async function worldGenConverge(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
-  return world.worldConverge(await providerFor(service, root, signal), input);
+export async function worldGenConverge(service: NovelCraftService, root: string, selection: world.WorldContextSelection, signal?: AbortSignal) {
+  return world.worldConvergeSelected(await providerFor(service, root, signal), root, selection);
 }
 
-export async function worldGenExplore(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
-  return world.worldExplore(await providerFor(service, root, signal), input);
+export async function worldGenExplore(service: NovelCraftService, root: string, selection: world.WorldContextSelection, signal?: AbortSignal) {
+  return world.worldExploreSelected(await providerFor(service, root, signal), root, selection);
 }
 
-export async function worldGenInspect(service: NovelCraftService, root: string, input: string, signal?: AbortSignal) {
-  return world.worldInspect(await providerFor(service, root, signal), input);
+export async function worldGenInspect(service: NovelCraftService, root: string, selection: world.WorldContextSelection, signal?: AbortSignal) {
+  return world.worldInspectSelected(await providerFor(service, root, signal), root, selection);
 }
 
 /** 世界书页面建议 → bible/ draft 提案(采用另走 store_adopt; §6.17 页面建议只落工作稿)。 */
 export async function worldGenBibleSuggest(
-  service: NovelCraftService, root: string, input: string, opts: { isNewPage?: boolean }, signal?: AbortSignal,
+  service: NovelCraftService, root: string, selection: world.WorldContextSelection, opts: { isNewPage?: boolean }, signal?: AbortSignal,
 ) {
-  return world.suggestBiblePage(await providerFor(service, root, signal), root, input, opts);
+  return world.suggestBiblePageSelected(await providerFor(service, root, signal), root, selection, opts);
 }

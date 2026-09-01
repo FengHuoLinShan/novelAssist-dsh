@@ -6,6 +6,58 @@ import type { NovelCraftService } from '../service.js';
 import { novelcraftToolFactory } from './define.js';
 import { capReceipt, llmError, requireRoot } from './shared.js';
 
+const selectedContextParameters = {
+  source_refs: { type: 'array' as const, description: '显式选择的 vault 相对来源路径；不传则只用作者任务' },
+  include_working_drafts: { type: 'boolean' as const, description: '显式允许所选 draft/candidate；默认 false' },
+  context_budget_tokens: { type: 'integer' as const, description: '本次 auditable context 估算预算' },
+};
+
+const contextReceiptOutput = {
+  context_hash: { type: 'string' as const, required: true },
+  source_manifest: { type: 'array' as const, required: true },
+  omitted_source_ids: { type: 'array' as const, required: true },
+  warnings: { type: 'array' as const, required: true },
+} as const;
+
+function selectionOf(args: {
+  input: string;
+  source_refs?: readonly unknown[];
+  include_working_drafts?: boolean;
+  context_budget_tokens?: number;
+}) {
+  const sourceRefs = args.source_refs?.map((value) => {
+    if (typeof value !== 'string') throw llmError('schema_violation', 'source_refs 必须是字符串数组');
+    return value;
+  });
+  return {
+    instruction: args.input,
+    ...(sourceRefs !== undefined ? { source_refs: sourceRefs } : {}),
+    ...(args.include_working_drafts === true ? { include_working_drafts: true } : {}),
+    ...(args.context_budget_tokens !== undefined ? { budget_tokens: args.context_budget_tokens } : {}),
+  };
+}
+
+function contextProjection(receipt: import('@novelcraft/world').WorldContextReceipt) {
+  return {
+    context_hash: receipt.context_hash,
+    source_manifest: receipt.source_manifest.map((source) => ({
+      source_id: source.source_id,
+      source_type: source.source_type,
+      source_hash: source.source_hash,
+      included_content_hash: source.included_content_hash,
+      source_status: source.source_status ?? '',
+      open_path: typeof source.open_target?.path === 'string' ? source.open_target.path : '',
+      truncated: source.truncated,
+    })),
+    omitted_source_ids: receipt.omitted_source_ids,
+    warnings: receipt.warnings.map((warning) => ({
+      code: warning.code,
+      message: warning.message,
+      source_id: warning.source_id,
+    })),
+  };
+}
+
 export function buildWorldObjectTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   const tool = novelcraftToolFactory(ctx, service);
   return [
@@ -121,16 +173,20 @@ export function buildWorldGenerationTools(ctx: Context, service: NovelCraftServi
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '对话输入(设定材料+当前问题)' },
+        ...selectedContextParameters,
       },
       output: {
         type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, reply: { type: 'string', required: true }, error: { type: 'string', required: true } },
+        properties: {
+          ok: { type: 'boolean', required: true }, reply: { type: 'string', required: true },
+          error: { type: 'string', required: true }, ...contextReceiptOutput,
+        },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenChat(requireRoot(run), args.input, run.signal);
+        const r = await run.service.capabilities.propose.worldGenChat(requireRoot(run), selectionOf(args), run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, reply: capReceipt(run, r.reply ?? ''), error: '' };
+        return { ok: true, reply: capReceipt(run, r.reply ?? ''), error: '', ...contextProjection(r.context_receipt) };
       },
     }),
     tool({
@@ -139,16 +195,23 @@ export function buildWorldGenerationTools(ctx: Context, service: NovelCraftServi
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '待收束的设定材料' },
+        ...selectedContextParameters,
       },
       output: {
         type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true }, error: { type: 'string', required: true } },
+        properties: {
+          ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true },
+          error: { type: 'string', required: true }, ...contextReceiptOutput,
+        },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenConverge(requireRoot(run), args.input, run.signal);
+        const r = await run.service.capabilities.propose.worldGenConverge(requireRoot(run), selectionOf(args), run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
+        return {
+          ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '',
+          ...contextProjection(r.context_receipt),
+        };
       },
     }),
     tool({
@@ -157,16 +220,23 @@ export function buildWorldGenerationTools(ctx: Context, service: NovelCraftServi
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '探索锚点(当前设定摘要)' },
+        ...selectedContextParameters,
       },
       output: {
         type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true }, error: { type: 'string', required: true } },
+        properties: {
+          ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true },
+          error: { type: 'string', required: true }, ...contextReceiptOutput,
+        },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenExplore(requireRoot(run), args.input, run.signal);
+        const r = await run.service.capabilities.propose.worldGenExplore(requireRoot(run), selectionOf(args), run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
+        return {
+          ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '',
+          ...contextProjection(r.context_receipt),
+        };
       },
     }),
     tool({
@@ -175,16 +245,23 @@ export function buildWorldGenerationTools(ctx: Context, service: NovelCraftServi
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '待检视的页面内容/设定' },
+        ...selectedContextParameters,
       },
       output: {
         type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true }, error: { type: 'string', required: true } },
+        properties: {
+          ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true },
+          error: { type: 'string', required: true }, ...contextReceiptOutput,
+        },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenInspect(requireRoot(run), args.input, run.signal);
+        const r = await run.service.capabilities.propose.worldGenInspect(requireRoot(run), selectionOf(args), run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
+        return {
+          ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '',
+          ...contextProjection(r.context_receipt),
+        };
       },
     }),
     tool({
@@ -196,18 +273,22 @@ export function buildWorldGenerationTools(ctx: Context, service: NovelCraftServi
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '页面建议输入(主题/已有页内容)' },
         is_new_page: { type: 'boolean', description: '是否按新页建议(缺省 false)' },
+        ...selectedContextParameters,
       },
       output: {
         type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, slug: { type: 'string', required: true }, error: { type: 'string', required: true } },
+        properties: {
+          ok: { type: 'boolean', required: true }, slug: { type: 'string', required: true },
+          error: { type: 'string', required: true }, ...contextReceiptOutput,
+        },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
         const r = await run.service.capabilities.propose.worldGenBibleSuggest(
-          requireRoot(run), args.input, { ...(args.is_new_page ? { isNewPage: true } : {}) }, run.signal,
+          requireRoot(run), selectionOf(args), { ...(args.is_new_page ? { isNewPage: true } : {}) }, run.signal,
         );
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, slug: r.slug ?? '', error: '' };
+        return { ok: true, slug: r.slug ?? '', error: '', ...contextProjection(r.context_receipt) };
       },
     }),
   ];

@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@novelcraft/store": "*"
+    "@novelcraft/store": "*",
+    "@novelcraft/vault": "*"
   }
 }

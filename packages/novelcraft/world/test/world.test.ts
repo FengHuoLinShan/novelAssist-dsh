@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
 import { StoreError, adopt, confirmSuggestion, gitAdd, gitCommit, gitLogSubjects, gitStatusEntries, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
-import { createObject, executePreparedUpdateObject, listObjects, listPending, listTags, prepareUpdateObject, readObject, readPendingObject, suggestBiblePage, suggestEntity, updateObject, worldChat, worldConverge, worldExplore, worldInspect } from "../src/index";
+import { createObject, executePreparedUpdateObject, listObjects, listPending, listTags, prepareUpdateObject, readObject, readPendingObject, suggestBiblePage, suggestEntity, updateObject, worldChat, worldChatSelected, worldConverge, worldExplore, worldInspect } from "../src/index";
 
 /**
  * symlink 能力探测(平台允许时才跑 symlink 回归; Windows 无特权进程创建
@@ -298,6 +298,24 @@ describe("生成中心五模式(§19)", () => {
     expect((await worldConverge(provider, "ctx")).ok).toBe(true);
     expect((await worldExplore(provider, "ctx")).ok).toBe(true);
     expect((await worldInspect(provider, "ctx")).ok).toBe(true);
+  });
+  it("显式 canonical 来源进入模型；provider 期间漂移则拒绝结果", async () => {
+    const root = makeRoot();
+    const source = join(root, "world", "objects", "harbor.md");
+    writeFileSync(source, '---\nid: harbor\nname: 盐港\nkind: location\nstatus: canonical\n---\n北闸冬季开放。\n');
+    const base = new MockProvider({ responses: [{ text: JSON.stringify({ reply: "已读" }) }] });
+    const provider = {
+      async complete(request: Parameters<MockProvider["complete"]>[0]) {
+        const response = await base.complete(request);
+        writeFileSync(source, `${readFileSync(source, "utf8")}外部变化\n`, "utf8");
+        return response;
+      },
+    };
+    await expect(worldChatSelected(provider, root, {
+      instruction: "检查盐港设定",
+      source_refs: ["world/objects/harbor.md"],
+    })).rejects.toThrow(/调用期间漂移/);
+    expect(base.calls[0].messages.at(-1)?.content).toContain("北闸冬季开放");
   });
   it("suggestEntity 落 pending(status=candidate, 不自动采用)", async () => {
     const root = makeRoot();

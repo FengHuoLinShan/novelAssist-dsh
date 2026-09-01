@@ -14,6 +14,27 @@ import { runStep, type Provider, type StepResult } from "@novelcraft/llm-step";
 import { registerOutlineSpecs } from "./specs-outline.js";
 import { writeOutline, writeStructureAsset } from "./structure.js";
 import { outlineItemFrontmatter } from "./generation.js";
+import {
+  assertSelectedVaultSourcesCurrent,
+  compileSelectedVaultContext,
+  type AuditableContextWarning,
+  type AuditableSourceRef,
+  type SelectedSourceSnapshot,
+  type SelectedVaultSourceRule,
+  type VaultContextSelection,
+} from "@novelcraft/context";
+
+export type OutlineContextSelection = VaultContextSelection;
+
+export interface OutlineContextReceipt {
+  context_hash: string;
+  budget_tokens: number;
+  total_tokens: number;
+  source_manifest: AuditableSourceRef[];
+  omitted_source_ids: string[];
+  warnings: AuditableContextWarning[];
+  source_snapshot: SelectedSourceSnapshot[];
+}
 
 /** preview 暂存记录(机器态; canonical 写只发生在 apply)。 */
 export interface OutlinePreviewRecord {
@@ -31,6 +52,51 @@ export interface OutlinePreviewRecord {
     system_prompt_hash: string;
     schema_injection: string;
     output_schema_hash: string;
+  };
+  context_receipt?: OutlineContextReceipt;
+}
+
+function outlineSourceRule(ref: string): SelectedVaultSourceRule | undefined {
+  if (ref === "structure/outline.md") {
+    return { tier: "P1", source_type: "story_outline", current_statuses: ["current"], default_status: "current" };
+  }
+  if (/^structure\/(threads|arcs|foreshadowing|reveal)\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P2", source_type: "structure_asset", current_statuses: ["canonical"], working_statuses: ["draft"] };
+  }
+  if (/^scenes\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P2", source_type: "scene", current_statuses: ["canonical"], working_statuses: ["draft"] };
+  }
+  if (/^world\/objects\/[^/]+\.md$/.test(ref) || /^world\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P3", source_type: "world_entity", current_statuses: ["canonical"], working_statuses: ["draft", "candidate"] };
+  }
+  if (/^bible\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P3", source_type: "bible_page", current_statuses: ["canonical"], working_statuses: ["draft"] };
+  }
+  return undefined;
+}
+
+export function buildOutlineSelectedContext(
+  root: string,
+  task: "story_outline" | "outline_item",
+  selection: OutlineContextSelection,
+) {
+  return compileSelectedVaultContext(root, {
+    task: task === "story_outline" ? "生成小说总纲 preview" : "生成 P20 结构资产 preview",
+    scope: task === "story_outline" ? "project" : "arc",
+    selection,
+    classify: outlineSourceRule,
+  });
+}
+
+function receiptOf(context: ReturnType<typeof buildOutlineSelectedContext>): OutlineContextReceipt {
+  return {
+    context_hash: context.context_hash,
+    budget_tokens: context.budget_tokens,
+    total_tokens: context.total_tokens,
+    source_manifest: context.source_manifest,
+    omitted_source_ids: context.omitted_source_ids,
+    warnings: context.warnings,
+    source_snapshot: context.source_snapshot,
   };
 }
 
@@ -117,6 +183,37 @@ export async function previewStoryOutline(
   return { ok: true, file: writePreview(root, record), record };
 }
 
+/** Public safe path: explicit source selection + actual manifest + post-provider drift check. */
+export async function previewStoryOutlineSelected(
+  provider: Provider,
+  root: string,
+  selection: OutlineContextSelection,
+  now: Date = new Date(),
+): Promise<{ ok: true; file: string; record: OutlinePreviewRecord } | { ok: false; error: StepResult["error"] }> {
+  registerOutlineSpecs();
+  const context = buildOutlineSelectedContext(root, "story_outline", selection);
+  const r = await runStep(provider, { specRef: "story_outline_generate", input: context.rendered_text });
+  if (!r.ok) return { ok: false, error: r.error };
+  const current = buildOutlineSelectedContext(root, "story_outline", selection);
+  if (current.context_hash !== context.context_hash) throw new Error("outline selected context 在 provider 调用期间漂移");
+  const record: OutlinePreviewRecord = {
+    kind: "story_outline",
+    run_id: runIdOf(now),
+    generated_at: now.toISOString(),
+    input_hash: inputHash(context.rendered_text),
+    result: r.result as Record<string, unknown>,
+    context_receipt: receiptOf(context),
+    ...(r.promptFingerprint !== undefined
+      ? { prompt_fingerprint: {
+          system_prompt_hash: r.promptFingerprint.systemPromptHash,
+          schema_injection: r.promptFingerprint.schemaInjection,
+          output_schema_hash: r.promptFingerprint.outputSchemaHash,
+        } }
+      : {}),
+  };
+  return { ok: true, file: writePreview(root, record), record };
+}
+
 /** P20 当前层 preview: 生成 → 暂存, 不写 thread/arc 资产。 */
 export async function previewOutlineItem(
   provider: Provider,
@@ -151,6 +248,39 @@ export async function previewOutlineItem(
   return { ok: true, file: writePreview(root, record), record };
 }
 
+export async function previewOutlineItemSelected(
+  provider: Provider,
+  root: string,
+  target: "plot_thread" | "outline_arc",
+  selection: OutlineContextSelection,
+  now: Date = new Date(),
+): Promise<{ ok: true; file: string; record: OutlinePreviewRecord } | { ok: false; error: StepResult["error"] }> {
+  registerOutlineSpecs();
+  const context = buildOutlineSelectedContext(root, "outline_item", selection);
+  const input = `【target: ${target}】\n${context.rendered_text}`;
+  const r = await runStep(provider, { specRef: "outline_generate", input });
+  if (!r.ok) return { ok: false, error: r.error };
+  const current = buildOutlineSelectedContext(root, "outline_item", selection);
+  if (current.context_hash !== context.context_hash) throw new Error("outline item selected context 在 provider 调用期间漂移");
+  const record: OutlinePreviewRecord = {
+    kind: "outline_item",
+    target,
+    run_id: runIdOf(now),
+    generated_at: now.toISOString(),
+    input_hash: inputHash(input),
+    result: r.result as Record<string, unknown>,
+    context_receipt: receiptOf(context),
+    ...(r.promptFingerprint !== undefined
+      ? { prompt_fingerprint: {
+          system_prompt_hash: r.promptFingerprint.systemPromptHash,
+          schema_injection: r.promptFingerprint.schemaInjection,
+          output_schema_hash: r.promptFingerprint.outputSchemaHash,
+        } }
+      : {}),
+  };
+  return { ok: true, file: writePreview(root, record), record };
+}
+
 /** apply 总纲 preview: 读暂存 → writeOutline(canonical; 调用方在审批内执行)。 */
 export function applyStoryOutlinePreview(
   root: string,
@@ -158,6 +288,9 @@ export function applyStoryOutlinePreview(
   opts: { workflowId?: string; override?: Record<string, unknown> } = {},
 ): void {
   const record = readPreview(root, "story_outline", runId);
+  if (record.context_receipt) {
+    assertSelectedVaultSourcesCurrent(root, record.context_receipt.source_snapshot);
+  }
   // 白名单透传(review P2-4): 被编辑过的暂存不得注入任意未知 frontmatter 键/覆盖 status。
   const r = record.result;
   const allowed: Record<string, unknown> = {};
@@ -168,6 +301,16 @@ export function applyStoryOutlinePreview(
   writeOutline(root, merged, { workflowId: opts.workflowId, message: `outline: apply preview ${runId}` });
 }
 
+export function applyStoryOutlinePreviewSelected(
+  root: string,
+  runId: string,
+  opts: { workflowId?: string; override?: Record<string, unknown> } = {},
+): void {
+  const record = readPreview(root, "story_outline", runId);
+  if (!record.context_receipt) throw new Error(`preview ${runId} 缺 selected context receipt`);
+  applyStoryOutlinePreview(root, runId, opts);
+}
+
 /** apply P20 当前层 preview: 读暂存 → writeStructureAsset(返回 slug)。 */
 export function applyOutlineItemPreview(
   root: string,
@@ -175,6 +318,9 @@ export function applyOutlineItemPreview(
   opts: { workflowId?: string; override?: Record<string, unknown> } = {},
 ): string {
   const record = readPreview(root, "outline_item", runId);
+  if (record.context_receipt) {
+    assertSelectedVaultSourcesCurrent(root, record.context_receipt.source_snapshot);
+  }
   if (record.target === undefined) {
     throw new Error(`preview 记录缺 target(outline_item 必填): ${runId}`);
   }
@@ -186,4 +332,12 @@ export function applyOutlineItemPreview(
   return writeStructureAsset(root, kind, fm, { workflowId: opts.workflowId });
 }
 
-
+export function applyOutlineItemPreviewSelected(
+  root: string,
+  runId: string,
+  opts: { workflowId?: string; override?: Record<string, unknown> } = {},
+): string {
+  const record = readPreview(root, "outline_item", runId);
+  if (!record.context_receipt) throw new Error(`preview ${runId} 缺 selected context receipt`);
+  return applyOutlineItemPreview(root, runId, opts);
+}

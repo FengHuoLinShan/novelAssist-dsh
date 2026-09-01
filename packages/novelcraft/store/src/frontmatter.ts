@@ -566,6 +566,7 @@ export const SCHEMAS: Record<AssetKind, AssetSchema> = {
       template_version: 'integer',
       version_number: 'integer',
       content_hash: 'string',
+      provenance: 'object',
     },
     statusValues: ['draft', 'canonical', 'archived'],
   },

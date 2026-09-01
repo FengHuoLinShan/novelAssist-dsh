@@ -7,8 +7,86 @@ import { runStep } from "@novelcraft/llm-step";
 import type { Provider, StepResult } from "@novelcraft/llm-step";
 import { gitAdd, gitCommit, serializeFrontmatter, validateFrontmatterForWrite } from "@novelcraft/store";
 import { registerWorldSpecs } from "./specs-world.js";
+import {
+  compileSelectedVaultContext,
+  type AuditableContextWarning,
+  type AuditableSourceRef,
+  type SelectedSourceSnapshot,
+  type SelectedVaultSourceRule,
+  type VaultContextSelection,
+} from "@novelcraft/context";
 
 export type ChatReply = StepResult & { reply?: string };
+export type WorldContextSelection = VaultContextSelection;
+export type WorldGenerationMode = "chat" | "converge" | "explore" | "inspect" | "bible_page";
+
+export interface WorldContextReceipt {
+  context_hash: string;
+  budget_tokens: number;
+  total_tokens: number;
+  source_manifest: AuditableSourceRef[];
+  omitted_source_ids: string[];
+  warnings: AuditableContextWarning[];
+  source_snapshot: SelectedSourceSnapshot[];
+}
+
+export type SelectedWorldStep = StepResult & { context_receipt: WorldContextReceipt };
+export type SelectedWorldChat = SelectedWorldStep & { reply?: string };
+
+function worldSourceRule(ref: string): SelectedVaultSourceRule | undefined {
+  if (/^world\/objects\/[^/]+\.md$/.test(ref) || /^world\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P1", source_type: "world_entity", current_statuses: ["canonical"], working_statuses: ["draft", "candidate"] };
+  }
+  if (/^bible\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P1", source_type: "bible_page", current_statuses: ["canonical"], working_statuses: ["draft"] };
+  }
+  if (ref === "structure/outline.md") {
+    return { tier: "P2", source_type: "story_outline", current_statuses: ["current"], default_status: "current" };
+  }
+  if (/^structure\/(threads|arcs|foreshadowing|reveal)\/[^/]+\.md$/.test(ref) || /^scenes\/[^/]+\.md$/.test(ref)) {
+    return { tier: "P2", source_type: "story_structure", current_statuses: ["canonical"], working_statuses: ["draft"] };
+  }
+  return undefined;
+}
+
+export function buildWorldSelectedContext(root: string, mode: WorldGenerationMode, selection: WorldContextSelection) {
+  return compileSelectedVaultContext(root, {
+    task: `世界生成中心 ${mode}`,
+    scope: "world",
+    selection,
+    classify: worldSourceRule,
+  });
+}
+
+function worldReceipt(context: ReturnType<typeof buildWorldSelectedContext>): WorldContextReceipt {
+  return {
+    context_hash: context.context_hash,
+    budget_tokens: context.budget_tokens,
+    total_tokens: context.total_tokens,
+    source_manifest: context.source_manifest,
+    omitted_source_ids: context.omitted_source_ids,
+    warnings: context.warnings,
+    source_snapshot: context.source_snapshot,
+  };
+}
+
+async function runWorldSelected(
+  provider: Provider,
+  root: string,
+  mode: WorldGenerationMode,
+  specRef: string,
+  selection: WorldContextSelection,
+): Promise<SelectedWorldStep> {
+  const context = buildWorldSelectedContext(root, mode, selection);
+  const step = await runStep(provider, { specRef, input: context.rendered_text });
+  if (step.ok) {
+    const current = buildWorldSelectedContext(root, mode, selection);
+    if (current.context_hash !== context.context_hash) {
+      throw new Error(`world ${mode} selected context 在 provider 调用期间漂移`);
+    }
+  }
+  return { ...step, context_receipt: worldReceipt(context) };
+}
 
 /**
  * vault 内绝对路径 → 相对 root 的 POSIX pathspec(git 以 root 为 cwd; `/` 归一全平台
@@ -28,10 +106,25 @@ export async function worldChat(provider: Provider, input: string): Promise<Chat
   return { ...r, reply: r.ok ? String((r.result as { reply?: string }).reply ?? "") : undefined };
 }
 
+export async function worldChatSelected(
+  provider: Provider,
+  root: string,
+  selection: WorldContextSelection,
+): Promise<SelectedWorldChat> {
+  registerWorldSpecs();
+  const result = await runWorldSelected(provider, root, "chat", "world_creation_chat", selection);
+  return { ...result, reply: result.ok ? String((result.result as { reply?: string }).reply ?? "") : undefined };
+}
+
 /** 4.2 只读收束。 */
 export async function worldConverge(provider: Provider, input: string): Promise<StepResult> {
   registerWorldSpecs();
   return runStep(provider, { specRef: "world_convergence", input });
+}
+
+export async function worldConvergeSelected(provider: Provider, root: string, selection: WorldContextSelection) {
+  registerWorldSpecs();
+  return runWorldSelected(provider, root, "converge", "world_convergence", selection);
 }
 
 /** 4.3 一跳探索(不创建资产)。 */
@@ -40,10 +133,20 @@ export async function worldExplore(provider: Provider, input: string): Promise<S
   return runStep(provider, { specRef: "world_exploration", input });
 }
 
+export async function worldExploreSelected(provider: Provider, root: string, selection: WorldContextSelection) {
+  registerWorldSpecs();
+  return runWorldSelected(provider, root, "explore", "world_exploration", selection);
+}
+
 /** 4.4 页面检修(findings 供复核)。 */
 export async function worldInspect(provider: Provider, input: string): Promise<StepResult> {
   registerWorldSpecs();
   return runStep(provider, { specRef: "world_semantic_inspection", input });
+}
+
+export async function worldInspectSelected(provider: Provider, root: string, selection: WorldContextSelection) {
+  registerWorldSpecs();
+  return runWorldSelected(provider, root, "inspect", "world_semantic_inspection", selection);
 }
 
 /** 4.6 世界对象建议 → world/pending(待处理建议, 不自动采用)。 */
@@ -106,7 +209,14 @@ export async function suggestBiblePage(
     input,
   });
   if (!r.ok) return { ok: false, error: r.error };
-  const p = r.result as Record<string, unknown>;
+  return materializeBiblePage(root, r.result as Record<string, unknown>);
+}
+
+function materializeBiblePage(
+  root: string,
+  p: Record<string, unknown>,
+  contextReceipt?: WorldContextReceipt,
+): { ok: boolean; slug?: string; error?: StepResult["error"] } {
   const title = String(p.title ?? "");
   if (!title) return { ok: false, error: { kind: "schema_violation", message: "提案缺 title" } };
   const slug = slugify(title) || `page-${Date.now()}`;
@@ -124,6 +234,16 @@ export async function suggestBiblePage(
     title,
     status: "draft",
     page_type: String(p.page_type ?? ""),
+    ...(contextReceipt !== undefined
+      ? {
+          provenance: {
+            context_hash: contextReceipt.context_hash,
+            source_manifest: contextReceipt.source_manifest,
+            omitted_source_ids: contextReceipt.omitted_source_ids,
+            warnings: contextReceipt.warnings,
+          },
+        }
+      : {}),
   };
   // N23: 写前校验最终落盘 frontmatter(bible_page schema), issues 非空 fail-closed 不写。
   let checked: Record<string, unknown>;
@@ -148,4 +268,25 @@ export async function suggestBiblePage(
   gitAdd(root, [`:(literal)${relOf(root, file)}`]);
   gitCommit(root, `world bible suggest: ${slug}`);
   return { ok: true, slug };
+}
+
+export async function suggestBiblePageSelected(
+  provider: Provider,
+  root: string,
+  selection: WorldContextSelection,
+  opts: { isNewPage?: boolean } = {},
+): Promise<{ ok: boolean; slug?: string; error?: StepResult["error"]; context_receipt: WorldContextReceipt }> {
+  registerWorldSpecs();
+  const step = await runWorldSelected(
+    provider,
+    root,
+    "bible_page",
+    opts.isNewPage ? "world_bible_new_page" : "world_bible_page",
+    selection,
+  );
+  if (!step.ok) return { ok: false, error: step.error, context_receipt: step.context_receipt };
+  return {
+    ...materializeBiblePage(root, step.result as Record<string, unknown>, step.context_receipt),
+    context_receipt: step.context_receipt,
+  };
 }

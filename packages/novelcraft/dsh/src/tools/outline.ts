@@ -5,6 +5,47 @@ import type { NovelCraftService } from '../service.js';
 import { novelcraftToolFactory } from './define.js';
 import { capReceipt, llmError, requireRoot } from './shared.js';
 
+function selectionOf(args: {
+  input: string;
+  source_refs?: readonly unknown[];
+  include_working_drafts?: boolean;
+  context_budget_tokens?: number;
+}) {
+  const sourceRefs = args.source_refs?.map((value) => {
+    if (typeof value !== 'string') throw llmError('schema_violation', 'source_refs 必须是字符串数组');
+    return value;
+  });
+  return {
+    instruction: args.input,
+    ...(sourceRefs !== undefined ? { source_refs: sourceRefs } : {}),
+    ...(args.include_working_drafts === true ? { include_working_drafts: true } : {}),
+    ...(args.context_budget_tokens !== undefined ? { budget_tokens: args.context_budget_tokens } : {}),
+  };
+}
+
+function contextProjection(record: { context_receipt?: import('@novelcraft/outline').OutlineContextReceipt }) {
+  const receipt = record.context_receipt;
+  if (!receipt) throw llmError('protocol_error', '安全 outline preview 缺 context receipt');
+  return {
+    context_hash: receipt.context_hash,
+    source_manifest: receipt.source_manifest.map((source) => ({
+      source_id: source.source_id,
+      source_type: source.source_type,
+      source_hash: source.source_hash,
+      included_content_hash: source.included_content_hash,
+      source_status: source.source_status ?? '',
+      open_path: typeof source.open_target?.path === 'string' ? source.open_target.path : '',
+      truncated: source.truncated,
+    })),
+    omitted_source_ids: receipt.omitted_source_ids,
+    warnings: receipt.warnings.map((warning) => ({
+      code: warning.code,
+      message: warning.message,
+      source_id: warning.source_id,
+    })),
+  };
+}
+
 export function buildOutlineTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   const tool = novelcraftToolFactory(ctx, service);
   return [
@@ -17,6 +58,9 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '生成输入(当前设定摘要/方向要求等上下文)' },
+        source_refs: { type: 'array', description: '显式选择的 vault 相对来源路径；不传则只用作者任务' },
+        include_working_drafts: { type: 'boolean', description: '显式允许所选 draft/candidate；默认 false' },
+        context_budget_tokens: { type: 'integer', description: '本次 auditable context 估算预算' },
       },
       output: {
         type: 'object', additionalProperties: false,
@@ -25,13 +69,23 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
           run_id: { type: 'string', required: true },
           result_json: { type: 'string', required: true },
           error: { type: 'string', required: true },
+          context_hash: { type: 'string', required: true },
+          source_manifest: { type: 'array', required: true },
+          omitted_source_ids: { type: 'array', required: true },
+          warnings: { type: 'array', required: true },
         },
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const r = await run.service.capabilities.propose.outlinePreview(requireRoot(run), args.input, run.signal);
+        const r = await run.service.capabilities.propose.outlinePreview(requireRoot(run), selectionOf(args), run.signal);
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, run_id: r.record.run_id, result_json: capReceipt(run, JSON.stringify(r.record.result)), error: '' };
+        return {
+          ok: true,
+          run_id: r.record.run_id,
+          result_json: capReceipt(run, JSON.stringify(r.record.result)),
+          error: '',
+          ...contextProjection(r.record),
+        };
       },
     }),
     tool({
@@ -62,6 +116,9 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         target: { type: 'string', required: true, description: "'plot_thread' | 'outline_arc'" },
         input: { type: 'string', required: true, description: '生成输入(当前层上下文/要求)' },
+        source_refs: { type: 'array', description: '显式选择的 vault 相对来源路径；不传则只用作者任务' },
+        include_working_drafts: { type: 'boolean', description: '显式允许所选 draft/candidate；默认 false' },
+        context_budget_tokens: { type: 'integer', description: '本次 auditable context 估算预算' },
       },
       output: {
         type: 'object', additionalProperties: false,
@@ -70,6 +127,10 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
           run_id: { type: 'string', required: true },
           result_json: { type: 'string', required: true },
           error: { type: 'string', required: true },
+          context_hash: { type: 'string', required: true },
+          source_manifest: { type: 'array', required: true },
+          omitted_source_ids: { type: 'array', required: true },
+          warnings: { type: 'array', required: true },
         },
       },
       timeoutMs: 300_000,
@@ -77,9 +138,17 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
         if (args.target !== 'plot_thread' && args.target !== 'outline_arc') {
           throw llmError('schema_violation', "target 必须是 'plot_thread' 或 'outline_arc'");
         }
-        const r = await run.service.capabilities.propose.outlineItemPreview(requireRoot(run), args.target, args.input, run.signal);
+        const r = await run.service.capabilities.propose.outlineItemPreview(
+          requireRoot(run), args.target, selectionOf(args), run.signal,
+        );
         if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, run_id: r.record.run_id, result_json: capReceipt(run, JSON.stringify(r.record.result)), error: '' };
+        return {
+          ok: true,
+          run_id: r.record.run_id,
+          result_json: capReceipt(run, JSON.stringify(r.record.result)),
+          error: '',
+          ...contextProjection(r.record),
+        };
       },
     }),
     tool({

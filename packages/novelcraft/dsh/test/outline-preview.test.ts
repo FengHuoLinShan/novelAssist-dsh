@@ -1,13 +1,14 @@
 // M12-b/N44 行为契约: outline 生成 preview/apply 拆分 + world 生成中心只读模式。
 // 断言依据: 后续开发计划.md M12-b + 台账 §6.18.2(preview 不写资产, apply 显式审批) +
 // §6.17(页面建议只落工作稿) + 铁律 3(apply 必过 approval fail-closed) + N38(prompt 指纹可回放)。
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { NovelCraftService } from '../src/index.js';
 import { makeContext } from './helpers.js';
+import { serializeFrontmatter } from '@novelcraft/store';
 
 const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
 
@@ -55,12 +56,14 @@ describe('world_bible_suggest(M12-b review E: 唯一无审批写文件工具的�
       page_key: 'magic-system', title: '魔法体系', version_number: 1, page_type: 'setting',
       sections: [], summary: '体系摘要',
     })] });
-    const out = await exec(env, 'novelcraft_world_bible_suggest', { root: env.root, input: '设计魔法体系' }) as { slug: string };
+    const out = await exec(env, 'novelcraft_world_bible_suggest', { root: env.root, input: '设计魔法体系' }) as { slug: string; context_hash: string };
     expect(out.slug).toBeTruthy();
+    expect(out.context_hash).toMatch(/^[0-9a-f]{64}$/);
     const file = path.join(env.root, 'bible', `${out.slug}.md`);
     expect(existsSync(file)).toBe(true);
     const raw = readFileSync(file, 'utf8');
     expect(raw).toContain('status: draft'); // 工作稿非 canonical(§6.17)
+    expect(raw).toContain('provenance:');
     const { execFileSync } = await import('node:child_process');
     const log = execFileSync('git', ['-C', env.root, '-c', 'core.quotepath=false', 'log', '-1', '--name-only', '--pretty=%s'], { encoding: 'utf8' });
     expect(log).toContain(`bible/${out.slug}.md`); // 文件+git 提交(铁律 2)
@@ -72,8 +75,9 @@ describe('outline preview/apply(M12-b/N44)', () => {
   it('preview: 暂存 .assistant/proposals/ 且不写 structure 资产; 记录带 prompt 指纹', async () => {
     const env = await setup();
     env.h.adapter.enqueue({ deltas: [OUTLINE_RESULT] });
-    const out = await exec(env, 'novelcraft_outline_preview', { root: env.root, input: '设定摘要' }) as { run_id: string };
+    const out = await exec(env, 'novelcraft_outline_preview', { root: env.root, input: '设定摘要' }) as { run_id: string; context_hash: string };
     expect(out.run_id).toMatch(/^p[0-9a-z]+$/);
+    expect(out.context_hash).toMatch(/^[0-9a-f]{64}$/);
     // 暂存记录存在且含指纹
     const dir = path.join(env.root, '.assistant', 'proposals');
     const files = (await import('node:fs')).readdirSync(dir).filter((n) => n.startsWith('outline-'));
@@ -81,8 +85,58 @@ describe('outline preview/apply(M12-b/N44)', () => {
     const record = JSON.parse(readFileSync(path.join(dir, files[0]), 'utf8'));
     expect(record.kind).toBe('story_outline');
     expect(record.prompt_fingerprint?.system_prompt_hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(record.context_receipt?.source_manifest[0]?.source_id).toBe('author-instruction');
     // structure/outline.md 不存在(preview 不写资产)
     expect(existsSync(path.join(env.root, 'structure', 'outline.md'))).toBe(false);
+    env.cleanup();
+  });
+
+  it('显式 canonical 来源进入模型与 receipt；来源漂移后 apply 零 canonical 写', async () => {
+    const env = await setup();
+    const sourceRel = 'world/objects/harbor.md';
+    const sourceFile = path.join(env.root, sourceRel);
+    const sourceRaw = serializeFrontmatter(
+      { id: 'harbor', kind: 'location', name: '盐港', status: 'canonical' },
+      '盐港只在冬季开放北闸。',
+    );
+    writeFileSync(sourceFile, sourceRaw, 'utf8');
+    env.h.adapter.enqueue({ deltas: [OUTLINE_RESULT] });
+    const out = await exec(env, 'novelcraft_outline_preview', {
+      root: env.root,
+      input: '围绕盐港生成总纲',
+      source_refs: [sourceRel],
+    }) as { run_id: string; source_manifest: Array<{ source_id: string }> };
+    expect(out.source_manifest.map((source) => source.source_id)).toContain(`vault:${sourceRel}`);
+    const sent = env.h.adapter.requests[0].messages[0].content[0];
+    expect(sent).toMatchObject({ type: 'text', text: expect.stringContaining('冬季开放北闸') });
+    writeFileSync(sourceFile, `${sourceRaw}\n外部变化`, 'utf8');
+    await expect(exec(env, 'novelcraft_outline_apply', { root: env.root, run_id: out.run_id }))
+      .rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
+    expect(existsSync(path.join(env.root, 'structure', 'outline.md'))).toBe(false);
+    env.cleanup();
+  });
+
+  it('draft 来源默认拒绝且 provider=0；显式 include_working_drafts 才允许', async () => {
+    const env = await setup();
+    const sourceRel = 'world/objects/draft-city.md';
+    writeFileSync(
+      path.join(env.root, sourceRel),
+      serializeFrontmatter({ id: 'draft-city', kind: 'location', name: '草稿城', status: 'draft' }, '待定设定'),
+      'utf8',
+    );
+    const before = env.h.adapter.requests.length;
+    await expect(exec(env, 'novelcraft_outline_preview', {
+      root: env.root, input: '生成总纲', source_refs: [sourceRel],
+    })).rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
+    expect(env.h.adapter.requests).toHaveLength(before);
+    env.h.adapter.enqueue({ deltas: [OUTLINE_RESULT] });
+    const allowed = await exec(env, 'novelcraft_outline_preview', {
+      root: env.root,
+      input: '生成总纲',
+      source_refs: [sourceRel],
+      include_working_drafts: true,
+    }) as { source_manifest: Array<{ source_status: string }> };
+    expect(allowed.source_manifest.some((source) => source.source_status === 'draft')).toBe(true);
     env.cleanup();
   });
 
@@ -138,6 +192,21 @@ describe('outline preview/apply(M12-b/N44)', () => {
     await expect(exec(env, 'novelcraft_outline_apply', { root: env.root, run_id: p.run_id }))
       .rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
     expect(existsSync(path.join(env.root, 'structure', 'outline.md'))).toBe(false); // 零写
+    env.cleanup();
+  });
+
+  it('公开 apply 必须携带冻结 context receipt', async () => {
+    const env = await setup();
+    env.h.adapter.enqueue({ deltas: [OUTLINE_RESULT] });
+    const p = await exec(env, 'novelcraft_outline_preview', { root: env.root, input: '设定' }) as { run_id: string };
+    const dir = path.join(env.root, '.assistant', 'proposals');
+    const file = (await import('node:fs')).readdirSync(dir).find((name) => name.startsWith('outline-'))!;
+    const record = JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
+    delete record.context_receipt;
+    writeFileSync(path.join(dir, file), `${JSON.stringify(record)}\n`, 'utf8');
+    await expect(exec(env, 'novelcraft_outline_apply', { root: env.root, run_id: p.run_id }))
+      .rejects.toMatchObject({ code: 'NOVELCRAFT_TOOL_ERROR' });
+    expect(existsSync(path.join(env.root, 'structure', 'outline.md'))).toBe(false);
     env.cleanup();
   });
 
