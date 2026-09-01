@@ -70,7 +70,7 @@ adopt / reject / complete_import(9 类, 判别联合, TraceRecorder 内存追加
 cd /Users/tywww/Desktop/项目/novelAssist-dsh
 npm install
 # 按拓扑序构建(workspaces 并行构建会因 dist 依赖顺序失败):
-# vault→trace→store→llm-step→rag→memory→context→assistant→outline→world→writing→imports→dsh
+# vault→trace→llm-step→memory→store→context→outline→writing→imports→rag→world→assistant→dsh
 npm test            # 259 测试全绿
 npm run typecheck   # 零错误
 ```

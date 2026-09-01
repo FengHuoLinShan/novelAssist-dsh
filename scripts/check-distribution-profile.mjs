@@ -123,6 +123,7 @@ function deepseekRuntimeImports(file) {
 
 const packageDirs = readdirSync(packagesRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory())
 const actualPackageNames = new Set(packageDirs.map((entry) => entry.name))
+const workspacePackages = new Map()
 for (const expected of expectedPackages) {
   if (!actualPackageNames.has(expected)) failures.push(`missing required workspace directory: ${expected}`)
 }
@@ -139,6 +140,7 @@ for (const entry of packageDirs) {
     failures.push(`${entry.name}: invalid or missing package.json (${String(error)})`)
     continue
   }
+  workspacePackages.set(entry.name, pkg)
   workspaceNames.push(pkg.name)
   // rc.8 strips a trailing `/client` when resolving browser bundle ids.
   const expectedName = entry.name === 'client' ? '@novelcraft/dsh-client' : `@novelcraft/${entry.name}`
@@ -207,7 +209,43 @@ if (skillEntries.length !== 9) failures.push(`@novelcraft/preset must ship exact
 
 // N36/N37: default CI 只验证 optional 缺失与文本链降级，不构建/测试 BGE capability；
 // 显式 bge-profile 才 include optional 并执行 rag-bge tests/audit。
-const DEFAULT_WORKSPACES = 'vault trace store llm-step rag memory outline writing imports world context assistant dsh client'
+const FULL_BUILD_ORDER = ['vault', 'trace', 'llm-step', 'memory', 'store', 'context', 'outline', 'writing', 'imports', 'rag', 'rag-bge', 'world', 'assistant', 'dsh', 'client']
+const DEFAULT_BUILD_ORDER = FULL_BUILD_ORDER.filter((name) => name !== 'rag-bge')
+const BGE_BUILD_ORDER = ['vault', 'llm-step', 'memory', 'store', 'rag', 'rag-bge']
+const DEFAULT_WORKSPACES = DEFAULT_BUILD_ORDER.join(' ')
+const packageDirByName = new Map([...workspacePackages].map(([dir, pkg]) => [pkg.name, dir]))
+
+function validateWorkspaceOrder(order, label) {
+  const out = []
+  const positions = new Map(order.map((name, index) => [name, index]))
+  for (const [name, position] of positions) {
+    const pkg = workspacePackages.get(name)
+    if (!pkg) {
+      out.push(`${label}: unknown workspace ${name}`)
+      continue
+    }
+    for (const dependency of Object.keys(pkg.dependencies ?? {})) {
+      const dependencyDir = packageDirByName.get(dependency)
+      if (dependencyDir === undefined) continue
+      const dependencyPosition = positions.get(dependencyDir)
+      if (dependencyPosition === undefined) {
+        out.push(`${label}: ${name} requires omitted workspace ${dependencyDir}`)
+      } else if (dependencyPosition >= position) {
+        out.push(`${label}: ${dependencyDir} must precede ${name}`)
+      }
+    }
+  }
+  return out
+}
+
+const buildScript = readFileSync(join(root, 'scripts', 'build-topological.mjs'), 'utf8')
+const buildOrderBlock = buildScript.match(/const order = \[([^\]]+)\]/)?.[1] ?? ''
+const rootBuildOrder = [...buildOrderBlock.matchAll(/'([^']+)'/g)].map((match) => match[1])
+if (JSON.stringify(rootBuildOrder) !== JSON.stringify(FULL_BUILD_ORDER)) {
+  failures.push('root build order must equal the canonical full workspace order')
+}
+failures.push(...validateWorkspaceOrder(rootBuildOrder, 'root build order'))
+
 function validateCiProfiles(text) {
   const out = []
   const pieces = text.split('\n  bge-profile:')
@@ -227,15 +265,18 @@ function validateCiProfiles(text) {
   if (loops.length !== 3 || loops.some((value) => value !== DEFAULT_WORKSPACES)) {
     out.push('default CI build/test/typecheck loops must equal the canonical non-BGE workspace set')
   }
+  if (loops[0]) out.push(...validateWorkspaceOrder(loops[0].split(/\s+/), 'default CI build order'))
   if (/for p in[^\n]*\brag-bge\b/.test(defaultCi) || /run:\s*(?:\|\s*)?npm (?:test|run typecheck)\s*(?:\n|$)/.test(defaultCi)) {
     out.push('default CI must not run rag-bge or root test/typecheck')
   }
   if (!/npm test -w @novelcraft\/preset/.test(defaultCi)) out.push('default CI must test the source-only preset/Skill profile')
   if (!/node-version:\s*24\.11\.0/.test(bgeCi)) out.push('bge-profile must run on Node 24.11.0')
   if (!/npm ci --include=optional/.test(bgeCi)) out.push('bge-profile must install optional dependencies')
-  if (!/npm run build -w @novelcraft\/rag\b/.test(bgeCi) || !/npm run build -w @novelcraft\/rag-bge\b/.test(bgeCi)) {
-    out.push('bge-profile must build rag and rag-bge')
+  const bgeBuildOrder = [...bgeCi.matchAll(/npm run build -w @novelcraft\/([^\s]+)/g)].map((match) => match[1])
+  if (JSON.stringify(bgeBuildOrder) !== JSON.stringify(BGE_BUILD_ORDER)) {
+    out.push('bge-profile must build the canonical RAG dependency closure in topological order')
   }
+  out.push(...validateWorkspaceOrder(bgeBuildOrder, 'BGE CI build order'))
   if (!/npm test -w @novelcraft\/rag-bge(?:\s|$)/.test(bgeCi) || /npm test -w @novelcraft\/rag(?:\s|$)/.test(bgeCi)) {
     out.push('bge-profile must test only rag-bge; default CI already tests rag')
   }
@@ -260,6 +301,14 @@ const ciMutations = [
 for (const [name, from, to] of ciMutations) {
   const mutated = ciText.replace(from, to)
   if (mutated === ciText || validateCiProfiles(mutated).length === 0) failures.push(`CI profile checker self-test failed: ${name}`)
+}
+for (const [name, order] of [
+  ['store before memory', ['vault', 'store', 'memory']],
+  ['writing before context', ['vault', 'memory', 'store', 'outline', 'writing', 'context']],
+]) {
+  if (validateWorkspaceOrder(order, `self-test ${name}`).length === 0) {
+    failures.push(`workspace topology checker self-test failed: ${name}`)
+  }
 }
 
 if (failures.length > 0) {
