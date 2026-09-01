@@ -179,5 +179,22 @@
     RAG typed result(N47, total/truncated/recall_capped + open_target)。
   - 39 工具功能切片已完成；原收尾后的 clean-build 拓扑与插件归组缺陷由 N48 修复，
     远端 CI 状态只以最终推送 SHA 的 default/BGE jobs 为准。
+- [x] **项目评估图谱批次 7 实现**（2026-09-01，独立复审与最终全仓门禁通过）：
+  - U1–U4（`079c0dbc..2915a486`）：新增 workflow 四态恢复卡、书库 list/create/open/switch、
+    总纲/Scene 辅助工作区和 World Bible 五模式工作区；loopback RPC 仍只读/记录决定，写入回
+    助手、领域命令与 ApprovalGate；切书先清旧读面并拒绝晚到响应。
+  - X1（`7f7425f6`）：`vault-portability` 本地 backup/restore/verify，闭含 `.git`、ignored 图片和
+    durable 状态；manifest/SHA-256、源漂移、symlink、凭据与目标冲突 fail-closed。
+  - X2（`2e800805`）：clean current chapters → 真实 OOXML `manuscript.docx` + 世界图片 + source
+    receipt，失败零半成品；这是发布包，不是 comments/track-changes Word round-trip。
+  - A1（`5c4bdcf8`）：Excel `05_AI平台` 按官方规格/官方 benchmark/第三方 benchmark/项目实测
+    分列刷新；未调用付费模型，不作小说质量排名，不新增爬虫/数据库/定时任务。
+  - 独立复审修复（`86034c2d`）：以临时 Vault 负例关闭 proposal symlink 审批后写入、同标题
+    切书与本地状态残留、workflow/book/Story/World 扫描根越界、X1 Git token/sidecar、X2 源内
+    目标/外部章节图片/未进 HEAD 资产；新增负例与相关 workspace 定向门全绿。
+  - X1 最终复审修复（`1abdc9d5`）：backup/verify/restore 复用 `validateInitializedVault`；自检
+    使用 `initVault` 真实 HEAD/全骨架，并拒绝 fake HEAD 与缺骨架，恢复后再验初始化合同。
+  - 最终门禁：四项 `check:*`、拓扑 build、16/16 workspace tests、全仓 typecheck、
+    `eval:pilot:self-test`（36 logical calls/provider=0）、X1/X2 self-test、diff check 全绿；未 push。
 - 明确不做: RP(D23)/对象图片(D19)/带批注 .docx(D20)/站内生图(ADR-0020)/多用户云同步/
   统一 timeline service(§6.18.6)/回收站(§6.13.6)。
