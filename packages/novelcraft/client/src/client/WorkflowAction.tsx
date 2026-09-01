@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcCaller } from './index.ts'
 import { NS } from './locales.ts'
@@ -19,7 +20,7 @@ const STATE_CLASS = {
 
 export function WorkflowAction(props: WorkflowActionProps): JSX.Element {
   const { connection, inputActions, sessionId, t, useInput } = props
-  const chatDraft = useInput((state) => state.draft)
+  const chatDraft = useInput((state: InputState) => state.draft)
   const [open, setOpen] = useState(false)
   const [message, setMessage] = useState('')
   const { data, loading, refresh } = useWorkflowView(connection, sessionId)

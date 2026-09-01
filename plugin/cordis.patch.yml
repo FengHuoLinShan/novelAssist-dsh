@@ -1,4 +1,4 @@
-# NovelCraft official DSH bundle: host service, tools, loopback RPC, and Web UI.
+# NovelCraft official DSH bundle: host service, tools, authenticated Connection RPC, and Web UI.
 - insert:
     - id: novelcraft
       name: novelcraft-dsh

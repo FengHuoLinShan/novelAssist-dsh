@@ -1,5 +1,9 @@
 # M4 重构开发状态(novelAssist-dsh / main)
 
+> 2026-09-02 当前基线: DSH `0.1.2-alpha.4` / deepseek-harness `4e84901`。
+> 客户端走认证 Connection RPC，已无 method-level `authority`; 已删除自定义
+> `client/push` 与修改 `node_modules` 的 postinstall。下文 rc.8/loopback/push 描述仅为历史验收快照，当前实现以 N50 为准。
+
 ## 位置
 
 - 仓库: /Users/tywww/Desktop/项目/novelAssist-dsh(独立仓库, remote origin = https://github.com/FengHuoLinShan/novelAssist-dsh.git, PUBLIC)
@@ -8,8 +12,8 @@
 - 治理文档: docs/adr/0016-m4-dsh-plugin-rewrite.md(Accepted)、
   docs/adr/0017-m4-repo-form-and-mounting.md(Accepted: fork 仓库形态 + 挂载授权)、
   docs/agent/dsh-rebuild/自主智能式作家助手设计.md(决策 D1–D25)
-- DSH 参考 checkout: /Users/tywww/Desktop/项目/deepseek-harness(浅克隆, head 47f9438,
-  只读参考; 构建链以 npm rc.6 官方包为准)
+- DSH 参考 checkout: /Users/tywww/Desktop/项目/deepseek-harness(浅克隆, head `4e84901`,
+  只读参考; 构建链以 npm `0.1.2-alpha.4` 官方包为准)
 - 旧 dsh-rebuild worktree: 仅保留为历史/参考; 其残留改动不动(用户指示); 侧车 ADR 已标 Superseded
 
 ## 进度
@@ -36,7 +40,7 @@
 - [x] **trace contract 测试框架(C)**: `@novelcraft/trace`(trace/assert/mock, 17 测试)+ `imports` 的 `runDeepImport` 编排 seam(11 测试); 全仓 **259 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/trace-contract-验收.md
 - [x] **C 的 DSH 挂载收尾**: `@novelcraft/dsh` 新增 `deepImport` 便捷方法 + `novelcraft_deep_import` 工具(runtime.provider=DshProvider、approve=ApprovalGate fail-closed、trace=ImportTraceSink 落 .assistant/import-trace.jsonl), 3 测试
 - [x] **client 迭代**: 剧情地图(`store.storyMap` + story/map 端点 + StoryMapAction)+ 写作台四模式(writing/desk 端点 + WritingDeskAction, 守望/计划/评审/参照 tab), 4 测试; 全仓 **304 测试全绿, typecheck 零错误**; 验收见 docs/agent/dsh-rebuild/client-迭代-验收.md
-- [x] 信号主动推送(轮询→mux): ADR-0018 定 DSH 共享层政策; 短轮询过渡 + 真 mux 推送均已落地——scripts/apply-dsh-patches.mjs 加 client/push allowlist + @novelcraft/dsh emit + @novelcraft/dsh-client ctx.remote.$on 订阅(seam 提案见 信号推送-远程事件seam提案.md); 上游 Discussion #1289 回应后去 fork 化
+- [x] 信号刷新: 动作后立即刷新 + 聚焦/可见性刷新 + 非零退避轮询；按 N50 不修改 DSH 运行时包。
 - [x] 仓库迁出: codex/m4-dsh-plugin-rewrite → 独立仓库 novelAssist-dsh(annotated tag `dsh`, 2026-08-14)
 - [x] **结构资产统一关系模型(ADR-0019)**: Accepted + P0–P3 全落地——`validateRelations`/`assertValidRelations`(7 type 枚举 + 源/目标白名单 + 自环/悬空/端点 kind, 写链硬错)、结构资产 schema `relations: 'list'`、`VaultIndex.relations` 全资产有向图(`sourceKind` 标注源)、`storyMap().edges`(显式边 + `related_*_ids` 兼容投影并集去重, N17)、`planned_payoff_scene` 兑现 #11 slug、reveal required 放宽(「未归类」=「无边」); 剧情地图三缺口关闭, 验收见 client-迭代-验收.md
 - [x] **旧引擎退役(novelAssist-dsh 侧)**: 本仓库携带的 FastAPI/PG/Vue 旧引擎副本(backend/frontend-console/deploy/docker/docker-compose/Makefile/start.sh/tools/workflows + 旧 docs 与顶层旧文档)已删除, 归档于 annotated tag `old-engine`; 仓库现为纯 M4 DSH 插件 monorepo(重写 README/AGENTS/CLAUDE + 最小 ci.yml)
@@ -181,7 +185,7 @@
     远端 CI 状态只以最终推送 SHA 的 default/BGE jobs 为准。
 - [x] **项目评估图谱批次 7 实现**（2026-09-01，独立复审与最终全仓门禁通过）：
   - U1–U4（`079c0dbc..2915a486`）：新增 workflow 四态恢复卡、书库 list/create/open/switch、
-    总纲/Scene 辅助工作区和 World Bible 五模式工作区；loopback RPC 仍只读/记录决定，写入回
+    总纲/Scene 辅助工作区和 World Bible 五模式工作区；认证 Connection RPC 仍只读/记录决定，写入回
     助手、领域命令与 ApprovalGate；切书先清旧读面并拒绝晚到响应。
   - X1（`7f7425f6`）：`vault-portability` 本地 backup/restore/verify，闭含 `.git`、ignored 图片和
     durable 状态；manifest/SHA-256、源漂移、symlink、凭据与目标冲突 fail-closed。

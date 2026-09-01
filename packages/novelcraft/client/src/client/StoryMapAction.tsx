@@ -2,6 +2,7 @@
 // 数据源 = /novelcraft story/map(宿主读 store.storyMap, 文件真相)。纯读, 无动作。
 import { useEffect, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS, type NovelcraftKey } from './locales.ts'
@@ -57,7 +58,7 @@ function Section(props: { title: string; lines: string[] }): JSX.Element {
 
 export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const { t, connection, inputActions, sessionId, useInput } = props
-  const chatDraft = useInput((state) => state.draft)
+  const chatDraft = useInput((state: InputState) => state.draft)
   const [open, setOpen] = useState(false)
   /** 钻取中章节(章节档案 §17.5.1); null = 列表视图。 */
   const [chapter, setChapter] = useState<number | null>(null)

@@ -958,7 +958,6 @@ describe('atlas 端点(Phase 6)', () => {
 
 interface CapturedChannel {
   channel?: string;
-  options?: { authority?: string };
   handler?: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<{
     ok: boolean;
     value?: unknown;
@@ -977,9 +976,8 @@ function setupDispatchApp(overrides: SetupOptions = {}) {
   const captured: CapturedChannel = {};
   env.ctx.provide('connection', {
     rpc: {
-      handle: (channel: string, handler: unknown, options: unknown) => {
+      handle: (channel: string, handler: unknown) => {
         captured.channel = channel;
-        captured.options = options as { authority?: string };
         captured.handler = handler as CapturedChannel['handler'];
         return async () => undefined;
       },
@@ -1010,11 +1008,11 @@ async function expectNoFileNamed(root: string, name: string): Promise<void> {
 }
 
 describe('apply/connection 通道分发(真实 handler 走线)', () => {
-  it('注册到 loopback 通道(RPC_CHANNEL); 未知端点 → 作者语言错误', async () => {
+  it('注册到认证 Connection 通道(RPC_CHANNEL); 未知端点 → 作者语言错误', async () => {
     const env = setupDispatchApp();
     expect(env.captured.channel).toBe(RPC_CHANNEL);
-    // 铁律 3: 客户端 RPC 通道 authority=loopback(只读信号 + 记录决定, 不写资产)。
-    expect(env.captured.options?.authority).toBe('loopback');
+    // N50: DSH 在进入 handler 前完成 Host/Origin 围栏与浏览器会话认证;
+    // 本通道自身只读信号/记录决定, 不写 canonical 资产。
     const res = await env.dispatch('atlas/nope', {});
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error?.message).toContain('unknown endpoint');
@@ -1058,7 +1056,7 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
     env.cleanup();
   });
 
-  it('ENDPOINTS.chapterWorkspace/stageEdit: Git 版本读面 + 会话收据, loopback 零章节写入', async () => {
+  it('ENDPOINTS.chapterWorkspace/stageEdit: Git 版本读面 + 会话收据, Connection RPC 零章节写入', async () => {
     const env = setupDispatchApp();
     const { ingestChapter } = await import('@novelcraft/writing');
     const { gitAdd, gitCommit, readCurrentChapter } = await import('@novelcraft/store');

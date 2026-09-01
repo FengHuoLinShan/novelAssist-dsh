@@ -1,4 +1,4 @@
-// @novelcraft/dsh-client · node 半身: /novelcraft loopback RPC 通道处理器。
+// @novelcraft/dsh-client · node 半身: /novelcraft 认证 Connection RPC 通道处理器。
 // 依据: 设计文档 §9/§17(宠物/收件箱读 .assistant/signals; 动作回调走宿主服务面);
 // §22.3(client seam = client-modules, 不直接 import 核心包运行时)。
 // 数据路径: 浏览器 → ctx.connection.rpc.call('/novelcraft', endpoint, payload)
@@ -6,7 +6,7 @@
 // 本通道零正史写, adopt 由助手 agent 经 DSH approval 执行, §9 fail-closed)。
 // 核心包仅作 type-only import(零运行时依赖; 运行时数据面全部经宿主 ui seam)。
 import type { Context } from '@deepseek-ai/cordis';
-import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api';
+import type { ConnectionRpcResult as RpcResult } from '@deepseek-ai/dsh-client-connection';
 import type { HealthScanResult, Signal } from '@novelcraft/assistant';
 import type { ResolvedPolicy } from '@novelcraft/llm-step';
 import type {

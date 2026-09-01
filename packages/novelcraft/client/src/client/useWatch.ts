@@ -330,14 +330,8 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
         schedule(POLL_MIN_MS)
       }
     }
-    // 宿主真推送(ADR-0018 §1): client/push → DOM 事件 → 立即刷新并重置退避。
-    const onSignalsChanged = () => {
-      void refresh()
-      schedule(POLL_MIN_MS)
-    }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('novelcraft:signals-changed', onSignalsChanged)
     return () => {
       // 作废旧代际在途请求: 旧 session/connection 的响应不得 setState,
       // 其 .then 续排也会因 epoch 失配被拒(不会重排到新代际的 timer)。
@@ -345,7 +339,6 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
       if (timerRef.current) clearTimeout(timerRef.current)
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('novelcraft:signals-changed', onSignalsChanged)
     }
   }, [refresh, schedule, sessionId])
 

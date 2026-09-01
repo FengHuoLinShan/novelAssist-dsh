@@ -1,6 +1,6 @@
 {
   "name": "novelcraft-dsh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "NovelCraft autonomous writing assistant for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
@@ -30,9 +30,10 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }

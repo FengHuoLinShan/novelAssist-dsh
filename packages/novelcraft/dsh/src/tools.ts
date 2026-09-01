@@ -582,7 +582,6 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
       },
       async execute(_args, run) {
         const r = await run.service.capabilities.propose.scanHealth(requireRoot(run));
-        await run.afterMutation({ push: true });
         return {
           ok: true,
           created: r.created,
@@ -688,7 +687,6 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           requireRoot(run),
           args.radar ? [args.radar] : undefined,
         );
-        await run.afterMutation({ push: true });
         // results 的 radar 键是动态集合, 仅该嵌套对象保持开放。
         const results: Record<string, { created: number; skipped: number; resolved: number; reopened: number; total: number }> = {};
         const summaryParts: string[] = [];

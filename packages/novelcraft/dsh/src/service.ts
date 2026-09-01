@@ -32,7 +32,6 @@ import { planMapAtlasRun, reviewMapAtlasDecision } from './map-atlas-face.js';
 import { optionalBgeLoader } from './optional-bge.js';
 import { NovelcraftCache } from './storage/domain.js';
 import { registerNovelcraftTools } from './tools.js';
-import { pushSignalsChanged } from './push.js';
 import { SessionVaultBinder } from './vault/binding.js';
 
 declare module '@deepseek-ai/cordis' {
@@ -82,7 +81,7 @@ export class NovelCraftService extends Service {
   readonly nodeRuntime: NovelcraftNodeRuntime;
   /** N35 防误用能力面；新插件只能按 read/propose/adoptGuarded 语义消费。 */
   readonly capabilities: NovelCraftCapabilities;
-  /** 客户端 UI 面(loopback RPC 数据源: 只读聚合 + 收据暂存 + 决定记录 + 配置; 不写正史)。 */
+  /** 客户端 UI 面(认证 Connection RPC 数据源: 只读聚合 + 收据暂存 + 决定记录 + 配置; 不写正史)。 */
   readonly ui: NovelcraftUiFace;
 
   constructor(ctx: Context, config: ConfigType) {
@@ -301,7 +300,7 @@ export class NovelCraftService extends Service {
     return writing.rejectChapterCandidate(root, chapterIndex, ref, expectedContentHash, reason);
   }
 
-  /** 页内编辑收据 → 审批 → 冻结 writeSet；loopback RPC 从不写正文。 */
+  /** 页内编辑收据 → 审批 → 冻结 writeSet；Connection RPC 从不写正文。 */
   saveChapterGuarded(
     agent: import('@deepseek-ai/dsh-agent').Agent | undefined,
     root: string,
@@ -595,7 +594,7 @@ export class NovelCraftService extends Service {
     return assistant.inboxView(root, currentContentHash);
   }
 
-  /** 收件箱四动词(§9): 记录决定 + 尽力而为的信号变化推送(ADR-0018 通道缺省时静默)。
+  /** 收件箱四动词(§9): 记录决定。
    *  资产写入另走采用/微工作流工具; 本方法不写 canonical 资产。 */
   actOnSignal(
     root: string,
@@ -603,7 +602,7 @@ export class NovelCraftService extends Service {
     action: assistant.InboxAction,
     opts?: { reason?: string; modifiedTitle?: string; modifiedProposedAction?: string },
   ): assistant.ActionDescriptor {
-    const descriptor = assistant.act(root, {
+    return assistant.act(root, {
       signalId,
       action,
       ...(opts?.reason ? { reason: opts.reason } : {}),
@@ -616,12 +615,6 @@ export class NovelCraftService extends Service {
           }
         : {}),
     });
-    try {
-      pushSignalsChanged(this.ctx, { root });
-    } catch {
-      // 推送是尽力而为副作用(同 afterMutation 纪律); 决定已落盘不受影响。
-    }
-    return descriptor;
   }
 
   /** 便捷: 深度导入六阶段(范围授权 + adopt/2b 独立审批门, trace 落 .assistant/import-trace.jsonl)。

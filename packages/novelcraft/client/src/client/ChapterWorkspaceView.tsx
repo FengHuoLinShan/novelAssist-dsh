@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ConvViewProps, InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChapterWorkspaceValue } from '../wire.ts'
 import type { RpcCaller } from './index.ts'
@@ -45,7 +45,7 @@ function writeDraft(sessionId: string, chapterIndex: number, draft: LocalDraft):
 
 export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Element {
   const { connection, inputActions, sessionId, t, useInput } = props
-  const chatDraft = useInput((state) => state.draft)
+  const chatDraft = useInput((state: InputState) => state.draft)
   const [chapterIndex, setChapterIndex] = useState(0)
   const [data, setData] = useState<ChapterWorkspaceValue | null>(null)
   const [editor, setEditor] = useState<LocalDraft | null>(null)

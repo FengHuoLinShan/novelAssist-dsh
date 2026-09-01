@@ -8,6 +8,7 @@ import ts from 'typescript'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packagesRoot = join(root, 'packages', 'novelcraft')
 const expectedEngine = '>=24.11.0'
+const expectedDshVersion = '0.1.2-alpha.4'
 const failures = []
 const workspaceNames = []
 const corePackageNames = [
@@ -142,7 +143,7 @@ for (const entry of packageDirs) {
   }
   workspacePackages.set(entry.name, pkg)
   workspaceNames.push(pkg.name)
-  // rc.8 strips a trailing `/client` when resolving browser bundle ids.
+  // DSH strips a trailing `/client` when resolving browser bundle ids.
   const expectedName = entry.name === 'client' ? '@novelcraft/dsh-client' : `@novelcraft/${entry.name}`
   if (pkg.name !== expectedName) failures.push(`${entry.name}: unexpected package name ${pkg.name}`)
   if (pkg.private !== true) failures.push(`${pkg.name}: private must be true`)
@@ -173,6 +174,7 @@ if (!Array.isArray(rootPkg.workspaces) || !rootPkg.workspaces.includes('packages
   failures.push('root workspaces must include packages/novelcraft/*')
 }
 if (rootPkg.overrides !== undefined) failures.push('destructive root overrides are forbidden by N36')
+if (rootPkg.scripts?.postinstall !== undefined) failures.push('root postinstall must not patch the DSH runtime')
 const pluginPkg = JSON.parse(readFileSync(join(root, 'plugin', 'package.json'), 'utf8'))
 if (pluginPkg.name !== 'novelcraft-dsh' || pluginPkg.private === true) failures.push('public plugin package must be novelcraft-dsh')
 if (pluginPkg.publishConfig?.access !== 'public') failures.push('novelcraft-dsh must publish publicly')
@@ -181,6 +183,13 @@ if (pluginPkg.dsh?.bundle?.patch !== './cordis.patch.yml' || pluginPkg.dsh?.clie
 }
 if (pluginPkg.dependencies !== undefined || pluginPkg.peerDependencies !== undefined) {
   failures.push('novelcraft-dsh must use the DSH installation runtime without profile-level dependency duplication')
+}
+const pluginInject = pluginPkg.dsh?.client?.inject ?? []
+for (const dependency of ['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-host-apiproxy']) {
+  if (pluginInject.includes(dependency)) failures.push(`novelcraft-dsh must not inject retired ${dependency}`)
+}
+for (const dependency of ['@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-session']) {
+  if (!pluginInject.includes(dependency)) failures.push(`novelcraft-dsh must inject current ${dependency}`)
 }
 const pluginPatch = readFileSync(join(root, 'plugin', 'cordis.patch.yml'), 'utf8')
 if (!pluginPatch.includes('name: novelcraft-dsh') || !pluginPatch.includes('name: novelcraft-dsh/client-host')) {
@@ -202,11 +211,25 @@ if (dshPkg.optionalDependencies?.['@novelcraft/rag-bge'] === undefined || dshPkg
   failures.push('@novelcraft/dsh must keep rag-bge in optionalDependencies only')
 }
 
+for (const packageName of ['dsh', 'client', 'preset']) {
+  const pkg = workspacePackages.get(packageName)
+  for (const section of ['peerDependencies', 'devDependencies']) {
+    for (const [dependency, requested] of Object.entries(pkg?.[section] ?? {})) {
+      if (dependency.startsWith('@deepseek-ai/dsh-') && requested !== expectedDshVersion) {
+        failures.push(`${pkg.name} must pin ${dependency} to ${expectedDshVersion} in ${section}`)
+      }
+      if (dependency === '@deepseek-ai/dsh-client-runtime' || dependency === '@deepseek-ai/dsh-host-apiproxy') {
+        failures.push(`${pkg.name} must not depend on retired ${dependency}`)
+      }
+    }
+  }
+}
+
 const presetRoot = join(packagesRoot, 'preset')
 const presetPkg = JSON.parse(readFileSync(join(presetRoot, 'package.json'), 'utf8'))
 for (const dependency of ['@deepseek-ai/dsh-skill', '@deepseek-ai/dsh-skill-filesystem', '@deepseek-ai/dsh-tool-skill']) {
-  if (presetPkg.peerDependencies?.[dependency] !== '0.1.0-rc.8') {
-    failures.push(`@novelcraft/preset must pin ${dependency} to D21 rc.8`)
+  if (presetPkg.peerDependencies?.[dependency] !== expectedDshVersion) {
+    failures.push(`@novelcraft/preset must pin ${dependency} to ${expectedDshVersion}`)
   }
 }
 const activePresets = ['novelcraft-author', 'novelcraft-import-review', 'novelcraft-worldbuilder']

@@ -27,11 +27,8 @@ const VENDORED_LIBRARY = /^@deepseek-ai\/(cosmokit|schemastery)(\/|$)/
 /** 生成的 /remote 描述符贡献(内联)。 */
 const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
 
-/** client-runtime/client 的临时豁免(与上游一致)。 */
-const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
-
-/** Externals: platform 种子 + runtime 豁免。 */
-export const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION]
+/** Externals: DSH 0.1.2-alpha.4 Web 平台种子表。 */
+export const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES]
 
 /** 本包根(相对本文件位于 build-tools/)。 */
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url))

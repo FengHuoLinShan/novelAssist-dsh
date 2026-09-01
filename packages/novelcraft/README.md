@@ -26,7 +26,7 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | R1–R5 核心包 | ✅ 11 包 192 测试全绿 | vault/store/llm-step/writing/imports/world/outline/memory/context/rag/assistant |
 | R6 assistant | ✅ 核心(信号/收件箱/校准/微工作流 6 条) | radar 调度面 = 挂载阶段 |
 | 挂载阶段(A, ADR-0017) | ✅ `@novelcraft/dsh` 适配包 31 测试全绿 + `scripts/m5-mount-demo.mjs` 全链 | 见 `dsh/README.md` seam 适配矩阵 |
-| R7 client(B v1) | ✅ `@novelcraft/dsh-client` 双面包: 宠物四态 + 收件箱(四动词/键盘流)+ loopback RPC, 8 测试 + tsdown 构建链 + 真实 web 端到端 | client/README.md; 写作台四模式留后续迭代 |
+| R7 client(B v1) | ✅ `@novelcraft/dsh-client` 双面包: 宠物四态 + 收件箱(四动词/键盘流)+ 认证 Connection RPC, 8 测试 + tsdown 构建链 + 真实 web 端到端 | client/README.md; 写作台四模式留后续迭代 |
 | trace contract(C, §15) | ✅ `@novelcraft/trace`(trace/assert/mock)+ `imports` 的 `runDeepImport` 编排 seam | 见 docs/agent/dsh-rebuild/trace-contract-验收.md |
 | 发布 | 📋 preset 已平移 + starter 已备 | starter/README.md |
 
@@ -50,5 +50,5 @@ M4 插件族 monorepo(ADR-0016 §22.3)。核心规则: **插件核心逻辑 = �
 | 长任务/守望 | 雷达调度 → DSH `ctx.jobs`(每雷达一轮 = 一个 job)+ 可选 interval(D6 默认关); goal 归 DSH 会话级 goal | `@novelcraft/dsh` 雷达调度 |
 | 会话/工作区绑定 | 每书一个 DSH session 绑定一个 vault 根(D17); 子代理 prompt 注入书名/路径(§14) | `@novelcraft/dsh` vault 绑定 |
 | 存储索引 | `rebuildIndex` 产物 → novelcraft domain KV(可选持久化); 文件仍为唯一真相(§22.2) | `@novelcraft/dsh` storage 缓存 |
-| 工具面 | `ctx.tools`: 39 个领域工具显式归入六组；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功输出 required + closed；scope/approval/store/LLM 失败映射 rc.8 `HarnessError/isError`。adopt 类动作审批门控，deep_import 六阶段带 trace；tools provider 晚到/替换/卸载由 Cordis inject 生命周期处理。 | `@novelcraft/dsh` tools |
-| client UI | client-modules 注入: 宠物/收件箱/写作台经 loopback RPC 读 `ctx.novelcraft.ui`(view 只读聚合/stage 收据暂存/records 决定记录); client 零核心包运行时依赖(type-only 例外) | client 包(B 阶段) + `@novelcraft/dsh` client-face |
+| 工具面 | `ctx.tools`: 39 个领域工具显式归入六组；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功输出 required + closed；scope/approval/store/LLM 失败映射 DSH `HarnessError/isError`。adopt 类动作审批门控，deep_import 六阶段带 trace；tools provider 晚到/替换/卸载由 Cordis inject 生命周期处理。 | `@novelcraft/dsh` tools |
+| client UI | client-modules 注入: 宠物/收件箱/写作台经 DSH 认证 Connection RPC 读 `ctx.novelcraft.ui`(view 只读聚合/stage 收据暂存/records 决定记录); client 零核心包运行时依赖(type-only 例外) | client 包(B 阶段) + `@novelcraft/dsh` client-face |

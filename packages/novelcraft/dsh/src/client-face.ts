@@ -1,9 +1,9 @@
-// @novelcraft/dsh · 客户端 UI 面(service.ui; ADR-0018 loopback RPC 的宿主侧数据源)。
+// @novelcraft/dsh · 客户端 UI 面(service.ui; 认证 Connection RPC 的宿主侧数据源)。
 // 收敛 client 此前绕过 seam 的平行读面: 只读聚合(view)、收据暂存(stage, 非正史)、
 // 决定记录(records)、配置面(config, N19 不过审批)。client 经结构化接口消费
 // ctx.novelcraft.ui, 不再直接 import 核心包运行时/裸 fs。
 // 纪律: 本面不写 canonical 资产(铁律 3 —— adopt 类仍走 agent + ApprovalGate);
-// stage/records 的信号推送尽力而为(通道缺省静默)。
+// stage/records 变更由 client 动作后即时刷新 + 退避轮询捕获。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm';
@@ -23,7 +23,6 @@ import { assertNoSymlinkOnPath, assertSafePathSegment, guardPath, paths, type St
 import * as world from '@novelcraft/world';
 import * as writing from '@novelcraft/writing';
 import type { NovelCraftCapabilities } from './capabilities.js';
-import { pushSignalsChanged } from './push.js';
 import { svc } from './ctx.js';
 import type { NovelCraftService } from './service.js';
 
@@ -89,9 +88,9 @@ export interface NovelcraftUiFace {
     biblePages(root: string): ReturnType<typeof world.listBiblePages>;
   };
   readonly stage: {
-    /** 文本手稿收据(会话绑定; 零正史写)+ 摄入提示信号 + 信号变化推送。 */
+    /** 文本手稿收据(会话绑定; 零正史写)+ 摄入提示信号。 */
     stageTextIntake(root: string, sessionId: string, fileName: string, bytes: Uint8Array): StagedFileIntake;
-    /** 地图图片收据(节点锁定)+ 导入提示信号 + 推送。 */
+    /** 地图图片收据(节点锁定)+ 导入提示信号。 */
     stageAtlasImageIntake(
       root: string,
       sessionId: string,
@@ -99,10 +98,10 @@ export interface NovelcraftUiFace {
       bytes: Uint8Array,
       nodeRef: string,
     ): StagedFileIntake;
-    /** 页内章节编辑收据(CAS 基线冻结)+ 保存提示信号 + 推送。 */
+    /** 页内章节编辑收据(CAS 基线冻结)+ 保存提示信号。 */
     stageChapterEditIntake(root: string, sessionId: string, input: ChapterEditStageInput): StagedFileIntake;
     /**
-     * 标注请求入队 + 提示信号 + 推送。写边界(R9, fail-closed): queueDir 由
+     * 标注请求入队 + 提示信号。写边界(R9, fail-closed): queueDir 由
      * paths() 限定(guard + 逐段 symlink 检查), page_ref 经 assertSafePathSegment
      * 双保险为单文件段; 目标文件若被预置为 symlink —— 包括指向 vault 内 signals
      * 等其他文件的内部链接(guardPath 的 real containment 会放行, 而 writeFileSync
@@ -118,7 +117,7 @@ export interface NovelcraftUiFace {
     ): { file: string };
   };
   readonly records: {
-    /** 收件箱四动词(决定记录; 与 capabilities.propose.actOnSignal 同源, 内含推送)。 */
+    /** 收件箱四动词(决定记录; 与 capabilities.propose.actOnSignal 同源)。 */
     actOnSignal: NovelCraftService['actOnSignal'];
   };
   readonly config: {
@@ -139,14 +138,6 @@ export interface ReasoningOptionsView {
   selected: string | null;
   adapterDefault: string | null;
   efforts: Array<{ id: string; name: string; description?: string }>;
-}
-
-function bestEffortPush(ctx: Context, root: string): void {
-  try {
-    pushSignalsChanged(ctx, { root });
-  } catch {
-    // 推送通道缺省时静默(ADR-0018); 收据/决定已落盘不受影响。
-  }
 }
 
 /** 构建 service.ui(构造期一次; 深冻结防运行时替换)。ctx 显式传入(Service.ctx 为 protected)。 */
@@ -248,7 +239,6 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
           proposed_action: `调用 novelcraft_ingest_file(root, receipt_id=${staged.receiptId}) 导入该手稿`,
           reversibility: true,
         });
-        bestEffortPush(ctx, root);
         return staged;
       },
       stageAtlasImageIntake: (root, sessionId, fileName, bytes, nodeRef) => {
@@ -261,7 +251,6 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
           proposed_action: `调用 novelcraft_map_atlas_upload(root, receipt_id=${staged.receiptId}) 导入到节点 ${nodeRef}`,
           reversibility: true,
         });
-        bestEffortPush(ctx, root);
         return staged;
       },
       stageChapterEditIntake: (root, sessionId, input) => {
@@ -275,7 +264,6 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
           reversibility: true,
           target: { chapter_index: input.chapterIndex },
         });
-        bestEffortPush(ctx, root);
         return staged;
       },
       queueAtlasAnnotations: (root, pageRef, baseContentHash, ops) => {
@@ -302,7 +290,6 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
           reversibility: true,
           expires_when_draft_changes: false,
         });
-        bestEffortPush(ctx, root);
         return { file };
       },
     }),

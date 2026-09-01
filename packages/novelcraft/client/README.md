@@ -1,7 +1,7 @@
 # @novelcraft/dsh-client — DSH web client-module(阶段 B 已实现)
 
 宠物(四态)/ 收件箱(卡片 + 四动词 + 键盘流)/ 剧情地图 / 写作台 / 章节正文工作区的 DSH web
-客户端插件(设计文档 §9/§17)。双面包: node 半身 = `/novelcraft` loopback RPC 通道;
+客户端插件(设计文档 §9/§17)。双面包: node 半身 = `/novelcraft` 认证 Connection RPC 通道;
 浏览器半身 = 会话头宠物动作 + 收件箱面板 + 剧情地图 + 写作台。
 
 ## 数据与动作路径(安全边界)
@@ -10,11 +10,11 @@
   `@novelcraft/assistant` 确定性函数(读 `.assistant/signals/*.json`, 文件真相)。
 - **四动词**: `inbox/act` 只执行 `assistant.act`(记录决定); **adopt 类资产写入
   不在此通道** —— 采纳决定后由助手 agent 经 DSH approval 执行(§9 fail-closed)。
-- 通道 authority = `loopback`(单用户本机); 载荷校验在处理器内, 未绑定工作区 →
-  capability 缺省, 不炸通道。
+- DSH `0.1.2-alpha.4` 在 handler 前执行 Host/Origin 围栏和浏览器会话认证;
+  官方默认部署是 loopback，已无 method-level authority 参数。载荷校验仍在处理器内。
 - **文件输入**: `intake/stage-text` 只接浏览器选定的 UTF-8 bytes, 产生当前
   session 绑定收据与导入意图; 零章节资产写入。资产入库由 agent 工具消费收据完成。
-- **章节编辑**: rc.8 原生 `conversation.view` 标签承载长正文、Git history/diff、候选采用/拒绝和
+- **章节编辑**: DSH 原生 `conversation.view` 标签承载长正文、Git history/diff、候选采用/拒绝和
   finding 选择；`chapter/stage-edit` 只冻结当前会话编辑 bytes。save/restore/review/revise/adopt
   均提交到当前对话的领域工具，canonical 写仍只有 approval + transaction 一条通路。
 
@@ -35,7 +35,7 @@
 四态判定: 待确认(open ≥ threshold, N3=5)> 忙碌(novelcraft-radar job 运行中)>
 微光(0 < open < threshold)> 静默。键盘流: j/k 选择、1/2/3/4 四动词、u 刷新、Esc 关闭。
 
-## 构建(D21 锁 rc.8)
+## 构建(DSH `0.1.2-alpha.4`)
 
 - 宿主半身: `npm run build:host`(tsc → dist/index.js, 供 Loader 装载);
 - 浏览器半身: `npm run build:client`(tsdown + vendor 的 DSH 共享预设
@@ -56,22 +56,18 @@
 ## 阶段状态
 
 - [x] 宠物四态 + 收件箱(四动词 + 键盘流 + 中英文案)
-- [x] /novelcraft RPC 通道(loopback, 宿主处理器 + 浏览器 hooks)
+- [x] /novelcraft 认证 Connection RPC 通道(宿主处理器 + 浏览器 hooks)
 - [x] 构建链(vendor 预设)+ E2E 挂载验证
 - [x] 剧情地图(story/map 端点 + StoryMapAction 面板)
 - [x] 写作台五面(writing/desk + intake/stage-text, 守望/计划/评审/参照/导入 tab)
-- [x] rc.8 `conversation.view` 章节工作区(编辑收据、Git history/diff/restore、finding→返修→候选复审→审批采用/拒绝释放 pending)
+- [x] `conversation.view` 章节工作区(编辑收据、Git history/diff/restore、finding→返修→候选复审→审批采用/拒绝释放 pending)
 - [x] 事件触发短轮询 + 退避(ADR-0018 §2: 固定 5s 轮询退役; 挂载/聚焦/可见/动作后立即刷新并重置退避)
-- [x] 真 mux 推送: 已落地(ADR-0018 §1: scripts/apply-dsh-patches.mjs 加 client/push allowlist; dsh emit + client ctx.remote.$on 订阅); 上游 Discussion #1289 回应后去 fork 化
+- [x] 事件触发刷新 + 非零退避轮询；不修改 DSH 运行时包(N50)
 
-## 信号推送(轮询 → mux)现状
+## 信号刷新现状
 
 - 现状: 宠物四态经 useWatch 事件触发短轮询 + 退避(挂载/聚焦/可见性恢复立即刷新, 快照
   无变化退避延长、有变化回到短间隔, 保留非零基线轮询捕获雷达产出); 收件箱在挂载/手动/
   u 键/动作后即时刷新(不轮询)。四动词后 inbox/act 已即时刷新收件箱。
-- 核实: 真推送 seam 已存在——host api-proxy 按 API_REMOTE_FORWARDED_EVENTS allowlist 转发
-  host/remote-event 帧, client runtime 扇出到 ctx.remote.$on; 缺口是 allowlist 封闭(11 条),
-  插件无法推送自定义事件(connection.rpc.call 仍是一元 request/response, 不是推送通道)。
-- 落地路径(ADR-0018): (a) 本包内事件触发短轮询/退避(已落地, 无跨层风险); (b) 给
-  @deepseek-ai/dsh-api-remotes 的 allowlist 加通用 client/push(scripts/apply-dsh-patches.mjs,
-  postinstall)—— 已落地; 上游 Discussion #1289 回应后去 fork 化。
+- DSH `0.1.2-alpha.4` 的 typed remote allowlist 不包含自定义 `client/push`。公开包因此只使用本包已有的
+  动作后即时刷新、页面聚焦/可见性刷新和非零退避轮询；不打补丁、不写 `node_modules`。

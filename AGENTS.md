@@ -19,8 +19,9 @@
 2. **文件是唯一真相**: 每书一个 git 仓库(vault); 资产 = frontmatter 文件 + git commit,
    派生索引任何时刻可全量重建; git 本身就是回滚面。不另建数据库/队列。
 3. **adopt 必过 approval(fail-closed)**: 采用类资产写入由助手 agent 经 DSH approval
-   (allowed-once 只放行一次, rejected/cancelled/unavailable 一律拒绝); 客户端 RPC 通道
-   (authority=loopback)只读信号 + 记录决定, **不写资产**。
+   (allowed-once 只放行一次, rejected/cancelled/unavailable 一律拒绝); 客户端经 DSH
+   认证 Connection RPC(官方默认 loopback 部署)只读信号 + 记录决定,
+   **不写资产**。不得自行恢复已移除的 method-level authority 或修改 DSH 安装包。
 4. **核心包不得回头改接口, 只做加法**: 新文件 + 新导出; 阶段函数保持可测
    (MockProvider/MockApproval 注入)。稳定 seam 见 `packages/novelcraft/README.md`。
 5. **内容手受控**: llm_step 必须由确定性业务工作流编排, 带 output_schema/预算/超时/journal;

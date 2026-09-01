@@ -1,8 +1,8 @@
 # novelcraft-dsh
 
-NovelCraft 的 DSH 官方 bundle 形态：单个包同时安装宿主插件、39 个领域工具、loopback RPC 和 Web 写作界面。
+NovelCraft 的 DSH 官方 bundle 形态：单个包同时安装宿主插件、39 个领域工具、认证 Connection RPC 和 Web 写作界面。
 
-首发版本针对 DSH `0.1.2-alpha.4`。
+当前版本针对 DSH `0.1.2-alpha.4`，不修改 DSH 安装包。
 
 ## 安装
 

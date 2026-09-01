@@ -1,9 +1,9 @@
 # @novelcraft/dsh — 挂载阶段适配包
 
-把 13 个纯 TS 核心包接入 DSH rc.8 插件 seam 的 **Cordis 服务插件**(ADR-0017 §2)。
+把 13 个纯 TS 核心包接入 DSH `0.1.2-alpha.4` 插件 seam 的 **Cordis 服务插件**(ADR-0017 §2)。
 核心包保持零 DSH 运行时依赖不变; 本包是唯一的 DSH 接触面。
 
-## 组装(profile patch 形式, D21 锁 rc.8)
+## 组装(profile patch 形式)
 
 ```yaml
 plugins:
@@ -26,9 +26,9 @@ plugins:
 | `ctx.jobs` | `RadarScheduler` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval` |
 | `ctx.credentials` | (消费面) | 内容手 Key 由 DSH credentials/LLM 适配器层解析; `.assistant/llm.yml` 只存模型名与参数(N5), 本包不落 Key |
 | 会话↔vault | `SessionVaultBinder` | D17 一书一会话一 vault 根; 内存 + domain 双面绑定; §14 子代理 prompt 注入(书名/路径/纪律条款) |
-| `ctx.tools` | `registerNovelcraftTools`(+ 工具组插件) | 39 个领域工具，一律经 `novelcraftToolFactory` 定义并显式归入 writing(15)/mapAtlas(6)/workflow(4)/book(3)/world(7)/outline(4) 六组(N48)；名称/schema/注册顺序不变。`config.tools` 六键缺省全开；根服务通过 `ctx.inject(['tools'])` 跟随 provider 生命周期注册。六个 internal Cordis 插件硬依赖 novelcraft+tools，仅供包内程序化组合，不是 YAML profile subpath。scope/approval/store/LLM/未知失败仍映射 rc.8 `HarnessError/isError`。 |
-| client UI 数据面 | `service.ui`(`NovelcraftUiFace`) | loopback RPC 数据源：复用冻结 `read` 命名空间 + `view` 只读聚合 + `stage` 收据暂存（含提示信号与 `pushSignalsChanged` 真实推送）+ `records.actOnSignal` + `config.selectPreset`；零正史写（铁律 3）。client 不再 import 核心包运行时/裸 fs（type-only 例外）。 |
-| client-modules | `@novelcraft/dsh-client`（独立 UI 插件） | 本包只提供宿主服务；章节工作区、收件箱和会话页内状态由独立 client 插件通过 loopback RPC 读取，不从浏览器写正史。 |
+| `ctx.tools` | `registerNovelcraftTools`(+ 工具组插件) | 39 个领域工具，一律经 `novelcraftToolFactory` 定义并显式归入 writing(15)/mapAtlas(6)/workflow(4)/book(3)/world(7)/outline(4) 六组(N48)；名称/schema/注册顺序不变。`config.tools` 六键缺省全开；根服务通过 `ctx.inject(['tools'])` 跟随 provider 生命周期注册。六个 internal Cordis 插件硬依赖 novelcraft+tools，仅供包内程序化组合，不是 YAML profile subpath。scope/approval/store/LLM/未知失败仍映射 `HarnessError/isError`。 |
+| client UI 数据面 | `service.ui`(`NovelcraftUiFace`) | DSH 认证 Connection RPC 数据源：复用冻结 `read` 命名空间 + `view` 只读聚合 + `stage` 收据暂存 + `records.actOnSignal` + `config.selectPreset`；零正史写（铁律 3）。client 不再 import 核心包运行时/裸 fs（type-only 例外）。 |
+| client-modules | `@novelcraft/dsh-client`（独立 UI 插件） | 本包只提供宿主服务；章节工作区、收件箱和会话页内状态由独立 client 插件通过认证 Connection RPC 读取，不从浏览器写正史。 |
 
 服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + 受误用保护的
 `read/propose/adoptGuarded` capability + 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
@@ -48,7 +48,7 @@ plugins:
 
 ## 依赖策略
 
-- `@deepseek-ai/*` 全部锁定 **0.1.0-rc.8 peerDependencies**(cordis ^4.0.1), 由宿主
+- `@deepseek-ai/*` 全部锁定 **0.1.2-alpha.4 peerDependencies**(cordis ^4.0.2), 由宿主
   profile 提供单实例(避免多份 cordis 破坏 Context 增强); 本包 devDependencies
   自备同版本用于测试。
 - `@novelcraft/*` 为 workspace 依赖; zod ^4(schemastery 由 dsh 包带入)。

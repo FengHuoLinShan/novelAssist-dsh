@@ -1,9 +1,11 @@
 // @novelcraft/dsh-client · 浏览器半身: 宠物(会话头动作)+ 收件箱面板。
-// 数据 = /novelcraft loopback RPC(宿主读 .assistant/signals + jobs);
+// 数据 = /novelcraft 认证 Connection RPC(宿主读 .assistant/signals + jobs);
 // 四动词回宿主 assistant.act。UI 只呈现作者语言, 不暴露 raw JSON/内部枚举。
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RpcResult } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 // 会话头插槽由 ui-conversation 声明(type-only, 激活 SlotMap 合并)。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { PetAction } from './PetAction.tsx'
@@ -159,20 +161,4 @@ export function apply(ctx: ClientContext): void {
     }, WorldBibleAction),
   )
 
-  // 订阅宿主推送(ADR-0018 §1): client/push 帧到达 → 广播 DOM 事件, useWatch 据此即时刷新。
-  // ctx.remote 是字符串键 Map(dsh-api-gateway/lib/client.js), 运行时无事件名校验; 服务缺省静默。
-  const remote = ctx.get('remote') as
-    | { $on(event: string, listener: (...args: unknown[]) => void): () => void }
-    | undefined
-  if (remote) {
-    ctx.effect(
-      () =>
-        remote.$on('client/push', (channel) => {
-          if (channel === 'novelcraft/signals-changed') {
-            window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
-          }
-        }),
-      'novelcraft: remote push subscription',
-    )
-  }
 }
