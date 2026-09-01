@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
-import { MockProvider } from "@novelcraft/llm-step";
+import { MockProvider, type Provider } from "@novelcraft/llm-step";
 import { estimateContextTokens } from "@novelcraft/context";
 import { gitAdd, gitCommit, parseFrontmatter, serializeFrontmatter, validateFrontmatter } from "@novelcraft/store";
 import { ingestChapter } from "@novelcraft/writing";
 import {
-  aliasRelationBatch, analyzeStructure, applyDedup, buildStructureContext, dedupReport, extractEntityBatch,
+  aliasRelationBatch, analyzeStructure, analyzeStructureWithSources, applyDedup, buildStructureContext, dedupReport, extractEntityBatch,
   planAliasRelationChanges, planImport, planStructureAnalysisWithSources, proposeAliasRelations, resumeImport, writeCheckpoint,
 } from "../src/index";
 import type { DedupReport } from "../src/index";
@@ -368,6 +368,32 @@ describe("analyzeStructure(3, ≥0.96 落 draft 待采用, N31)", () => {
       reusedEntitySlugs: [],
     })).rejects.toMatchObject({ code: "INVALID_SOURCE" });
     expect(provider.calls).toEqual([]);
+  });
+
+  it("legacy Phase 3 provider 后来源漂移 → typed CONTEXT_DRIFT，零 structure 写", async () => {
+    const root = makeRoot();
+    const input = {
+      workflowId: "w",
+      scenes: [{
+        relativePath: "scenes/s001.md",
+        bytes: "---\nid: s001\nstatus: draft\nchapter_ids: [1]\nworkflow: w\ntitle: S1\n---\n",
+      }],
+      pendingEntities: [],
+      reusedEntitySlugs: [],
+    } as const;
+    const base = new MockProvider({ responses: [{ text: JSON.stringify({
+      threads: [{ title: "主线", summary: "s", confidence: 0.97 }], arcs: [], foreshadowing: [], reveals: [],
+    }) }] });
+    const racing: Provider = {
+      async complete(request) {
+        const response = await base.complete(request);
+        const chapter = join(root, "chapters", "001.md");
+        writeFileSync(chapter, readFileSync(chapter, "utf8") + "\nprovider 后漂移\n");
+        return response;
+      },
+    };
+    await expect(analyzeStructureWithSources(racing, root, input)).rejects.toMatchObject({ code: "CONTEXT_DRIFT" });
+    expect(readdirSync(join(root, "structure", "threads"))).toEqual([]);
   });
 
   it("高置信落 draft 文件, 低置信仅计数(N31)", async () => {

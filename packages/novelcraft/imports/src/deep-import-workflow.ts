@@ -502,10 +502,12 @@ async function durableStructureSources(ctx: DriverContext): Promise<StructureCon
 }
 
 /** 已冻结 Phase 3 不得在来源变化后静默复用；在任何候选/draft materialize 前验证。 */
-async function assertStructureContextCurrent(ctx: DriverContext): Promise<void> {
-  const payload = await readArtifactPayload<Phase3Payload>(ctx, ctx.batchByPhase["3"]);
+function assertStructureReceiptCurrent(
+  ctx: DriverContext,
+  payload: Phase3Payload,
+  sources: StructureContextSources,
+): void {
   if (payload.context === undefined) {
-    if (await commitApplyRejected(ctx)) return;
     throw new DeepImportWorkflowError(
       "context_drift",
       ctx.workflowId,
@@ -513,7 +515,7 @@ async function assertStructureContextCurrent(ctx: DriverContext): Promise<void> 
       `深度导入 ${ctx.workflowId} 的旧 Phase 3 缺少冻结上下文回执，拒绝复用；请启动新 run`,
     );
   }
-  const current = buildStructureContext(ctx.root, await durableStructureSources(ctx));
+  const current = buildStructureContext(ctx.root, sources);
   if (current.context_hash !== payload.context.context_hash || current.status !== payload.context.status) {
     throw new DeepImportWorkflowError(
       "context_drift",
@@ -522,6 +524,12 @@ async function assertStructureContextCurrent(ctx: DriverContext): Promise<void> 
       `深度导入 ${ctx.workflowId} 的 Phase 3 来源已变化，拒绝复用冻结结构结果；请启动新 run`,
     );
   }
+}
+
+async function assertStructureContextCurrent(ctx: DriverContext): Promise<void> {
+  const payload = await readArtifactPayload<Phase3Payload>(ctx, ctx.batchByPhase["3"]);
+  if (payload.context === undefined && await commitApplyRejected(ctx)) return;
+  assertStructureReceiptCurrent(ctx, payload, await durableStructureSources(ctx));
 }
 
 /** 各批 generator: 纯生成(零 canonical 写); 前置阶段产物一律从已提交 artifact 读取。 */
@@ -830,12 +838,21 @@ async function materializePhaseWrites(ctx: DriverContext, phase: "2a" | "3"): Pr
   const files = (payload as Phase2aPayload).files ?? (payload as Phase3Payload).files;
   const writeSet = plannedFilesToWriteSet(ctx, files);
   if (writeSet.length === 0) return; // 全部幂等命中/空写集 → 不发起事务(store 拒绝空事务)
+  let validateContext: (() => void) | undefined;
+  if (phase === "3") {
+    const structurePayload = payload as Phase3Payload;
+    const sources = await durableStructureSources(ctx);
+    validateContext = () => assertStructureReceiptCurrent(ctx, structurePayload, sources);
+  }
   await executeTransaction(
     ctx.root,
     {
       kind: "canonical",
       purpose: `deep-import materialize phase ${phase}`,
       writeSet,
+      ...(validateContext !== undefined
+        ? { validate: validateContext, hooks: { beforeRefCas: validateContext } }
+        : {}),
     },
     ctx.transactionOptions,
   );
@@ -1107,6 +1124,8 @@ export async function runDeepImportWorkflow(
 
   // 7) 候选/draft 事务化 materialize(2a 实体候选 + 3 结构 draft; 非 adopt 不经审批)
   await materializePhaseWrites(ctx, "2a");
+  // 2a 事务是 await 窗口；Phase 3 写前再对账，且事务 preflight/ref-CAS 内继续复核。
+  await assertStructureContextCurrent(ctx);
   await materializePhaseWrites(ctx, "3");
 
   // 8) 聚合(trace adopt/reject/checkpoint/complete + 结果 + phase_results)

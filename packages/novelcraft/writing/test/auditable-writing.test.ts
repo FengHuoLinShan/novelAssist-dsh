@@ -102,6 +102,19 @@ describe("auditable writing context (P0-W1)", () => {
     expect(record.proposals[0].proposal_id).toMatch(/^proposal_[0-9a-f]{20}$/);
     expect(provider.calls[0].messages[1].content).toBe(context.rendered_text);
   });
+
+  it("同 run 重试 provider 前拒绝覆盖旧回执", async () => {
+    const root = makeRoot();
+    const now = new Date("2026-09-01T00:00:00.000Z");
+    const firstProvider = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] });
+    const first = await proposeNextChapterAuditable(firstProvider, root, 1, now);
+    const file = join(root, ".assistant", "proposals", `next-001-${first.proposal!.run_id}.json`);
+    const before = readFileSync(file, "utf8");
+    const second = new MockProvider({ responses: [] });
+    await expect(proposeNextChapterAuditable(second, root, 1, now)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(second.calls).toEqual([]);
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
 });
 
 describe("frozen proposal generation and adoption (P0-W1)", () => {
@@ -137,6 +150,21 @@ describe("frozen proposal generation and adoption (P0-W1)", () => {
     })).rejects.toMatchObject({ code: "CONFLICT" });
     expect(provider.calls).toEqual([]);
     expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false);
+  });
+
+  it("冻结回执 manifest/warnings 被改写 → provider 前拒绝", async () => {
+    const root = makeRoot();
+    const record = await freezeProposal(root);
+    const file = join(root, ".assistant", "proposals", `next-001-${record.run_id}.json`);
+    const stored = JSON.parse(readFileSync(file, "utf8")) as typeof record;
+    stored.warnings = [{ code: "rag_no_match", message: "FORGED" }];
+    writeFileSync(file, JSON.stringify(stored, null, 2) + "\n", "utf8");
+    const provider = new MockProvider({ responses: [] });
+    await expect(generateNextChapterFromProposal(provider, root, {
+      runId: record.run_id,
+      proposalId: record.proposals[0].proposal_id,
+    })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(provider.calls).toEqual([]);
   });
 
   it("provider 后来源漂移 → 候选落盘前拒绝", async () => {

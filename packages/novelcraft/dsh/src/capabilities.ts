@@ -35,7 +35,6 @@ const PROPOSE_METHODS = [
   'updateAtlasPrompt',
   'createAtlasUploadNode',
   'proposeNextChapter',
-  'generateNextChapter',
   'generateNextChapterFromProposal',
   'ingestTextFile',
   'reviewChapter',

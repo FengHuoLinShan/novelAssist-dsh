@@ -4,7 +4,7 @@
 // → 落 .assistant/proposals/next-{chapter}-{runId}.json(临时预览, 不写正文)。
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { paths } from "@novelcraft/vault";
+import { assertNoSymlinkOnPath, guardPath, paths } from "@novelcraft/vault";
 import { runStep } from "@novelcraft/llm-step";
 import type { Provider, StepResult } from "@novelcraft/llm-step";
 import { StoreError, storyMap } from "@novelcraft/store";
@@ -356,17 +356,58 @@ export function proposalIdOf(
 }
 
 function proposalFile(root: string, chapterIndex: number, runId: string): string {
-  return paths(root).assistant.proposalFile(`next-${String(chapterIndex).padStart(3, "0")}-${runId}`);
+  return guardPath(root, paths(root).assistant.proposalFile(`next-${String(chapterIndex).padStart(3, "0")}-${runId}`));
+}
+
+function proposalRunId(now: Date, chapterIndex: number): string {
+  const time = now.getTime();
+  if (!Number.isSafeInteger(time) || time < 0 || !Number.isSafeInteger(chapterIndex) || chapterIndex < 1) {
+    throw new StoreError("VALIDATION_FAILED", "提案时间/章节序号非法");
+  }
+  return `p${time}${String(chapterIndex).padStart(6, "0")}`;
+}
+
+function assertProposalSlotAvailable(root: string, chapterIndex: number, runId: string): string {
+  const dir = guardPath(root, paths(root).assistant.proposals);
+  assertNoSymlinkOnPath(root, dir);
+  const file = proposalFile(root, chapterIndex, runId);
+  assertNoSymlinkOnPath(root, file);
+  if (existsSync(file)) throw new StoreError("CONFLICT", `提案 run_id 已存在，拒绝覆盖: ${runId}`);
+  return file;
+}
+
+function writeProposalRecord(root: string, file: string, record: ProposalRecord): void {
+  const dir = guardPath(root, paths(root).assistant.proposals);
+  assertNoSymlinkOnPath(root, dir);
+  mkdirSync(dir, { recursive: true });
+  assertNoSymlinkOnPath(root, file);
+  try {
+    writeFileSync(file, JSON.stringify(record, null, 2) + "\n", { encoding: "utf8", flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new StoreError("CONFLICT", `提案 run_id 在 provider 调用期间被占用，旧回执保持不变: ${record.run_id}`);
+    }
+    throw err;
+  }
 }
 
 function assertFrozenRecord(record: ProposalRecord): asserts record is FrozenProposalRecord {
-  if (typeof record.run_id !== "string" || !Number.isSafeInteger(record.chapter_index) || record.chapter_index < 1 ||
-      !Array.isArray(record.proposals) || !/^[0-9a-f]{64}$/.test(record.base_content_hash ?? "") || !/^[0-9a-f]{64}$/.test(record.context_hash ?? "") ||
+  if (!/^p\d+$/.test(record.run_id) || !Number.isSafeInteger(record.chapter_index) || record.chapter_index < 1 ||
+      record.next_chapter !== record.chapter_index + 1 || !Number.isFinite(Date.parse(record.generated_at)) ||
+      !Array.isArray(record.proposals) || record.proposals.length === 0 || !/^[0-9a-f]{64}$/.test(record.base_content_hash ?? "") || !/^[0-9a-f]{64}$/.test(record.context_hash ?? "") ||
       !Array.isArray(record.source_manifest) || !Array.isArray(record.omitted_source_ids) || !Array.isArray(record.warnings) ||
-      !Number.isSafeInteger(record.context_budget_tokens) || !Number.isSafeInteger(record.context_total_tokens)) {
+      !Number.isSafeInteger(record.context_budget_tokens) || record.context_budget_tokens! <= 0 ||
+      !Number.isSafeInteger(record.context_total_tokens) || record.context_total_tokens! < 0 ||
+      record.context_total_tokens! > record.context_budget_tokens!) {
     throw new StoreError("BAD_CANDIDATE", `提案回执 ${record.run_id} 缺少冻结上下文；请重新生成提案`);
   }
   record.proposals.forEach((proposal, index) => {
+    if (typeof proposal.title !== "string" || typeof proposal.premise !== "string" ||
+        (proposal.basis !== undefined && (!Array.isArray(proposal.basis) || proposal.basis.some((item) => typeof item !== "string"))) ||
+        (proposal.cost !== undefined && typeof proposal.cost !== "string") ||
+        (proposal.risk !== undefined && typeof proposal.risk !== "string")) {
+      throw new StoreError("BAD_CANDIDATE", `提案回执 ${record.run_id} 的方向字段非法`);
+    }
     const expected = proposalIdOf(record.run_id, record.chapter_index, record.base_content_hash!, record.context_hash!, index, proposal);
     if (proposal.proposal_id !== expected) {
       throw new StoreError("BAD_CANDIDATE", `提案回执 ${record.run_id} 的 proposal_id 校验失败`);
@@ -375,8 +416,10 @@ function assertFrozenRecord(record: ProposalRecord): asserts record is FrozenPro
 }
 
 export function proposalRecordByRunId(root: string, runId: string): FrozenProposalRecord {
-  const dir = paths(root).assistant.proposals;
+  if (!/^p\d+$/.test(runId)) throw new StoreError("NOT_FOUND", `提案 run_id 非法: ${runId}`);
+  const dir = guardPath(root, paths(root).assistant.proposals);
   if (!existsSync(dir)) throw new StoreError("NOT_FOUND", `提案 run_id 不存在: ${runId}`);
+  assertNoSymlinkOnPath(root, dir);
   const matches: ProposalRecord[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
@@ -400,7 +443,11 @@ export function frozenProposalById(record: FrozenProposalRecord, proposalId: str
 
 export function assertFrozenProposalCurrent(root: string, record: FrozenProposalRecord): AuditableProposalContext {
   const current = buildAuditableProposalContext(root, record.chapter_index);
-  if (current.base_content_hash !== record.base_content_hash || current.context_hash !== record.context_hash) {
+  if (current.base_content_hash !== record.base_content_hash || current.context_hash !== record.context_hash ||
+      current.budget_tokens !== record.context_budget_tokens || current.total_tokens !== record.context_total_tokens ||
+      JSON.stringify(current.source_manifest) !== JSON.stringify(record.source_manifest) ||
+      JSON.stringify(current.omitted_source_ids) !== JSON.stringify(record.omitted_source_ids) ||
+      JSON.stringify(current.warnings) !== JSON.stringify(record.warnings)) {
     throw new StoreError("CONFLICT", `提案 ${record.run_id} 的正文或上下文来源已变化；请重新生成提案`);
   }
   return current;
@@ -416,6 +463,10 @@ export async function proposeNextChapter(
   chapterIndex: number,
   now: Date = new Date(),
 ): Promise<ProposeResult> {
+  const timestamp = now.getTime();
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new StoreError("VALIDATION_FAILED", "提案时间非法");
+  const runId = `p${timestamp}`; // legacy 字节/身份格式保持不变；安全入口另带 chapter 防跨章碰撞。
+  const file = assertProposalSlotAvailable(root, chapterIndex, runId);
   // M12-c/N45: 输入经 Tier 预算编译(超预算逐层淘汰), 旧拼接版保留为导出兼容。
   const input = compileProposalContextBudgeted(root, chapterIndex);
   const r = await runStep(provider, { specRef: "next_chapter_proposal", input });
@@ -427,7 +478,6 @@ export async function proposeNextChapter(
     return { ok: false, error: { kind: "schema_violation", message: "提案为空(无 proposals)" } };
   }
 
-  const runId = `p${now.getTime()}`;
   const record: ProposalRecord = {
     run_id: runId,
     chapter_index: chapterIndex,
@@ -435,12 +485,7 @@ export async function proposeNextChapter(
     generated_at: now.toISOString(),
     proposals,
   };
-  const dir = paths(root).assistant.proposals;
-  mkdirSync(dir, { recursive: true });
-  const file = paths(root).assistant.proposalFile(
-    `next-${String(chapterIndex).padStart(3, "0")}-${runId}`,
-  );
-  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  writeProposalRecord(root, file, record);
   return { ok: true, proposal: record };
 }
 
@@ -454,6 +499,8 @@ export async function proposeNextChapterAuditable(
   chapterIndex: number,
   now: Date = new Date(),
 ): Promise<FrozenProposeResult> {
+  const runId = proposalRunId(now, chapterIndex);
+  const file = assertProposalSlotAvailable(root, chapterIndex, runId);
   const context = await compileProposalContextAuditable(root, chapterIndex);
   const r = await runStep(provider, { specRef: "next_chapter_proposal", input: context.rendered_text });
   if (!r.ok) return { ok: false, error: r.error };
@@ -466,7 +513,6 @@ export async function proposeNextChapterAuditable(
   if (current.base_content_hash !== context.base_content_hash || current.context_hash !== context.context_hash) {
     throw new StoreError("CONFLICT", `第 ${chapterIndex} 章或提案上下文在生成期间变化，结果未落盘`);
   }
-  const runId = `p${now.getTime()}`;
   const proposals: FrozenChapterProposal[] = rawProposals.map((proposal, index) => ({
     ...proposal,
     proposal_id: proposalIdOf(runId, chapterIndex, context.base_content_hash, context.context_hash, index, proposal),
@@ -485,8 +531,7 @@ export async function proposeNextChapterAuditable(
     omitted_source_ids: context.omitted_source_ids,
     warnings: context.warnings,
   };
-  mkdirSync(paths(root).assistant.proposals, { recursive: true });
-  writeFileSync(proposalFile(root, chapterIndex, runId), JSON.stringify(record, null, 2) + "\n", "utf8");
+  writeProposalRecord(root, file, record);
   return { ok: true, proposal: record };
 }
 

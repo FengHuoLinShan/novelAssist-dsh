@@ -53,7 +53,7 @@ export interface StructureCompiledContext extends StructureContextReceipt {
 }
 
 export class StructureContextError extends Error {
-  constructor(readonly code: "INVALID_SOURCE" | "SOURCE_MISSING", message: string) {
+  constructor(readonly code: "INVALID_SOURCE" | "SOURCE_MISSING" | "CONTEXT_DRIFT", message: string) {
     super(message);
     this.name = "StructureContextError";
   }
@@ -71,7 +71,8 @@ function uniqueFiles(files: readonly StructureSourceFile[], prefix: string): Str
     }
     found.set(file.relativePath, file.bytes);
   }
-  return [...found].sort(([a], [b]) => a.localeCompare(b)).map(([relativePath, bytes]) => ({ relativePath, bytes }));
+  return [...found].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([relativePath, bytes]) => ({ relativePath, bytes }));
 }
 
 function sourceWorkflow(data: Record<string, unknown>, workflowId: string, relativePath: string): void {
@@ -470,6 +471,10 @@ export async function analyzeStructureWithSources(
   opts: { budget?: WorkflowBudget } = {},
 ): Promise<AuditableStructurePlanResult> {
   const planned = await planStructureAnalysisWithSources(provider, root, input, opts);
+  const current = buildStructureContext(root, input);
+  if (current.context_hash !== planned.context.context_hash || current.status !== planned.context.status) {
+    throw new StructureContextError("CONTEXT_DRIFT", "Phase 3 来源在 provider 调用期间变化，结构 draft 未写入；请重新运行");
+  }
   writeStructurePlan(root, planned);
   return planned;
 }

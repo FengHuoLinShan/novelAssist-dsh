@@ -51,6 +51,8 @@ describe('createNovelCraftCapabilities', () => {
     expect('adopt' in capabilities.propose).toBe(false);
     expect('applyAtlasAnnotations' in capabilities.propose.authorEdit).toBe(false);
     expect('annotations' in capabilities.propose.authorEdit).toBe(true);
+    expect('generateNextChapter' in capabilities.propose).toBe(false);
+    expect('generateNextChapterFromProposal' in capabilities.propose).toBe(true);
   });
 
   it('真实 NovelCraftService 不再暴露 raw applyAtlasAnnotations; 唯一作者编辑入口是队列(CAS 必填)', () => {
