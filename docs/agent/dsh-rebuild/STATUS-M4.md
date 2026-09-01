@@ -131,6 +131,10 @@
   distribution 全绿后推送。
 - [x] 实证记录两处 cordis rc.8 行为: 嵌套 ctx.plugin 子插件构造器抛错被静默吞掉(默认组装
   因此保持同步注册); inject 缺服务 = 插件等待不启动(非报错)。
+- [x] N48(2026-09-01): 根服务改由 `ctx.inject(['tools'])` 跟随 provider 生命周期注册；
+  writing/mapAtlas/workflow/book/world/outline 六组显式归位、完整 Config、internal 插件硬依赖
+  novelcraft+tools；不新增 npm 包或 YAML subpath。本地 build、16/16 workspace tests、typecheck、
+  dependency/distribution/git-writer/audit/diff gates 通过；远端状态只认最终 SHA 的 CI。
 - [x] H: N32 全局 git transaction 收口(2026-08-25): commitScenesTx/applyAliasRelationChangesTx
   (executeCanonicalWrite 单事务原子 + faults 注入契约测试)、素材入库同步补偿回滚 +
   material intake 精确自动 commit、深导异常路径 state commit(checkpoint 事务化因 §8
@@ -173,9 +177,7 @@
   - M12-c: context 编译器进写作链(N45, Tier P0-P4 预算编译, review P0 空壳输入修复);
     memory 读面接线(N46, dossier 按故事顺序投影; 写点按 §6.18.4 reserved 裁定回撤);
     RAG typed result(N47, total/truncated/recall_capped + open_target)。
-  - 39 工具/16 包全绿; 各切片独立 review + 修复(P0×2/P1 若干全闭, 追记 N43-N47)。
-- [ ] **M12 生成域与证据链接线**(切片级, 依赖 M10-A): outline/world 生成中心工具组
-  (preview→propose, apply→adoptGuarded)、世界书 draft→publish、memory/context 接线、
-  RAG current-source typed result + open target、穿插体验迭代(交接 §7 条目 10)。
+  - 39 工具功能切片已完成；原收尾后的 clean-build 拓扑与插件归组缺陷由 N48 修复，
+    远端 CI 状态只以最终推送 SHA 的 default/BGE jobs 为准。
 - 明确不做: RP(D23)/对象图片(D19)/带批注 .docx(D20)/站内生图(ADR-0020)/多用户云同步/
   统一 timeline service(§6.18.6)/回收站(§6.13.6)。

@@ -81,9 +81,8 @@ const SAMPLE = [
 ].join('\n');
 
 describe('novelcraft_rag_search(M6 Track A3 语义检索)', () => {
-  it('注册: 共 39 个工具且 novelcraft_rag_search 使用 closed success schema', async () => {
+  it('注册: novelcraft_rag_search 使用 closed success schema', async () => {
     const env = await setup();
-    expect(env.tools.length).toBe(39); // + M12-b 生成域 9；信号仍只由确定性 producer 产生
     const t = tool(env, 'novelcraft_rag_search');
     expect(t.name).toBe('novelcraft_rag_search');
     const schema = t.output?.schema as { type: string; additionalProperties?: boolean };

@@ -83,7 +83,6 @@ export class NovelCraftService extends Service {
   readonly capabilities: NovelCraftCapabilities;
   /** 客户端 UI 面(loopback RPC 数据源: 只读聚合 + 收据暂存 + 决定记录 + 配置; 不写正史)。 */
   readonly ui: NovelcraftUiFace;
-  private readonly toolDisposers: Array<() => void>;
 
   constructor(ctx: Context, config: ConfigType) {
     super(ctx, 'novelcraft');
@@ -126,18 +125,22 @@ export class NovelCraftService extends Service {
       this.watchScheduler,
       (operation, error) => reportRuntimeError(`session:${operation}`, error),
     );
-    this.toolDisposers = [];
     // Establish rollback ownership before start/scan/tool registration can throw. Cordis awaits this
     // async disposer during normal unload and constructor rollback.
     ctx.effect(() => async () => {
       await this.nodeRuntime.stop();
-      for (const dispose of this.toolDisposers) dispose();
       await this.cache.close();
     });
     this.nodeRuntime.start();
     this.capabilities = createNovelCraftCapabilities(this);
     this.ui = createNovelcraftClientFace(ctx, this);
-    this.toolDisposers.push(...registerNovelcraftTools(ctx, this, config.tools));
+    // tools 是可选宿主服务：晚到/替换时由 Cordis 重挂注册 fiber，服务本体保持可用。
+    ctx.inject(['tools'], (toolsCtx) => {
+      const disposers = registerNovelcraftTools(toolsCtx, this, config.tools);
+      toolsCtx.effect(() => () => {
+        for (const dispose of disposers) dispose();
+      });
+    });
   }
 
   /** 解析一次不可变 ExecutionProfile(N34 / ADR-0023 §6): 组合 Config.llm +

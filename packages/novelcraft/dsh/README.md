@@ -26,7 +26,7 @@ plugins:
 | `ctx.jobs` | `RadarScheduler` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval` |
 | `ctx.credentials` | (消费面) | 内容手 Key 由 DSH credentials/LLM 适配器层解析; `.assistant/llm.yml` 只存模型名与参数(N5), 本包不落 Key |
 | 会话↔vault | `SessionVaultBinder` | D17 一书一会话一 vault 根; 内存 + domain 双面绑定; §14 子代理 prompt 注入(书名/路径/纪律条款) |
-| `ctx.tools` | `registerNovelcraftTools`(+ 工具组插件) | 39 个领域工具（含单章 Git 版本与审查闭环、长任务恢复面, M10-B1/N40; 书库生命周期, M11/N42; world 对象写, M12-a/N43; outline 生成 preview/apply 与 world 生成中心只读模式 9 个, M12-b/N44），一律经 `novelcraftToolFactory` 定义：schema 推断 args、N34 隔离、`toolError` 单点映射、`afterMutation` 副作用纪律由包装器结构性保证；信号只由确定性 producer 产生，不暴露任意 `signal_push`。成功值使用 required + closed schema；scope/approval/store/LLM/未知失败映射 rc.8 `HarnessError`，由宿主产出 `isError:true`。`config.tools.{writing,mapAtlas,workflow,book}` 可分组开关（缺省全开）；`NovelcraftWritingToolsPlugin`/`NovelcraftMapAtlasPlugin`/`NovelcraftWorkflowToolsPlugin`（internal 面）为可单独挂载的真实 cordis 插件（inject novelcraft）。 |
+| `ctx.tools` | `registerNovelcraftTools`(+ 工具组插件) | 39 个领域工具，一律经 `novelcraftToolFactory` 定义并显式归入 writing(15)/mapAtlas(6)/workflow(4)/book(3)/world(7)/outline(4) 六组(N48)；名称/schema/注册顺序不变。`config.tools` 六键缺省全开；根服务通过 `ctx.inject(['tools'])` 跟随 provider 生命周期注册。六个 internal Cordis 插件硬依赖 novelcraft+tools，仅供包内程序化组合，不是 YAML profile subpath。scope/approval/store/LLM/未知失败仍映射 rc.8 `HarnessError/isError`。 |
 | client UI 数据面 | `service.ui`(`NovelcraftUiFace`) | loopback RPC 数据源：复用冻结 `read` 命名空间 + `view` 只读聚合 + `stage` 收据暂存（含提示信号与 `pushSignalsChanged` 真实推送）+ `records.actOnSignal` + `config.selectPreset`；零正史写（铁律 3）。client 不再 import 核心包运行时/裸 fs（type-only 例外）。 |
 | client-modules | `@novelcraft/dsh-client`（独立 UI 插件） | 本包只提供宿主服务；章节工作区、收件箱和会话页内状态由独立 client 插件通过 loopback RPC 读取，不从浏览器写正史。 |
 
@@ -34,9 +34,8 @@ plugins:
 `read/propose/adoptGuarded` capability + 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
 `deepImport`(runDeepImport 挂载: DshProvider + ApprovalGate + ImportTraceSink)。
 
-工具注册入口仍为 `src/tools.ts`；章节工作流与地图册定义分别位于
-`src/tools/writing.ts`、`src/tools/map-atlas.ts`，共用的错误映射和 workspace 隔离位于
-`src/tools/shared.ts`。注册名称、顺序和公开导入路径不变。
+工具注册入口仍为 `src/tools.ts`；领域定义位于 `src/tools/{writing,map-atlas,workflow,book,world,outline}.ts`，
+共用错误映射、回执上界和 workspace 隔离位于 `src/tools/shared.ts`。注册名称、顺序和公开导入路径不变。
 
 ## 工程约定
 

@@ -1,16 +1,16 @@
 // @novelcraft/dsh · 工具组独立插件(包内插件族, §22.3 service/consumer 模式)。
-// 两个工具组各自是真实 cordis 插件类(inject novelcraft, 经 svc 取服务), 供
-// 组合式 profile 单独挂载/卸载; 默认组合仍走 registerNovelcraftTools 同步路径
-// (fail-closed; rc.8 cordis 嵌套 ctx.plugin 会吞子插件构造器抛错, 故不在此用)。
-// 与默认路径共享同一组 build 函数 —— 单独挂载与本包内注册零逻辑分叉。
+// 六个工具组各自是真实 Cordis 插件类，供包内程序化组合；公开 profile 仍只挂
+// @novelcraft/dsh，并通过 Config.tools 开关选择工具组。
 import type { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from '../ctx.js';
 import type { NovelCraftService } from '../service.js';
 import { buildBookTools } from './book.js';
-import { buildTools, isBookTool, isMapAtlasTool, isWorkflowTool } from '../tools.js';
+import { buildWritingCoreTools } from '../tools.js';
 import { buildMapAtlasTools } from './map-atlas.js';
+import { buildOutlineTools } from './outline.js';
 import { buildWorkflowTools } from './workflow.js';
+import { buildWorldTools } from './world.js';
 
 /** 带逆序回滚的批量注册(与 registerNovelcraftTools 同语义, 供插件构造器复用)。 */
 export function registerToolList(
@@ -37,15 +37,14 @@ function resolveService(ctx: Context): NovelCraftService {
   return service;
 }
 
-/** 写作/存储工具组(15 个: novelcraft_ 前缀非 map_atlas/workflow 面)。 */
+/** 写作/存储基础工具组(15 个)。 */
 export class NovelcraftWritingToolsPlugin {
   static name = 'novelcraft-writing-tools';
-  static inject = ['novelcraft'] as const;
+  static inject = ['novelcraft', 'tools'] as const;
 
   constructor(ctx: Context) {
     const service = resolveService(ctx);
-    const definitions = buildTools(ctx, service).filter((tool) => !isMapAtlasTool(tool.name) && !isWorkflowTool(tool.name) && !isBookTool(tool.name));
-    const disposers = registerToolList(ctx, definitions);
+    const disposers = registerToolList(ctx, buildWritingCoreTools(ctx, service));
     ctx.effect(() => () => {
       for (const dispose of disposers) {
         try { dispose(); } catch { /* 卸载尽力而为 */ }
@@ -57,7 +56,7 @@ export class NovelcraftWritingToolsPlugin {
 /** 地图册工具组(6 个: novelcraft_map_atlas_ 前缀)。 */
 export class NovelcraftMapAtlasPlugin {
   static name = 'novelcraft-map-atlas';
-  static inject = ['novelcraft'] as const;
+  static inject = ['novelcraft', 'tools'] as const;
 
   constructor(ctx: Context) {
     const service = resolveService(ctx);
@@ -73,7 +72,7 @@ export class NovelcraftMapAtlasPlugin {
 /** 长任务恢复工具组(4 个: novelcraft_workflow_ 前缀, M10-B1/N40)。 */
 export class NovelcraftWorkflowToolsPlugin {
   static name = 'novelcraft-workflow-tools';
-  static inject = ['novelcraft'] as const;
+  static inject = ['novelcraft', 'tools'] as const;
 
   constructor(ctx: Context) {
     const service = resolveService(ctx);
@@ -89,11 +88,43 @@ export class NovelcraftWorkflowToolsPlugin {
 /** 书库生命周期工具组(3 个: novelcraft_book_ 前缀, M11/N42)。 */
 export class NovelcraftBookToolsPlugin {
   static name = 'novelcraft-book-tools';
-  static inject = ['novelcraft'] as const;
+  static inject = ['novelcraft', 'tools'] as const;
 
   constructor(ctx: Context) {
     const service = resolveService(ctx);
     const disposers = registerToolList(ctx, buildBookTools(ctx, service));
+    ctx.effect(() => () => {
+      for (const dispose of disposers) {
+        try { dispose(); } catch { /* 卸载尽力而为 */ }
+      }
+    });
+  }
+}
+
+/** 世界对象与生成中心工具组(7 个, M12/N48)。 */
+export class NovelcraftWorldToolsPlugin {
+  static name = 'novelcraft-world-tools';
+  static inject = ['novelcraft', 'tools'] as const;
+
+  constructor(ctx: Context) {
+    const service = resolveService(ctx);
+    const disposers = registerToolList(ctx, buildWorldTools(ctx, service));
+    ctx.effect(() => () => {
+      for (const dispose of disposers) {
+        try { dispose(); } catch { /* 卸载尽力而为 */ }
+      }
+    });
+  }
+}
+
+/** 总纲与结构 preview/apply 工具组(4 个, M12/N48)。 */
+export class NovelcraftOutlineToolsPlugin {
+  static name = 'novelcraft-outline-tools';
+  static inject = ['novelcraft', 'tools'] as const;
+
+  constructor(ctx: Context) {
+    const service = resolveService(ctx);
+    const disposers = registerToolList(ctx, buildOutlineTools(ctx, service));
     ctx.effect(() => () => {
       for (const dispose of disposers) {
         try { dispose(); } catch { /* 卸载尽力而为 */ }

@@ -45,6 +45,17 @@ export function llmError(kind: string | undefined, message: string | undefined):
   return new HarnessError(message || '模型步骤失败', llmErrorCode(kind));
 }
 
+/** 回执正文上界(N39② 延伸): 与 llm_step 同 receiptLimit 口径。 */
+export function capReceipt(
+  run: { service: { capabilities: { read: { receiptLimit(): number } } } },
+  text: string,
+): string {
+  const max = run.service.capabilities.read.receiptLimit();
+  return text.length > max
+    ? `${text.slice(0, max)}\n[回执截断: 原文 ${text.length} 字符, 上限 ${max}(Config.llm.receiptMaxChars)]`
+    : text;
+}
+
 /** N34 工作区隔离错误。 */
 export class WorkspaceIsolationError extends Error {
   constructor(reason: string) {

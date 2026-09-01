@@ -9,7 +9,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { requireRoot } from './tools/shared.js';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
-import { ENTITY_TYPES } from '@novelcraft/store';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from './ctx.js';
 import { importTraceFile } from './deep-import.js';
@@ -19,6 +18,8 @@ import { buildMapAtlasTools } from './tools/map-atlas.js';
 import { buildWritingTools } from './tools/writing.js';
 import { buildWorkflowTools } from './tools/workflow.js';
 import { buildBookTools } from './tools/book.js';
+import { buildOutlineTools } from './tools/outline.js';
+import { buildWorldGenerationTools, buildWorldObjectTools } from './tools/world.js';
 import { llmError } from './tools/shared.js';
 
 export { WorkspaceIsolationError } from './tools/shared.js';
@@ -29,6 +30,14 @@ export interface ToolGroupOptions {
   mapAtlas?: boolean;
   workflow?: boolean;
   book?: boolean;
+  world?: boolean;
+  outline?: boolean;
+}
+
+export type ToolGroup = keyof ToolGroupOptions;
+export interface ToolSegment {
+  group: ToolGroup;
+  tools: ToolDefinition[];
 }
 
 /** 地图册工具组按名称前缀识别(novelcraft_map_atlas_*, 其余为写作/存储组)。 */
@@ -48,10 +57,8 @@ export function isBookTool(name: string): boolean {
 
 /**
  * tools 服务缺省时的空注册(返回空 disposer 列表)。
- * 默认组合走本同步路径(非 ctx.plugin 嵌套挂载): rc.8 cordis 对嵌套子插件构造器
- * 抛错是静默吞掉(deferred start), 同步注册保持 fail-closed 与既有测试契约。
- * 注册保持 all-or-nothing 回滚; 两个工具组可作为独立 cordis 插件单独挂载
- * (见 tools/plugins.ts, 共享同一组 build 函数)。
+ * 根服务从 ctx.inject(['tools']) 调用本同步注册器，provider 晚到/替换/卸载由
+ * Cordis fiber 生命周期负责；注册自身保持 all-or-nothing 回滚。
  */
 export function registerNovelcraftTools(
   ctx: Context,
@@ -63,13 +70,9 @@ export function registerNovelcraftTools(
 
   const disposers: Array<() => void> = [];
   try {
-    for (const tool of buildTools(ctx, service)) {
-      if (isBookTool(tool.name)) {
-        if (groups.book === false) continue;
-      } else if (isWorkflowTool(tool.name)) {
-        if (groups.workflow === false) continue;
-      } else if (isMapAtlasTool(tool.name) ? groups.mapAtlas === false : groups.writing === false) continue;
-      disposers.push(registry.register(tool));
+    for (const segment of buildToolSegments(ctx, service)) {
+      if (groups[segment.group] === false) continue;
+      for (const tool of segment.tools) disposers.push(registry.register(tool));
     }
     return disposers;
   } catch (error) {
@@ -98,16 +101,8 @@ const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
 
 const RADARS = ['ingest', 'dedup', 'suggest', 'plot', 'risk', 'writing'] as const;
 
-/** 回执正文上界(N39② 延伸, M12-b review P2-6): 与 llm_step 同 receiptLimit 口径。 */
-function capReceipt(run: { service: { capabilities: { read: { receiptLimit(): number } } } }, text: string): string {
-  const max = run.service.capabilities.read.receiptLimit();
-  return text.length > max
-    ? `${text.slice(0, max)}\n[回执截断: 原文 ${text.length} 字符, 上限 ${max}(Config.llm.receiptMaxChars)]`
-    : text;
-}
-
-/** 全量 21 工具定义(写作/存储 15 与地图册 6 的固定交错序; 工具组插件复用)。 */
-export function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
+/** 写作/存储基础组 15 个工具；其余领域由显式 ToolSegment 组合。 */
+export function buildWritingCoreTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   const tool = novelcraftToolFactory(ctx, service);
   const [proposeNextChapter, generateNextChapter, chapterReview, chapterVersion] =
     buildWritingTools(ctx, service);
@@ -707,302 +702,23 @@ export function buildTools(ctx: Context, service: NovelCraftService): ToolDefini
         };
       },
     }),
-    ...buildMapAtlasTools(ctx, service),
-    ...buildWorkflowTools(ctx, service),
-    ...buildBookTools(ctx, service),
-    // ---- M12-a(N43): worldCreate/worldUpdate 工具入口(能力 N31 起已注册, 补齐作者可达面) ----
-    tool({
-      name: 'novelcraft_world_create',
-      description:
-        '创建世界对象(审批后执行): 写入 world/objects/(canonical 状态, 经 N32 事务精确提交)。' +
-        'name 必填; entityType 缺省 object; 别名/标签/描述可选。同名对象已存在时拒绝。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        name: { type: 'string', required: true, description: '对象名(如「红衣女子」)' },
-        entity_type: { type: 'string', description: "类型(缺省 'object'; 如 character/location/faction)" },
-        aliases: { type: 'array', description: '别名列表(可选)' },
-        tags: { type: 'array', description: '标签列表(可选)' },
-        description: { type: 'string', description: '对象正文描述(可选)' },
-        note: { type: 'string', description: '审批摘要补充说明(可选)' },
-      },
-      output: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          ok: { type: 'boolean', required: true },
-          slug: { type: 'string', required: true },
-        },
-      },
-      timeoutMs: 60_000,
-      async execute(args, run) {
-        // P1(review): entity_type 白名单 fail-fast —— core object schema 对 kind 只有
-        // 类型检查无 enums(非法串会静默写成 kind 并被 relations 判定排除, 功能悄悄
-        // 降级); 工具层先拒, core enums 补齐记 M12-b(N43 追记)。
-        // 白名单与 core ENTITY_TYPES 同源(store 导出, 20 类; M12-b review P2-2 回收本地硬编码)。
-        if (args.entity_type !== undefined && !(ENTITY_TYPES as readonly string[]).includes(args.entity_type)) {
-          throw llmError('schema_violation',
-            `entity_type 必须是 ENTITY_TYPES 白名单之一(收到: ${args.entity_type})`);
-        }
-        // schema 面数组是 JsonValue[]; 字符串化校验后收窄(schema type:array 元素未细化为
-        // string, 运行时逐项校验 fail-closed, 不静默丢弃非字符串项)。
-        const strList = (v: readonly unknown[] | undefined, what: string): string[] | undefined => {
-          if (v === undefined) return undefined;
-          const out = v.map((x) => {
-            if (typeof x !== 'string') throw llmError('schema_violation', `${what} 必须是字符串数组`);
-            return x;
-          });
-          return out;
-        };
-        const slug = await run.service.capabilities.adoptGuarded.worldCreate(
-          run.agent,
-          requireRoot(run),
-          {
-            name: args.name,
-            entityType: args.entity_type ?? 'object',
-            ...((): { aliases?: string[] } => { const v = strList(args.aliases, 'aliases'); return v ? { aliases: v } : {}; })(),
-            ...((): { tags?: string[] } => { const v = strList(args.tags, 'tags'); return v ? { tags: v } : {}; })(),
-            ...(args.description ? { description: args.description } : {}),
-          },
-          args.note,
-        );
-        return { ok: true, slug };
-      },
-    }),
-    tool({
-      name: 'novelcraft_world_update',
-      description:
-        '修改世界对象(审批后执行): 按对象 slug 定位 world/objects/ 内对象, 更新' +
-        'name/tags/正文描述(经 N32 事务, 保留其余 frontmatter 与正文语义)。审批冻结' +
-        '写前字节与 HEAD, 写前重验(并发修改 CAS 拒绝)。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        slug: { type: 'string', required: true, description: '对象 slug(store_adopt/world 对象读面返回的 id)' },
-        name: { type: 'string', description: '新名称(可选)' },
-        tags: { type: 'array', description: '新标签列表(可选; 整组替换)' },
-        description: { type: 'string', description: '新正文描述(可选; 整段替换)' },
-        note: { type: 'string', description: '审批摘要补充说明(可选)' },
-      },
-      output: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          ok: { type: 'boolean', required: true },
-          slug: { type: 'string', required: true },
-        },
-      },
-      timeoutMs: 60_000,
-      async execute(args, run) {
-        const patch: { name?: string; description?: string; tags?: string[] } = {};
-        if (args.name !== undefined) patch.name = args.name;
-        if (args.name === undefined && args.tags === undefined && args.description === undefined) {
-          throw llmError('schema_violation', '至少提供 name/tags/description 之一(空 patch 拒绝, 避免无意义审批+重排提交)');
-        }
-        if (args.tags !== undefined) {
-          patch.tags = args.tags.map((x) => {
-            if (typeof x !== 'string') throw llmError('schema_violation', 'tags 必须是字符串数组');
-            return x;
-          });
-        }
-        if (args.description !== undefined) patch.description = args.description;
-        await run.service.capabilities.adoptGuarded.worldUpdate(
-          run.agent,
-          requireRoot(run),
-          args.slug,
-          patch,
-          args.note,
-        );
-        return { ok: true, slug: args.slug };
-      },
-    }),
-    // ---- M12-b(N44): outline 生成 preview/apply + world 生成中心只读模式 ----
-    tool({
-      name: 'novelcraft_outline_preview',
-      description:
-        '生成小说总纲 preview: 跑内容手(story_outline spec)并把结果暂存到 .assistant/proposals/' +
-        '(带 prompt 指纹), **不写 structure/outline.md**。作者审阅/编辑暂存记录后, 用 ' +
-        'novelcraft_outline_apply 显式采用(过审批)。返回 run_id 供 apply 引用。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        input: { type: 'string', required: true, description: '生成输入(当前设定摘要/方向要求等上下文)' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: {
-          ok: { type: 'boolean', required: true },
-          run_id: { type: 'string', required: true },
-          result_json: { type: 'string', required: true },
-          error: { type: 'string', required: true },
-        },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        const r = await run.service.capabilities.propose.outlinePreview(requireRoot(run), args.input, run.signal);
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, run_id: r.record.run_id, result_json: capReceipt(run, JSON.stringify(r.record.result)), error: '' };
-      },
-    }),
-    tool({
-      name: 'novelcraft_outline_apply',
-      description:
-        '采用总纲 preview(审批后执行): 把 .assistant/proposals/ 中该 run_id 的生成结果写入 ' +
-        'structure/outline.md(canonical 覆写; 旧版本走 git 历史)。run_id 来自 outline_preview。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        run_id: { type: 'string', required: true, description: 'outline_preview 返回的 run_id' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, file: { type: 'string', required: true } },
-      },
-      timeoutMs: 60_000,
-      async execute(args, run) {
-        return { ok: true, ...(await run.service.capabilities.adoptGuarded.outlineApply(run.agent, requireRoot(run), args.run_id)) };
-      },
-    }),
-    tool({
-      name: 'novelcraft_outline_item_preview',
-      description:
-        '生成 P20 当前层(剧情线 plot_thread / 篇章纲 outline_arc)preview: 结果暂存 ' +
-        '.assistant/proposals/(带 prompt 指纹), **不写 structure/**。用 ' +
-        'novelcraft_outline_item_apply 显式采用(过审批)。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        target: { type: 'string', required: true, description: "'plot_thread' | 'outline_arc'" },
-        input: { type: 'string', required: true, description: '生成输入(当前层上下文/要求)' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: {
-          ok: { type: 'boolean', required: true },
-          run_id: { type: 'string', required: true },
-          result_json: { type: 'string', required: true },
-          error: { type: 'string', required: true },
-        },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        if (args.target !== 'plot_thread' && args.target !== 'outline_arc') {
-          throw llmError('schema_violation', "target 必须是 'plot_thread' 或 'outline_arc'");
-        }
-        const r = await run.service.capabilities.propose.outlineItemPreview(requireRoot(run), args.target, args.input, run.signal);
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, run_id: r.record.run_id, result_json: capReceipt(run, JSON.stringify(r.record.result)), error: '' };
-      },
-    }),
-    tool({
-      name: 'novelcraft_outline_item_apply',
-      description:
-        '采用 P20 当前层 preview(审批后执行): 把该 run_id 的生成结果写入 structure/(thread/arc ' +
-        '资产, canonical)。返回新资产 slug。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        run_id: { type: 'string', required: true, description: 'outline_item_preview 返回的 run_id' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, slug: { type: 'string', required: true } },
-      },
-      timeoutMs: 60_000,
-      async execute(args, run) {
-        return { ok: true, ...(await run.service.capabilities.adoptGuarded.outlineItemApply(run.agent, requireRoot(run), args.run_id)) };
-      },
-    }),
-    tool({
-      name: 'novelcraft_world_chat',
-      description:
-        '世界生成中心·共创聊天(M12-b/N44): 与内容手就世界设定自由共创对话, 纯 LLM 调用零写。' +
-        '产出想法供作者参考; 要落资产请走 world_bible_suggest(工作稿)或 world_create(对象)。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        input: { type: 'string', required: true, description: '对话输入(设定材料+当前问题)' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, reply: { type: 'string', required: true }, error: { type: 'string', required: true } },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenChat(requireRoot(run), args.input, run.signal);
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, reply: capReceipt(run, r.reply ?? ''), error: '' };
-      },
-    }),
-    tool({
-      name: 'novelcraft_world_converge',
-      description: '世界生成中心·只读收束: 对给定设定材料做收敛分析(矛盾/缺口/可合并项), 零写。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        input: { type: 'string', required: true, description: '待收束的设定材料' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true }, error: { type: 'string', required: true } },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenConverge(requireRoot(run), args.input, run.signal);
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
-      },
-    }),
-    tool({
-      name: 'novelcraft_world_explore',
-      description: '世界生成中心·一跳探索: 从既有设定出发探索相邻可能性(≤3 个方向), 不创建资产。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        input: { type: 'string', required: true, description: '探索锚点(当前设定摘要)' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true }, error: { type: 'string', required: true } },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenExplore(requireRoot(run), args.input, run.signal);
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
-      },
-    }),
-    tool({
-      name: 'novelcraft_world_inspect',
-      description: '世界生成中心·页面检修: 对给定世界书页面/设定做语义检视, 返回 findings 供作者复核, 零写。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        input: { type: 'string', required: true, description: '待检视的页面内容/设定' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, result_json: { type: 'string', required: true }, error: { type: 'string', required: true } },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenInspect(requireRoot(run), args.input, run.signal);
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, result_json: capReceipt(run, JSON.stringify(r.result)), error: '' };
-      },
-    }),
-    tool({
-      name: 'novelcraft_world_bible_suggest',
-      description:
-        '世界生成中心·世界书页面建议(§6.17 语义): 生成页面提案并落 bible/ 为 draft 工作稿' +
-        '(不是 canonical —— 采用请走 store_adopt 的 bible_page)。is_new_page=true 时按新页建议。',
-      parameters: {
-        root: { type: 'string', required: true, description: 'vault 根绝对路径' },
-        input: { type: 'string', required: true, description: '页面建议输入(主题/已有页内容)' },
-        is_new_page: { type: 'boolean', description: '是否按新页建议(缺省 false)' },
-      },
-      output: {
-        type: 'object', additionalProperties: false,
-        properties: { ok: { type: 'boolean', required: true }, slug: { type: 'string', required: true }, error: { type: 'string', required: true } },
-      },
-      timeoutMs: 300_000,
-      async execute(args, run) {
-        const r = await run.service.capabilities.propose.worldGenBibleSuggest(
-          requireRoot(run), args.input, { ...(args.is_new_page ? { isNewPage: true } : {}) }, run.signal,
-        );
-        if (!r.ok) throw llmError(r.error?.kind, r.error?.message);
-        return { ok: true, slug: r.slug ?? '', error: '' };
-      },
-    }),
   ];
+}
+
+/** 显式分组且保持既有 39 工具注册顺序(N48)。world 分两段以保留 outline 前后的原序。 */
+export function buildToolSegments(ctx: Context, service: NovelCraftService): ToolSegment[] {
+  return [
+    { group: 'writing', tools: buildWritingCoreTools(ctx, service) },
+    { group: 'mapAtlas', tools: buildMapAtlasTools(ctx, service) },
+    { group: 'workflow', tools: buildWorkflowTools(ctx, service) },
+    { group: 'book', tools: buildBookTools(ctx, service) },
+    { group: 'world', tools: buildWorldObjectTools(ctx, service) },
+    { group: 'outline', tools: buildOutlineTools(ctx, service) },
+    { group: 'world', tools: buildWorldGenerationTools(ctx, service) },
+  ];
+}
+
+/** 全量工具定义；公开名称、schema 与顺序保持不变。 */
+export function buildTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
+  return buildToolSegments(ctx, service).flatMap((segment) => segment.tools);
 }

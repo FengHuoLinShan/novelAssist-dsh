@@ -65,7 +65,7 @@ export interface NovelcraftToolSpec<S extends ParameterSchemaSpec, O extends Val
 }
 
 /**
- * 创建工具工厂(ctx/service 在 build 阶段固定, 21 个工具共享)。
+ * 创建工具工厂(ctx/service 在 build 阶段固定, 39 个工具共享)。
  * 工厂产出的定义与手写 defineTool 完全同形: rc.8 参数校验、封闭输出校验、
  * render 均由 defineTool 原生承担; 本包装器只加隔离/错误映射/副作用纪律。
  */
