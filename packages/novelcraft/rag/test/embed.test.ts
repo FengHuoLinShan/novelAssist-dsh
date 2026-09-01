@@ -119,7 +119,7 @@ describe("embedPendingChunks(L2 批量嵌入)", () => {
     syncRagIndex(root, NOW);
     const backend: EmbeddingBackend = {
       name: "mixed-backend",
-      embed: async () => [[1, 0], [1, 0, 0], [Number.POSITIVE_INFINITY, 0]],
+      embed: async () => [[1, 0], [1, 0, 0], new Array(2)],
     };
     const result = await embedPendingChunks(root, backend);
     expect(result).toMatchObject({ embedded: 1, failed: 2, skipped: 0 });
@@ -222,6 +222,7 @@ describe("cosineSimilarity(防御)", () => {
   it("NaN/Infinity 向量拒绝参与 cosine", () => {
     expect(validateVector([Number.NaN, 0])).toEqual({ ok: false, code: "vector_non_finite" });
     expect(validateVector([Number.POSITIVE_INFINITY, 0])).toEqual({ ok: false, code: "vector_non_finite" });
+    expect(validateVector(new Array(3))).toEqual({ ok: false, code: "vector_non_finite" });
     expect(cosineSimilarity([Number.NaN, 0], [1, 0])).toBe(0);
     expect(cosineSimilarity([1, 0], [Number.POSITIVE_INFINITY, 0])).toBe(0);
   });
@@ -298,6 +299,12 @@ describe("searchRag(L2 向量召回)", () => {
       "vector_dimension_mismatch",
       "vector_model_mismatch",
     ]));
+    const sparseQuery: EmbeddingBackend = { name: "fake-bge", embed: async () => [new Array(3)] };
+    const sparse = await searchRag(root, "剑", { embeddingBackend: sparseQuery });
+    expect(sparse.ranking).toBe("bm25");
+    expect(sparse.warnings).toContainEqual(expect.objectContaining({
+      code: "query_vector_invalid", message: expect.stringContaining("vector_non_finite"),
+    }));
   });
 
   it("向量召回 + provider 精排叠加: 精排生效 → ranking='llm_rerank'", async () => {

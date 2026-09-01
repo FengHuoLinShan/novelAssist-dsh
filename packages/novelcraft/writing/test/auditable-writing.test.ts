@@ -35,7 +35,18 @@ afterEach(() => {
 
 const direction = { title: "冻结方向", premise: "沿 KEYSTONE 线索继续", basis: ["历史照应"] };
 
+function seedPovScene(root: string): void {
+  const file = join(root, "scenes", "s002.md");
+  if (!existsSync(file)) {
+    writeFileSync(file, [
+      "---", "id: s002", "status: canonical", "title: 第二章", "chapter_ids: [2]",
+      "pov_character_id: char-a", "---", "",
+    ].join("\n"), "utf8");
+  }
+}
+
 async function freezeProposal(root: string) {
+  seedPovScene(root);
   const result = await proposeNextChapterAuditable(
     new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] }),
     root,
@@ -164,6 +175,29 @@ describe("auditable writing context (P0-W1)", () => {
 });
 
 describe("frozen proposal generation and adoption (P0-W1)", () => {
+  it.each(["missing", "ambiguous"] as const)("安全生成遇到 %s POV 时 provider=0 且零候选", async (variant) => {
+    const root = makeRoot();
+    if (variant === "ambiguous") {
+      for (const [slug, pov] of [["s-a", "char-a"], ["s-b", "char-b"]] as const) {
+        writeFileSync(join(root, "scenes", `${slug}.md`), [
+          "---", `id: ${slug}`, "status: canonical", `title: ${slug}`, "chapter_ids: [2]",
+          `pov_character_id: ${pov}`, "---", "",
+        ].join("\n"), "utf8");
+      }
+    }
+    const proposal = await proposeNextChapterAuditable(
+      new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] }),
+      root, 1, new Date("2026-09-01T00:02:00.000Z"),
+    );
+    const provider = new MockProvider({ responses: [] });
+    await expect(generateNextChapterFromProposal(provider, root, {
+      runId: proposal.proposal!.run_id,
+      proposalId: proposal.proposal!.proposals[0].proposal_id,
+    })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(provider.calls).toEqual([]);
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(false);
+  });
+
   it("同模型生成与独立审查是两次 run，审查复用同一脱敏 POV 边界并落 receipt", async () => {
     const root = makeRoot();
     seedPovKnowledge(root);
@@ -211,6 +245,20 @@ describe("frozen proposal generation and adoption (P0-W1)", () => {
     await expect(reviewChapterCandidate(racing, root, 2, "002")).rejects.toMatchObject({ code: "CONFLICT" });
     const reviewDir = join(root, ".assistant", "reviews");
     expect(existsSync(reviewDir) ? (await import("node:fs")).readdirSync(reviewDir) : []).toEqual([]);
+  });
+
+  it("安全候选在审查前丢失 POV Scene → provider=0 且候选保持 pending", async () => {
+    const root = makeRoot();
+    const record = await freezeProposal(root);
+    await generateNextChapterFromProposal(new MockProvider({ responses: [{ text: "第二章候选" }] }), root, {
+      runId: record.run_id,
+      proposalId: record.proposals[0].proposal_id,
+    });
+    rmSync(join(root, "scenes", "s002.md"));
+    const provider = new MockProvider({ responses: [] });
+    await expect(reviewChapterCandidate(provider, root, 2, "002")).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(provider.calls).toEqual([]);
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(true);
   });
 
   it("独立审查后知识漂移 → adopt prepare 保持 pending 且零正文写", async () => {

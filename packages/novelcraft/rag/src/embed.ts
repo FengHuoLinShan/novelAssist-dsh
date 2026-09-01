@@ -56,8 +56,10 @@ export function validateVector(
   expectedDimension?: number,
 ): { ok: true; dimension: number } | { ok: false; code: RagVectorWarningCode } {
   if (!Array.isArray(vector) || vector.length === 0) return { ok: false, code: "vector_empty" };
-  if (!vector.every((value) => typeof value === "number" && Number.isFinite(value))) {
-    return { ok: false, code: "vector_non_finite" };
+  for (let index = 0; index < vector.length; index += 1) {
+    if (!Object.hasOwn(vector, index) || typeof vector[index] !== "number" || !Number.isFinite(vector[index])) {
+      return { ok: false, code: "vector_non_finite" };
+    }
   }
   if (expectedDimension !== undefined && vector.length !== expectedDimension) {
     return { ok: false, code: "vector_dimension_mismatch" };

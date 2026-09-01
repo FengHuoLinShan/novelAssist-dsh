@@ -24,6 +24,7 @@ import { runStep, registerSpec } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import type { StepResult } from "@novelcraft/llm-step";
 import {
+  assertResolvedPovKnowledgeSource,
   assertPovKnowledgeReceiptCurrent,
   compilePovKnowledgeContext,
   povKnowledgeReceipt,
@@ -263,6 +264,7 @@ export interface ChapterCandidateSnapshot {
   fileHash: string;
   source: string;
   baseContentHash?: string;
+  requiresPovReceipt: boolean;
 }
 
 export function readChapterCandidate(root: string, chapterIndex: number, ref: string): ChapterCandidateSnapshot {
@@ -284,6 +286,7 @@ export function readChapterCandidate(root: string, chapterIndex: number, ref: st
     contentHash: actual,
     fileHash: contentHash(raw),
     source: typeof fm.source === "string" ? fm.source : "",
+    requiresPovReceipt: fm.source === "writing_generate" && typeof fm.proposal_run_id === "string",
     ...(typeof fm.base_content_hash === "string" ? { baseContentHash: fm.base_content_hash } : {}),
   };
 }
@@ -298,6 +301,7 @@ export async function reviewChapterCandidate(
 ): Promise<ReviewResult> {
   const frozen = readChapterCandidate(root, chapterIndex, ref);
   const povContext = compilePovKnowledgeContext(root, chapterIndex);
+  if (frozen.requiresPovReceipt) assertResolvedPovKnowledgeSource(povContext.source_manifest, chapterIndex);
   const input = povContext.rendered_text
     ? `${frozen.body}\n\n【独立审查的 POV/知识边界】\n${povContext.rendered_text}`
     : frozen.body;

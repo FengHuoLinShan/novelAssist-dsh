@@ -140,6 +140,20 @@ export function povKnowledgeReceipt(context: CompiledPovKnowledgeContext): PovKn
   return receipt;
 }
 
+export function assertResolvedPovKnowledgeSource(
+  manifest: readonly AuditableSourceRef[],
+  targetChapter: number,
+): void {
+  const source = manifest.find((item) => item.source_type === "pov_knowledge");
+  if (!source || source.truncated || source.open_target?.target_chapter !== targetChapter ||
+      typeof source.open_target?.pov_character_id !== "string") {
+    throw new StoreError(
+      "VALIDATION_FAILED",
+      `第 ${targetChapter} 章未解析出唯一且完整的 POV/知识边界，安全续写已停止`,
+    );
+  }
+}
+
 export function assertPovKnowledgeReceiptCurrent(root: string, receipt: PovKnowledgeReceipt): void {
   const current = povKnowledgeReceipt(compilePovKnowledgeContext(root, receipt.target_chapter));
   if (JSON.stringify(current) !== JSON.stringify(receipt)) {

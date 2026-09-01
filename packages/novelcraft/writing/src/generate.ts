@@ -17,6 +17,7 @@ import {
 } from "./propose.js";
 import { contentHashOf } from "./ingest.js";
 import { chapterBodyText } from "./ingest.js";
+import { assertResolvedPovKnowledgeSource } from "./pov-context.js";
 
 export interface GenerateNextChapterOptions {
   /** 选定提案标题(作者语言方向) */
@@ -146,6 +147,7 @@ export async function generateNextChapterFromProposal(
   return generateCandidate(provider, root, record.chapter_index, () => {
     assertFrozenProposalCurrent(root, record);
     const context = buildAuditableProposalContext(root, record.chapter_index, { selected });
+    assertResolvedPovKnowledgeSource(context.source_manifest, record.chapter_index + 1);
     return {
       input: context.rendered_text,
       baseContentHash: context.base_content_hash,

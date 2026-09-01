@@ -87,6 +87,10 @@ async function reviewCandidate(env: TestEnv): Promise<void> {
 /** fixture: 停靠第 1 章 + 提交(为后续 generate/adopt 提供上一章, 并保证 R17 干净工作区)。 */
 function seedChapterOne(env: TestEnv): void {
   ingestChapter(env.root, { chapterIndex: 1, text: '第一章正文结尾', source: 'paste' });
+  writeFileSync(path.join(env.root, 'scenes', 's002.md'), [
+    '---', 'id: s002', 'status: canonical', 'title: 第二章', 'chapter_ids: [2]',
+    'pov_character_id: char-a', '---', '',
+  ].join('\n'), 'utf8');
   gitAdd(env.root);
   gitCommit(env.root, 'fixture ch1');
 }

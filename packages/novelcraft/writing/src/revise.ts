@@ -31,7 +31,7 @@ import {
 } from "@novelcraft/store";
 import { chapterBody, latestCandidateReview, latestReview, registerWritingSpecsOnce } from "./review.js";
 import type { ReviewFinding } from "./review.js";
-import { assertPovKnowledgeReceiptCurrent, type PovKnowledgeReceipt } from "./pov-context.js";
+import { assertPovKnowledgeReceiptCurrent, assertResolvedPovKnowledgeSource, type PovKnowledgeReceipt } from "./pov-context.js";
 import { chapterBodyText, contentHashOf } from "./ingest.js";
 import {
   assertFrozenProposalCurrent,
@@ -328,6 +328,9 @@ function prepareChapterCandidateAdopt(
         throw new StoreError("VALIDATION_FAILED", `章节候选 ${ref} 缺少 POV/知识独立审查回执，请重新审查`);
       }
     } else {
+      if (fm.source === "writing_generate" && fm.proposal_run_id !== undefined) {
+        assertResolvedPovKnowledgeSource(review.pov_context_receipt.source_manifest, chapterIndex);
+      }
       assertPovKnowledgeReceiptCurrent(root, review.pov_context_receipt);
       reviewReceipt = review.pov_context_receipt;
     }
