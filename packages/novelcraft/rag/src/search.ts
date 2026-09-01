@@ -13,8 +13,8 @@
 //   bm25       = 纯 BM25(未配置嵌入后端, 或嵌入失败退化)。
 // degraded 多重时逗号拼接(如 'embedding_failed,rerank_failed')。
 import { rankChunksBm25, scoreChunksBm25 } from "./bm25.js";
-import { cosineSimilarity } from "./embed.js";
-import { readRagIndex, type EmbeddingBackend, type RagChunk } from "./rag.js";
+import { cosineSimilarity, validateVector } from "./embed.js";
+import { readRagIndex, type EmbeddingBackend, type RagChunk, type RagVectorWarning } from "./rag.js";
 import { rerankWithProvider } from "./rerank.js";
 import type { Provider } from "@novelcraft/llm-step";
 
@@ -28,6 +28,7 @@ export interface RagSearchResult {
   recall_capped?: boolean;
   ranking: "bm25" | "llm_rerank" | "vector";
   degraded?: string;
+  warnings?: RagVectorWarning[];
 }
 
 interface ScoredChunk {
@@ -67,12 +68,43 @@ async function recallWithEmbedding(
   chunks: readonly RagChunk[],
   query: string,
   recall: number,
-): Promise<RagChunk[]> {
-  const [qv] = await backend.embed([query]);
-  const withVec = chunks.filter((c) => Array.isArray(c.vector) && c.vector.length > 0);
-  const withoutVec = chunks.filter((c) => !(Array.isArray(c.vector) && c.vector.length > 0));
+  indexModel?: string,
+  indexDimension?: number,
+): Promise<{ hits?: RagChunk[]; warnings: RagVectorWarning[] }> {
+  const queryVectors = await backend.embed([query]);
+  const qv = queryVectors.length === 1 ? queryVectors[0] : undefined;
+  const queryCheck = validateVector(qv, indexDimension);
+  if (!queryCheck.ok) {
+    return {
+      warnings: [{ code: "query_vector_invalid", message: `查询向量不可用: ${queryCheck.code}` }],
+    };
+  }
+  const queryVector = qv as number[];
+  const withVec: RagChunk[] = [];
+  const withoutVec: RagChunk[] = [];
+  const warnings: RagVectorWarning[] = [];
+  for (const chunk of chunks) {
+    if (chunk.vector === undefined && chunk.embedding_status !== "succeeded") {
+      withoutVec.push(chunk);
+      continue;
+    }
+    let code: RagVectorWarning["code"] | undefined;
+    if (chunk.embedding_status !== "succeeded") code = "vector_status_invalid";
+    else if (indexModel !== undefined && indexModel !== backend.name) code = "vector_model_mismatch";
+    else if (chunk.embedding_model !== backend.name) code = "vector_model_mismatch";
+    else {
+      const checked = validateVector(chunk.vector, queryCheck.dimension);
+      if (!checked.ok) code = checked.code;
+    }
+    if (code === undefined) withVec.push(chunk);
+    else {
+      warnings.push({ code, chunk_id: chunk.chunk_id, message: `向量已降级为 BM25: ${code}` });
+      withoutVec.push(chunk);
+    }
+  }
+  if (withVec.length === 0) return { warnings };
   const vecScored = withVec
-    .map((c) => ({ c, score: cosineSimilarity(qv, c.vector!) }))
+    .map((c) => ({ c, score: cosineSimilarity(queryVector, c.vector!) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, recall);
   // BM25 组: 真实分值(scoreChunksBm25), 过滤零分 → 降序 → 截 recall, 供归一化融合。
@@ -80,7 +112,7 @@ async function recallWithEmbedding(
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, recall);
-  return fuseGroups(vecScored, bmScored, recall);
+  return { hits: fuseGroups(vecScored, bmScored, recall), warnings };
 }
 
 export async function searchRag(
@@ -100,12 +132,23 @@ export async function searchRag(
   const topK = opts?.topK ?? 8;
   const recall = opts?.recall ?? 20;
   const degradedParts: string[] = [];
+  const warnings: RagVectorWarning[] = [];
 
   // L2 向量召回(可选): 失败 → 退化到纯 L0/L1, degraded 追加 embedding_failed。
   let vectorHits: RagChunk[] | undefined;
   if (opts?.embeddingBackend !== undefined) {
     try {
-      vectorHits = await recallWithEmbedding(opts.embeddingBackend, index.chunks, query, recall);
+      const vectorResult = await recallWithEmbedding(
+        opts.embeddingBackend,
+        index.chunks,
+        query,
+        recall,
+        index.embedding_model,
+        index.embedding_dimension,
+      );
+      warnings.push(...vectorResult.warnings);
+      vectorHits = vectorResult.hits;
+      if (vectorResult.warnings.length > 0) degradedParts.push("vector_invalid");
     } catch {
       degradedParts.push("embedding_failed");
     }
@@ -146,6 +189,7 @@ export async function searchRag(
         hits: withTargets(reranked.slice(0, topK)),
         ranking: "llm_rerank",
         ...(degradedParts.length > 0 ? { degraded: degradedParts.join(",") } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     } catch {
       degradedParts.push("rerank_failed");
@@ -154,6 +198,7 @@ export async function searchRag(
         hits: withTargets(recalled.slice(0, topK)),
         ranking: vectorHits !== undefined ? "vector" : "bm25",
         ...(degradedParts.length > 0 ? { degraded: degradedParts.join(",") } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
   }
@@ -162,5 +207,6 @@ export async function searchRag(
     hits: withTargets(recalled.slice(0, topK)),
     ranking: vectorHits !== undefined ? "vector" : "bm25",
     ...(degradedParts.length > 0 ? { degraded: degradedParts.join(",") } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

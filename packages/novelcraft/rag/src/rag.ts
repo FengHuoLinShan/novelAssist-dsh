@@ -47,6 +47,20 @@ export interface EmbeddingBackend {
   readonly name: string;
 }
 
+export type RagVectorWarningCode =
+  | "query_vector_invalid"
+  | "vector_non_finite"
+  | "vector_empty"
+  | "vector_dimension_mismatch"
+  | "vector_model_mismatch"
+  | "vector_status_invalid";
+
+export interface RagVectorWarning {
+  code: RagVectorWarningCode;
+  message: string;
+  chunk_id?: string;
+}
+
 /** 章节切块(确定性, annotation 固定值: cn-novel-v1; visibility 默认 author_only)。 */
 export function chunkChapterText(
   text: string,
@@ -91,6 +105,8 @@ export interface RagIndexFile {
   chunks: RagChunk[];
   /** 全库向量所用的嵌入模型(L1; 未嵌入时省略)。 */
   embedding_model?: string;
+  /** Active embedding width; vectors with another width are derived-stale. */
+  embedding_dimension?: number;
 }
 
 export function rebuildRagIndex(root: string, chunks: RagChunk[], now: Date = new Date()): RagIndexFile {

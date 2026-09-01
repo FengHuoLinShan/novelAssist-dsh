@@ -11,25 +11,58 @@
 // cosineSimilarity — 余弦相似度(长度不等 → 0 防御; 空数组 → 0)。
 import { writeFileSync } from "node:fs";
 import { paths } from "@novelcraft/vault";
-import { readRagIndex, rebuildRagIndex, type EmbeddingBackend, type RagChunk } from "./rag.js";
+import {
+  readRagIndex,
+  rebuildRagIndex,
+  type EmbeddingBackend,
+  type RagChunk,
+  type RagVectorWarning,
+  type RagVectorWarningCode,
+} from "./rag.js";
 
 export interface RagEmbedStats {
   embedded: number;
   failed: number;
   skipped: number;
+  invalidated?: number;
+  warnings?: RagVectorWarning[];
 }
 
 const DEFAULT_BATCH = 32;
 
 /** 落盘: 无任一成功 → rebuildRagIndex 原样写; 有成功 → 追加 embedding_model(与 R5 同形)。 */
-function persistIndex(root: string, chunks: RagChunk[], embeddingModel?: string): void {
+function persistIndex(
+  root: string,
+  chunks: RagChunk[],
+  embeddingModel?: string,
+  embeddingDimension?: number,
+): void {
   if (embeddingModel === undefined) {
     rebuildRagIndex(root, chunks);
     return;
   }
   const file = `${paths(root).assistant.dir}/rag-index.json`;
-  const index = { rebuilt_at: new Date().toISOString(), chunks, embedding_model: embeddingModel };
+  const index = {
+    rebuilt_at: new Date().toISOString(),
+    chunks,
+    embedding_model: embeddingModel,
+    ...(embeddingDimension !== undefined ? { embedding_dimension: embeddingDimension } : {}),
+  };
   writeFileSync(file, JSON.stringify(index, null, 2) + "\n", "utf8");
+}
+
+export function validateVector(
+  vector: unknown,
+  expectedDimension?: number,
+): { ok: true; dimension: number } | { ok: false; code: RagVectorWarningCode } {
+  if (!Array.isArray(vector) || vector.length === 0) return { ok: false, code: "vector_empty" };
+  if (!vector.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return { ok: false, code: "vector_non_finite" };
+  }
+  if (expectedDimension !== undefined && vector.length !== expectedDimension) {
+    return { ok: false, code: "vector_dimension_mismatch" };
+  }
+  return { ok: true, dimension: vector.length };
 }
 
 export async function embedPendingChunks(
@@ -47,16 +80,48 @@ export async function embedPendingChunks(
   let embedded = 0;
   let failed = 0;
   let skipped = 0;
+  let invalidated = 0;
+  const warnings: RagVectorWarning[] = [];
+  let expectedDimension =
+    index.embedding_model === backend.name && Number.isSafeInteger(index.embedding_dimension) &&
+      (index.embedding_dimension ?? 0) > 0
+      ? index.embedding_dimension
+      : undefined;
   let anySucceeded = false;
+
+  const invalidate = (chunk: RagChunk, code: RagVectorWarningCode): void => {
+    delete chunk.vector;
+    delete chunk.embedding_model;
+    if (chunk.embedding_status !== "skipped") chunk.embedding_status = "pending";
+    chunk.embedding_error = `vector_invalid:${code}`;
+    invalidated += 1;
+    warnings.push({ code, chunk_id: chunk.chunk_id, message: `向量不可用于 ${backend.name}: ${code}` });
+  };
 
   // 目标筛选: pending/failed 且无 vector; 其余(有 vector 或 status='skipped')计入 skipped。
   const targets: RagChunk[] = [];
   for (const c of chunks) {
-    if ((Array.isArray(c.vector) && c.vector.length > 0) || c.embedding_status === "skipped") {
+    if (c.vector !== undefined || c.embedding_status === "succeeded") {
+      if (c.embedding_status !== "succeeded") {
+        invalidate(c, "vector_status_invalid");
+      } else if (c.embedding_model !== backend.name) {
+        invalidate(c, "vector_model_mismatch");
+      } else {
+        const checked = validateVector(c.vector, expectedDimension);
+        if (!checked.ok) invalidate(c, checked.code);
+        else {
+          expectedDimension ??= checked.dimension;
+          anySucceeded = true;
+          skipped += 1;
+          continue;
+        }
+      }
+    }
+    if (c.embedding_status === "skipped") {
       skipped += 1;
       continue;
     }
-    if (c.embedding_status === "pending" || c.embedding_status === "failed") {
+    if (c.embedding_status === "pending" || c.embedding_status === "failed" || c.embedding_status === "succeeded") {
       targets.push(c);
     }
   }
@@ -71,12 +136,21 @@ export async function embedPendingChunks(
       for (let j = 0; j < batch.length; j += 1) {
         const c = batch[j];
         const v = vectors[j];
-        if (!Array.isArray(v)) {
+        const checked = validateVector(v, expectedDimension);
+        if (!checked.ok) {
+          delete c.vector;
+          delete c.embedding_model;
           c.embedding_status = "failed";
-          c.embedding_error = "bge_embed_failed: 向量缺失";
+          c.embedding_error = `vector_invalid:${checked.code}`;
+          warnings.push({
+            code: checked.code,
+            chunk_id: c.chunk_id,
+            message: `嵌入后端 ${backend.name} 返回不可用向量: ${checked.code}`,
+          });
           failed += 1;
           continue;
         }
+        expectedDimension ??= checked.dimension;
         c.vector = v;
         c.embedding_model = backend.name;
         c.embedding_status = "succeeded";
@@ -92,15 +166,25 @@ export async function embedPendingChunks(
       }
     }
     // 每批后落盘(中断可重入); 有任一 succeeded 时索引文件 embedding_model=backend.name。
-    persistIndex(root, chunks, anySucceeded ? backend.name : undefined);
+    persistIndex(root, chunks, anySucceeded ? backend.name : undefined, anySucceeded ? expectedDimension : undefined);
   }
 
-  return { embedded, failed, skipped };
+  if (invalidated > 0 && targets.length === 0) {
+    persistIndex(root, chunks, anySucceeded ? backend.name : undefined, anySucceeded ? expectedDimension : undefined);
+  }
+
+  return {
+    embedded,
+    failed,
+    skipped,
+    ...(invalidated > 0 ? { invalidated } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
 /** 余弦相似度: 长度不等或任一为空 → 0(防御, 不可比即无相似度)。 */
 export function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
-  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+  if (!validateVector(a).ok || !validateVector(b, a.length).ok) return 0;
   let dot = 0;
   let na = 0;
   let nb = 0;

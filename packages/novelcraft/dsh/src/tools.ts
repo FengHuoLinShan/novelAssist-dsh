@@ -730,6 +730,7 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           truncated: { type: 'boolean', required: true },
           ranking: { type: 'string', required: true },
           degraded: { type: 'string', required: true },
+          warnings: { type: 'array', required: true },
           message: { type: 'string', required: true },
         },
       },
@@ -757,14 +758,21 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
         const degradedNote = r.degraded
           ? r.degraded.includes('rerank_failed')
             ? '; 精排失败已降级'
-            : '; 嵌入失败, 已回退文本检索'
+            : r.degraded.includes('vector_invalid')
+              ? '; 向量身份/维度失效, 已回退或混合 BM25'
+              : '; 嵌入失败, 已回退文本检索'
           : '';
         const message = hits.length > 0
           ? `命中 ${hits.length}/${r.total ?? hits.length} 条(${rankingLabel}${degradedNote}${r.truncated ? '; 结果截断, 可提高 top_k 或缩小查询' : ''}${r.recall_capped ? `; 召回已达上限窗口(全书匹配 ≥ ${r.total}), total 为下界非全量` : ''})。`
           : '无命中或索引为空, 可先文本入库/采用资产后重试。';
+        const warnings = (r.warnings ?? []).map((warning) => ({
+          code: warning.code,
+          message: warning.message,
+          ...(warning.chunk_id !== undefined ? { chunk_id: warning.chunk_id } : {}),
+        }));
         return {
           ok: true, hits, total: r.total ?? hits.length, truncated: r.truncated === true,
-          ranking: r.ranking, degraded: r.degraded ?? '', message,
+          ranking: r.ranking, degraded: r.degraded ?? '', warnings, message,
         };
       },
     }),
@@ -787,6 +795,8 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           embedded: { type: 'integer', required: true },
           failed: { type: 'integer', required: true },
           skipped: { type: 'integer', required: true },
+          invalidated: { type: 'integer', required: true },
+          warnings: { type: 'array', required: true },
           message: { type: 'string', required: true },
         },
       },
@@ -800,7 +810,13 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           embedded: r.embedded,
           failed: r.failed,
           skipped: r.skipped,
-          message: `已嵌入 ${r.embedded} 个片段(失败 ${r.failed}, 跳过 ${r.skipped})`,
+          invalidated: r.invalidated ?? 0,
+          warnings: (r.warnings ?? []).map((warning) => ({
+            code: warning.code,
+            message: warning.message,
+            ...(warning.chunk_id !== undefined ? { chunk_id: warning.chunk_id } : {}),
+          })),
+          message: `已嵌入 ${r.embedded} 个片段(失败 ${r.failed}, 跳过 ${r.skipped}, 失效 ${r.invalidated ?? 0})`,
         };
       },
     }),

@@ -17,6 +17,7 @@ import {
   rebuildRagIndex,
   searchRag,
   syncRagIndex,
+  validateVector,
   type EmbeddingBackend,
   type RagChunk,
 } from "../src/index";
@@ -101,12 +102,55 @@ describe("embedPendingChunks(L2 批量嵌入)", () => {
     // 有任一 succeeded → 索引文件 embedding_model=backend.name
     const file = JSON.parse(
       readFileSync(join(root, ".assistant", "rag-index.json"), "utf8"),
-    ) as { embedding_model?: string };
+    ) as { embedding_model?: string; embedding_dimension?: number };
     expect(file.embedding_model).toBe("fake-bge");
+    expect(file.embedding_dimension).toBe(3);
 
     const second = await embedPendingChunks(root, backend);
     expect(second).toEqual({ embedded: 0, failed: 0, skipped: 3 }); // 已嵌入 → 全部 skipped
     expect(backend.calls).toHaveLength(1); // 第二轮不重复调 backend
+  });
+
+  it("写入边界拒绝错维/非 finite 向量，坏项不污染同批成功项", async () => {
+    const root = makeRoot();
+    writeChapter(root, 1, "第一段正文");
+    writeChapter(root, 2, "第二段正文");
+    writeChapter(root, 3, "第三段正文");
+    syncRagIndex(root, NOW);
+    const backend: EmbeddingBackend = {
+      name: "mixed-backend",
+      embed: async () => [[1, 0], [1, 0, 0], [Number.POSITIVE_INFINITY, 0]],
+    };
+    const result = await embedPendingChunks(root, backend);
+    expect(result).toMatchObject({ embedded: 1, failed: 2, skipped: 0 });
+    expect(result.warnings?.map((warning) => warning.code).sort()).toEqual([
+      "vector_dimension_mismatch",
+      "vector_non_finite",
+    ]);
+    const index = readRagIndex(root)!;
+    expect(index.embedding_model).toBe("mixed-backend");
+    expect(index.embedding_dimension).toBe(2);
+    expect(index.chunks[0].embedding_status).toBe("succeeded");
+    expect(index.chunks.slice(1).every((chunk) => chunk.vector === undefined)).toBe(true);
+  });
+
+  it("旧模型向量在写边界失效并按当前 backend 重嵌入", async () => {
+    const root = makeRoot();
+    writeChapter(root, 1, "第一段正文");
+    syncRagIndex(root, NOW);
+    const index = readRagIndex(root)!;
+    index.chunks[0].vector = [1, 0, 0];
+    index.chunks[0].embedding_status = "succeeded";
+    index.chunks[0].embedding_model = "old-model";
+    rebuildRagIndex(root, index.chunks, NOW);
+    const backend = new FakeBackend();
+    const result = await embedPendingChunks(root, backend);
+    expect(result).toMatchObject({ embedded: 1, failed: 0, skipped: 0, invalidated: 1 });
+    expect(result.warnings?.[0]).toMatchObject({ code: "vector_model_mismatch", chunk_id: "ch1-0" });
+    expect(readRagIndex(root)!.chunks[0]).toMatchObject({
+      embedding_model: "fake-bge",
+      embedding_status: "succeeded",
+    });
   });
 
   it("批级失败继续下批: 首批成功, 失败批标记 failed, 重跑只补失败批", async () => {
@@ -175,6 +219,12 @@ describe("cosineSimilarity(防御)", () => {
     expect(cosineSimilarity([1, 0], [0, 1])).toBeCloseTo(0, 10);
     expect(cosineSimilarity([1, 0], [-1, 0])).toBeCloseTo(-1, 10);
   });
+  it("NaN/Infinity 向量拒绝参与 cosine", () => {
+    expect(validateVector([Number.NaN, 0])).toEqual({ ok: false, code: "vector_non_finite" });
+    expect(validateVector([Number.POSITIVE_INFINITY, 0])).toEqual({ ok: false, code: "vector_non_finite" });
+    expect(cosineSimilarity([Number.NaN, 0], [1, 0])).toBe(0);
+    expect(cosineSimilarity([1, 0], [Number.POSITIVE_INFINITY, 0])).toBe(0);
+  });
 });
 
 describe("searchRag(L2 向量召回)", () => {
@@ -230,6 +280,24 @@ describe("searchRag(L2 向量召回)", () => {
     expect(res.ranking).toBe("bm25"); // 退化到纯 L0/L1
     expect(res.degraded).toContain("embedding_failed");
     expect(res.hits.map((c) => c.chunk_id)).toEqual(["ch1-0", "ch2-0", "ch3-0"]); // BM25 序
+  });
+
+  it("NaN/错维/混模型全部失效时稳定退回 BM25 并返回 typed warnings", async () => {
+    const root = setupCosineRoot();
+    const index = readRagIndex(root)!;
+    index.chunks[0].vector = [Number.NaN, 0, 0];
+    index.chunks[1].vector = [1, 0];
+    index.chunks[2].embedding_model = "old-model";
+    rebuildRagIndex(root, index.chunks, NOW);
+    const result = await searchRag(root, "剑", { embeddingBackend: queryBackend });
+    expect(result.ranking).toBe("bm25");
+    expect(result.degraded).toBe("vector_invalid");
+    expect(result.hits.map((chunk) => chunk.chunk_id)).toEqual(["ch1-0", "ch2-0", "ch3-0"]);
+    expect(new Set(result.warnings?.map((warning) => warning.code))).toEqual(new Set([
+      "vector_non_finite",
+      "vector_dimension_mismatch",
+      "vector_model_mismatch",
+    ]));
   });
 
   it("向量召回 + provider 精排叠加: 精排生效 → ranking='llm_rerank'", async () => {

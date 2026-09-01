@@ -73,9 +73,11 @@ describe('novelcraft_rag_embed(M6 Track B, L2 批量嵌入)', () => {
   it('注册: novelcraft_rag_embed 使用 closed success schema', async () => {
     const env = await setup();
     const t = tool(env, 'novelcraft_rag_embed');
-    const schema = t.output?.schema as { type: string; additionalProperties?: boolean };
+    const schema = t.output?.schema as { type: string; additionalProperties?: boolean; properties?: Record<string, unknown> };
     expect(schema.type).toBe('object');
     expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties).toHaveProperty('invalidated');
+    expect(schema.properties).toHaveProperty('warnings');
     expect(t.parameters).toMatchObject({ type: 'object', required: ['root'] });
   });
 

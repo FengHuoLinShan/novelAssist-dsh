@@ -85,9 +85,10 @@ describe('novelcraft_rag_search(M6 Track A3 语义检索)', () => {
     const env = await setup();
     const t = tool(env, 'novelcraft_rag_search');
     expect(t.name).toBe('novelcraft_rag_search');
-    const schema = t.output?.schema as { type: string; additionalProperties?: boolean };
+    const schema = t.output?.schema as { type: string; additionalProperties?: boolean; properties?: Record<string, unknown> };
     expect(schema.type).toBe('object');
     expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties).toHaveProperty('warnings');
     // dsh-tools 把参数根的 required:true 注解编译为顶层 required 数组(JSON Schema 投影)
     expect(t.parameters).toMatchObject({ type: 'object', required: ['root', 'query'] });
   });
