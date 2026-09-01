@@ -25,6 +25,9 @@ export type {
   AtlasPageCard,
   AtlasViewPayload,
   AtlasViewValue,
+  BookCard,
+  BooksListPayload,
+  BooksListValue,
   ChapterDossierAsset,
   ChapterDossierPayload,
   ChapterDossierValue,
@@ -95,6 +98,7 @@ export function apply(ctx: Context): void {
       [ENDPOINTS.atlasView]: (p) => handlers.atlasView(p),
       [ENDPOINTS.atlasAnnotationRequest]: (p) => handlers.atlasAnnotationRequest(p),
       [ENDPOINTS.workflowView]: (p) => handlers.workflowView(p),
+      [ENDPOINTS.booksList]: (p) => handlers.booksList(p),
     };
     const route = routes[endpoint];
     if (route === undefined) {

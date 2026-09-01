@@ -49,6 +49,15 @@ export type NovelcraftKey =
   | 'workflow.abandon'
   | 'workflow.restart'
   | 'workflow.restartHint'
+  | 'book.title'
+  | 'book.current'
+  | 'book.unbound'
+  | 'book.empty'
+  | 'book.open'
+  | 'book.create'
+  | 'book.name'
+  | 'book.chatBusy'
+  | 'book.requested'
   | 'story.empty'
   | 'story.unbound'
   | 'story.threads'
@@ -218,6 +227,15 @@ export const zh: Record<NovelcraftKey, string> = {
   'workflow.abandon': '审批放弃',
   'workflow.restart': '重新开始',
   'workflow.restartHint': '按已记录范围新开一次导入，不复用旧 run。章节：',
+  'book.title': '书库',
+  'book.current': '当前',
+  'book.unbound': '当前会话尚未绑定书。',
+  'book.empty': '书库还没有书，可以在下方创建。',
+  'book.open': '审批切换',
+  'book.create': '创建新书',
+  'book.name': '书名（同时作为书库键）',
+  'book.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
+  'book.requested': '请求已交给助手；创建或切换仍需审批。',
   'story.empty': '还没有结构资产: 先跑结构分析或手工建 threads/arcs/伏笔。',
   'story.unbound': '这本书还没绑定工作区。',
   'story.threads': '剧情线',
@@ -388,6 +406,15 @@ export const en: Record<NovelcraftKey, string> = {
   'workflow.abandon': 'Abandon with approval',
   'workflow.restart': 'Start new',
   'workflow.restartHint': 'Start a new import for the recorded scope instead of replaying the old run. Chapters:',
+  'book.title': 'Library',
+  'book.current': 'Current',
+  'book.unbound': 'This session is not bound to a book yet.',
+  'book.empty': 'The library is empty. Create a book below.',
+  'book.open': 'Switch with approval',
+  'book.create': 'Create book',
+  'book.name': 'Book name (also the library key)',
+  'book.chatBusy': 'Chat has an unsent draft. Send or clear it first.',
+  'book.requested': 'The request was sent to the assistant; create or switch still requires approval.',
   'story.empty': 'No structure assets yet — run structure analysis or create threads/arcs/foreshadowing.',
   'story.unbound': 'No vault bound for this book.',
   'story.threads': 'Threads',

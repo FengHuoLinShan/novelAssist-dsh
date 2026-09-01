@@ -21,6 +21,7 @@ import type {
   AtlasViewValue,
   AtlasAnnotationRequestValue,
   WorkflowViewValue,
+  BooksListValue,
 } from '../wire.ts'
 import { ENDPOINTS, RPC_CHANNEL } from '../wire.ts'
 
@@ -111,6 +112,17 @@ export function readFileBase64(file: File): Promise<string> {
 /** 事件触发短轮询下界与退避上界(ADR-0018 §2)。 */
 export const POLL_MIN_MS = 1000
 export const POLL_MAX_MS = 15000
+export const BOOK_CHANGED_EVENT = 'novelcraft:book-changed'
+
+export interface BookChangedDetail {
+  sessionId?: string
+  book: string | null
+}
+
+/** Only views for the changed session may clear themselves. */
+export function matchesBookChangedSession(detail: BookChangedDetail | undefined, sessionId: string | undefined): boolean {
+  return detail?.sessionId === sessionId
+}
 
 /** 轮询退避策略(ADR-0018 §2): 数据有变化 → 立即回到短轮询下界; 无变化 → 指数退避封顶。 */
 export function nextPollDelay(changed: boolean, previousDelayMs: number): number {
@@ -243,6 +255,7 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
         radarRunning: value.radarRunning,
         plotSummary: value.plotSummary ?? null,
       }
+      const bookChanged = next.book !== lastRef.current.book
       const changed =
         next.bound !== lastRef.current.bound ||
         next.book !== lastRef.current.book ||
@@ -253,6 +266,11 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
         next.plotSummary !== lastRef.current.plotSummary
       lastRef.current = next
       if (changed) setSnapshot(next)
+      if (bookChanged) {
+        window.dispatchEvent(new CustomEvent<BookChangedDetail>(BOOK_CHANGED_EVENT, {
+          detail: { sessionId: sessionRef.current, book: next.book },
+        }))
+      }
       return changed ? 'changed' : 'unchanged'
     },
     [connection],
@@ -289,6 +307,8 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
   )
 
   useEffect(() => {
+    setSnapshot(EMPTY_WATCH)
+    lastRef.current = EMPTY_WATCH
     void refresh()
     schedule(POLL_MIN_MS)
     const onFocus = () => {
@@ -318,25 +338,15 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('novelcraft:signals-changed', onSignalsChanged)
     }
-  }, [refresh, schedule])
+  }, [refresh, schedule, sessionId])
 
   return { snapshot, refresh }
 }
 
 /** 收件箱视图(卡片列表 + 阈值)。 */
 export function useInbox(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const [cards, setCards] = useState<InboxListValue['signals']>([])
-  const [bound, setBound] = useState<{ book: string; root: string } | null>(null)
-  const [threshold, setThreshold] = useState(5)
+  const { data, refresh } = useSessionView<InboxListValue>(connection, sessionId, ENDPOINTS.inboxList)
   const [busy, setBusy] = useState(false)
-
-  const refresh = useCallback(async () => {
-    const value = await call<InboxListValue>(connection, ENDPOINTS.inboxList, { sessionId })
-    if (!value) return
-    setCards(value.signals)
-    setBound(value.bound)
-    setThreshold(value.threshold)
-  }, [connection, sessionId])
 
   /** 四动词: 回宿主执行 assistant.act; 返回作者语言消息。 */
   const actOn = useCallback(async (payload: InboxActPayload): Promise<string | null> => {
@@ -353,20 +363,53 @@ export function useInbox(connection: RpcCaller | undefined, sessionId: string | 
     }
   }, [connection, refresh])
 
-  return { cards, bound, threshold, busy, refresh, actOn }
+  return {
+    cards: data?.signals ?? [],
+    bound: data?.bound ?? null,
+    threshold: data?.threshold ?? 5,
+    busy,
+    refresh,
+    actOn,
+  }
+}
+
+/** Session-scoped read view: clear first and ignore late responses after session/book changes. */
+function useSessionView<T>(
+  connection: RpcCaller | undefined,
+  sessionId: string | undefined,
+  endpoint: string,
+) {
+  const [data, setData] = useState<T | null>(null)
+  const [loading, setLoading] = useState(false)
+  const request = useRef(0)
+  const refresh = useCallback(async () => {
+    const seq = ++request.current
+    setLoading(true)
+    const value = await call<T>(connection, endpoint, { sessionId })
+    if (seq !== request.current) return
+    setLoading(false)
+    if (value !== null) setData(value)
+  }, [connection, endpoint, sessionId])
+  useEffect(() => {
+    const reload = (event?: Event) => {
+      if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
+      request.current += 1
+      setData(null)
+      void refresh()
+    }
+    reload()
+    window.addEventListener(BOOK_CHANGED_EVENT, reload)
+    return () => {
+      request.current += 1
+      window.removeEventListener(BOOK_CHANGED_EVENT, reload)
+    }
+  }, [refresh, sessionId])
+  return { data, loading, refresh }
 }
 
 /** 地图册数据源(atlas/view; Phase 6: 规划 run + adopted/pending 树 + 标注队列)。 */
 export function useAtlasView(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const [data, setData] = useState<AtlasViewValue | null>(null)
-  const refresh = useCallback(async () => {
-    const value = await call<AtlasViewValue>(connection, ENDPOINTS.atlasView, { sessionId })
-    if (value) setData(value)
-  }, [connection, sessionId])
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-  return { data, refresh }
+  return useSessionView<AtlasViewValue>(connection, sessionId, ENDPOINTS.atlasView)
 }
 
 /** 标注请求(atlas/annotation-request; 落队列 + 信号, 不写资产)。 */
@@ -387,49 +430,24 @@ export async function requestAtlasAnnotations(
 
 /** 剧情地图数据源(story/map; 结构资产 + Scene/章节覆盖)。 */
 export function useStoryMap(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const [data, setData] = useState<StoryMapValue | null>(null)
-  const refresh = useCallback(async () => {
-    const value = await call<StoryMapValue>(connection, ENDPOINTS.storyMap, { sessionId })
-    if (value) setData(value)
-  }, [connection, sessionId])
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-  return { data, refresh }
+  return useSessionView<StoryMapValue>(connection, sessionId, ENDPOINTS.storyMap)
 }
 
 /** 写作台数据源(writing/desk; 四模式: 守望信号/计划结构/参照对象/评审摘要)。 */
 export function useWritingDesk(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const [data, setData] = useState<WritingDeskValue | null>(null)
-  const refresh = useCallback(async () => {
-    const value = await call<WritingDeskValue>(connection, ENDPOINTS.writingDesk, { sessionId })
-    if (value) setData(value)
-  }, [connection, sessionId])
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-  return { data, refresh }
+  return useSessionView<WritingDeskValue>(connection, sessionId, ENDPOINTS.writingDesk)
 }
 
 /** 模型预设数据源(presets/list + presets/select; N20/D13)。写入成功即刷新。 */
 export function useModelPresets(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const [data, setData] = useState<PresetsListValue | null>(null)
+  const { data, refresh } = useSessionView<PresetsListValue>(connection, sessionId, ENDPOINTS.presetsList)
   const [busy, setBusy] = useState(false)
-
-  const refresh = useCallback(async () => {
-    const value = await call<PresetsListValue>(connection, ENDPOINTS.presetsList, { sessionId })
-    if (value) setData(value)
-  }, [connection, sessionId])
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
 
   /** 选择/清除预设: 回宿主 selectPresetInLlmYml(N19 只动 llm.yml preset 键); 成功即刷新。 */
   const select = useCallback(
     async (preset: string | null): Promise<{ ok: boolean; message: string } | null> => {
       setBusy(true)
       try {
-        // call<T> 已解包 RpcResult.value: 失败(传输/RpcError)→ null(UI 走预设失败文案)。
         const value = await call<PresetsSelectValue>(connection, ENDPOINTS.presetsSelect, {
           sessionId,
           preset,
@@ -468,6 +486,11 @@ export function useModelPresets(connection: RpcCaller | undefined, sessionId: st
   return { data, busy, refresh, select, selectEffort }
 }
 
+/** 书库发现读面; 未绑定也可列出。 */
+export function useBookLibrary(connection: RpcCaller | undefined, sessionId: string | undefined) {
+  return useSessionView<BooksListValue>(connection, sessionId, ENDPOINTS.booksList)
+}
+
 /** 章节档案数据源(chapter/dossier; §17.5.1 每章一整页钻取; chapterIndex 变化重取, null 清空)。 */
 export function useChapterDossier(
   connection: RpcCaller | undefined,
@@ -494,32 +517,24 @@ export function useChapterDossier(
     setData(value)
   }, [connection, sessionId, chapterIndex])
   useEffect(() => {
-    void refresh()
+    const reload = (event?: Event) => {
+      if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
+      chapterSeqRef.current += 1
+      setData(null)
+      void refresh()
+    }
+    reload()
+    window.addEventListener(BOOK_CHANGED_EVENT, reload)
     return () => {
       // 卸载/依赖切换: 递增作废在途章节请求, 防旧响应在 unmount 后 setState。
       chapterSeqRef.current += 1
+      window.removeEventListener(BOOK_CHANGED_EVENT, reload)
     }
-  }, [refresh])
+  }, [refresh, sessionId])
   return { data, refresh }
 }
 
 /** Durable workflow 只读视图；session 切换/卸载后旧响应不得回填。 */
 export function useWorkflowView(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const [data, setData] = useState<WorkflowViewValue | null>(null)
-  const [loading, setLoading] = useState(false)
-  const request = useRef(0)
-  const refresh = useCallback(async () => {
-    const seq = ++request.current
-    setLoading(true)
-    const value = await call<WorkflowViewValue>(connection, ENDPOINTS.workflowView, { sessionId })
-    if (seq !== request.current) return
-    setLoading(false)
-    if (value) setData(value)
-  }, [connection, sessionId])
-  useEffect(() => {
-    setData(null)
-    void refresh()
-    return () => { request.current += 1 }
-  }, [refresh])
-  return { data, loading, refresh }
+  return useSessionView<WorkflowViewValue>(connection, sessionId, ENDPOINTS.workflowView)
 }

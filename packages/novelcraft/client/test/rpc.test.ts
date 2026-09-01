@@ -59,6 +59,38 @@ function pngBytes(width: number, height: number): Buffer {
 }
 
 describe('novelcraft RPC 处理器', () => {
+  it('books/list: 未绑定也可发现书，绑定时只投影当前标记而不泄露路径', async () => {
+    const base = makeHostUi();
+    const env = setup({ service: { ui: {
+      ...base,
+      read: {
+        ...base.read,
+        bookList: (currentRoot) => [
+          { book: 'alpha', title: '甲', root: '/private/alpha', current: currentRoot === '/private/alpha' },
+          { book: '测试书', title: '测试书', root: env.root, current: currentRoot === env.root },
+        ],
+      },
+    } } });
+    const h = createNovelcraftHandlers(env.ctx);
+
+    const unbound = await h.booksList({ sessionId: 'unknown' });
+    expect(unbound.ok).toBe(true);
+    if (unbound.ok) {
+      expect(unbound.value.bound).toBeNull();
+      expect(unbound.value.books.every((book) => !('root' in book))).toBe(true);
+      expect(unbound.value.books.every((book) => !book.current)).toBe(true);
+    }
+
+    const bound = await h.booksList({ sessionId: 's1' });
+    expect(bound.ok).toBe(true);
+    if (bound.ok) {
+      expect(bound.value.bound).toEqual({ book: '测试书' });
+      expect(bound.value.books.find((book) => book.book === '测试书')?.current).toBe(true);
+      expect(JSON.stringify(bound.value)).not.toContain(env.root);
+    }
+    env.cleanup();
+  });
+
   it('workflow/view: 四态作者投影 + 恢复动作资格', async () => {
     const base = makeHostUi();
     const env = setup({ service: { ui: {

@@ -20,6 +20,7 @@ export const ENDPOINTS = {
   atlasView: 'atlas/view',
   atlasAnnotationRequest: 'atlas/annotation-request',
   workflowView: 'workflow/view',
+  booksList: 'books/list',
 } as const;
 
 /** Browser intake limit; the writing core rechecks the decoded byte length. */
@@ -506,4 +507,23 @@ export interface WorkflowViewValue {
   bound: { book: string; root: string } | null;
   runs: WorkflowRunCard[];
   restart_scope: { start_chapter: number; end_chapter: number } | null;
+}
+
+// ---------------------------------------------------------------------------
+// book library(P1-U2): discovery only; create/open remain assistant + approval.
+// ---------------------------------------------------------------------------
+
+export interface BooksListPayload {
+  sessionId?: string;
+}
+
+export interface BookCard {
+  book: string;
+  title: string;
+  current: boolean;
+}
+
+export interface BooksListValue {
+  bound: { book: string } | null;
+  books: BookCard[];
 }

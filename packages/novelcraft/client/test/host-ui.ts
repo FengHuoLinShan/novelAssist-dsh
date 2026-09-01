@@ -66,6 +66,7 @@ export function makeHostUi(
         tree: readAtlasTree(root),
         run: runId ? readAtlasRun(root, runId) : latestAtlasRun(root),
       }),
+      bookList: () => [],
     },
     view: {
       vaultPolicy: (root) => resolvePolicy(root),

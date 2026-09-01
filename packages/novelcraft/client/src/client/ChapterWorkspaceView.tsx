@@ -4,7 +4,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChapterWorkspaceValue } from '../wire.ts'
 import type { RpcCaller } from './index.ts'
 import { NS } from './locales.ts'
-import { loadChapterWorkspace, stageChapterEdit } from './useWatch.ts'
+import { BOOK_CHANGED_EVENT, loadChapterWorkspace, matchesBookChangedSession, stageChapterEdit, type BookChangedDetail } from './useWatch.ts'
 import css from './novelcraft.module.css'
 
 export type ChapterWorkspaceViewProps = ConvViewProps & PropsLocale<typeof NS> & {
@@ -82,8 +82,21 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
   }, [chapterIndex, connection, sessionId])
 
   useEffect(() => {
-    void refresh(chapterIndex)
-    return () => { request.current += 1 }
+    const reload = (event?: Event) => {
+      if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
+      request.current += 1
+      setData(null)
+      setEditor(null)
+      setEditing(false)
+      setChapterIndex(0)
+      void refresh(0)
+    }
+    reload()
+    window.addEventListener(BOOK_CHANGED_EVENT, reload)
+    return () => {
+      request.current += 1
+      window.removeEventListener(BOOK_CHANGED_EVENT, reload)
+    }
   }, [chapterIndex, connection, sessionId])
 
   const updateEditor = (next: LocalDraft): void => {

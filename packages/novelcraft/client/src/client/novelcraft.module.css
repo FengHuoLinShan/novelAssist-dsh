@@ -116,9 +116,31 @@
   opacity: 0.55;
 }
 
+.bookCreateRow {
+  display: flex;
+  gap: 8px;
+}
+
+.bookNameInput {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.bookNameInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline-offset: 2px;
+}
+
 @media (max-width: 390px) {
   .workflowPanel { width: 100%; }
   .actionRow > .actionButton { flex: 1 1 100%; }
+  .bookCreateRow { flex-direction: column; }
 }
 
 .inbox {

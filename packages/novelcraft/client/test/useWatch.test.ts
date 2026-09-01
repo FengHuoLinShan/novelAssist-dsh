@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSeqGate,
+  matchesBookChangedSession,
   nextPollAction,
   nextPollDelay,
   POLL_MAX_MS,
@@ -63,6 +64,17 @@ describe('nextPollAction(续排决策: stale 缺口修复)', () => {
 });
 
 describe('createSeqGate(latest-wins 请求护栏)', () => {
+  it('书切换只作废同会话读面，旧响应不能回填', () => {
+    expect(matchesBookChangedSession({ sessionId: 's1', book: 'b' }, 's1')).toBe(true);
+    expect(matchesBookChangedSession({ sessionId: 's2', book: 'b' }, 's1')).toBe(false);
+    const gate = createSeqGate();
+    const oldBookRequest = gate.request();
+    gate.invalidate(); // book-changed: clear first, then new request
+    const newBookRequest = gate.request();
+    expect(gate.isCurrent(oldBookRequest)).toBe(false);
+    expect(gate.isCurrent(newBookRequest)).toBe(true);
+  });
+
   it('新请求 latest-wins: 旧请求响应作废(同代际内)', () => {
     const gate = createSeqGate();
     const r1 = gate.request();

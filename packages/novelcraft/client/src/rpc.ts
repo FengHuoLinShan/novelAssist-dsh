@@ -60,6 +60,8 @@ import type {
   AtlasPageCard,
   AtlasViewPayload,
   AtlasViewValue,
+  BooksListPayload,
+  BooksListValue,
   PresetsSelectPayload,
   PresetsSelectValue,
   ReviewCard,
@@ -143,6 +145,7 @@ export interface NovelcraftHostService {
         ref?: string,
       ): ReviewRecord | undefined;
       viewMapAtlas(root: string, runId?: string): { tree: AtlasTree; run: AtlasRun | null };
+      bookList(currentRoot?: string): Array<{ book: string; title: string; root: string; current: boolean }>;
     };
     view: {
       vaultPolicy(root: string): ResolvedPolicy;
@@ -1057,6 +1060,22 @@ export function createNovelcraftHandlers(ctx: Context) {
         restart_scope: view.checkpoint
           ? { start_chapter: view.checkpoint.start_chapter, end_chapter: view.checkpoint.end_chapter }
           : null,
+      });
+    } catch (error) {
+      return rpcFail(error instanceof Error ? error.message : String(error));
+    }
+  },
+
+  async booksList(payload: BooksListPayload): Promise<RpcResult<BooksListValue>> {
+    if (!novelcraft?.ui) return rpcOk({ bound: null, books: [] });
+    try {
+      const binding = typeof payload.sessionId === 'string' && payload.sessionId.length > 0
+        ? await novelcraft.vaults.resolve(payload.sessionId)
+        : undefined;
+      return rpcOk({
+        bound: binding ? { book: binding.book } : null,
+        // Root is an implementation detail and is deliberately not projected to the browser.
+        books: novelcraft.ui.read.bookList(binding?.root).map(({ book, title, current }) => ({ book, title, current })),
       });
     } catch (error) {
       return rpcFail(error instanceof Error ? error.message : String(error));
