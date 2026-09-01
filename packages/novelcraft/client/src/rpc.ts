@@ -837,10 +837,11 @@ export function createNovelcraftHandlers(ctx: Context) {
             message: live.efforts.length > 0 ? '' : '当前模型未公开可选思考等级',
           };
         } catch (err) {
+          void err;
           reasoning = {
             status: 'unavailable', provider: route.provider, model: route.model,
             selected: null, adapter_default: null, options: [],
-            message: err instanceof Error ? err.message : String(err),
+            message: '思考等级暂时无法读取，请稍后刷新。',
           };
         }
       }
@@ -1113,7 +1114,8 @@ export function createNovelcraftHandlers(ctx: Context) {
           : null,
       });
     } catch (error) {
-      return rpcFail(error instanceof Error ? error.message : String(error));
+      void error;
+      return rpcFail('工作流记录无法安全读取，请检查当前书的运行目录后刷新。');
     }
   },
 
@@ -1129,7 +1131,8 @@ export function createNovelcraftHandlers(ctx: Context) {
         books: novelcraft.ui.read.bookList(binding?.root).map(({ book, title, current }) => ({ book, title, current })),
       });
     } catch (error) {
-      return rpcFail(error instanceof Error ? error.message : String(error));
+      void error;
+      return rpcFail('书库暂时无法安全读取，请检查书库目录后刷新。');
     }
   },
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -171,6 +171,28 @@ describe("auditable writing context (P0-W1)", () => {
     await expect(proposeNextChapterAuditable(second, root, 1, now)).rejects.toMatchObject({ code: "CONFLICT" });
     expect(second.calls).toEqual([]);
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("provider 期间仅 warnings 漂移也拒绝落盘(RV-11)", async () => {
+    const root = makeRoot();
+    rebuildRagIndex(root, [], new Date("2026-09-01T00:00:00.000Z"));
+    const base = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] });
+    const racing: Provider = {
+      async complete(request) {
+        const response = await base.complete(request);
+        unlinkSync(join(root, ".assistant", "rag-index.json"));
+        return response;
+      },
+    };
+
+    await expect(proposeNextChapterAuditable(
+      racing,
+      root,
+      1,
+      new Date("2026-09-01T00:00:00.000Z"),
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    const proposals = join(root, ".assistant", "proposals");
+    expect(existsSync(proposals) ? readdirSync(proposals).filter((name) => name.startsWith("next-001-")) : []).toEqual([]);
   });
 });
 

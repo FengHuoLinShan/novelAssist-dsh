@@ -729,6 +729,25 @@ describe('novelcraft RPC 处理器', () => {
     env.cleanup();
   });
 
+  it('presets/list: reasoning 查询异常不向浏览器泄露宿主内部消息(RV-03)', async () => {
+    const base = makeHostUi();
+    const env = setup({ service: { ui: {
+      ...base,
+      config: {
+        ...base.config,
+        reasoningOptions: async () => { throw new Error('adapter secret internal detail'); },
+      },
+    } } });
+    const result = await createNovelcraftHandlers(env.ctx).presetsList({ sessionId: 's1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.reasoning?.status).toBe('unavailable');
+      expect(result.value.reasoning?.message).toBe('思考等级暂时无法读取，请稍后刷新。');
+      expect(JSON.stringify(result.value)).not.toContain('adapter secret internal detail');
+    }
+    env.cleanup();
+  });
+
   it('presets/select: 写入只动 preset 键(先写 model 键再 select, model 原样保留)', async () => {
     const env = setup();
     const { writeFileSync, readFileSync, mkdirSync } = await import('node:fs');

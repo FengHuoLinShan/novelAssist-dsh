@@ -1,7 +1,7 @@
 // rag · 片段资产与可重建索引(R5, small-modules §3; D16 嵌入后端可插拔)。
 // chunk 是派生索引可重建(R12); 文件是唯一真相。
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { paths } from "@novelcraft/vault";
+import { assertNoSymlinkOnPath, guardPath, paths } from "@novelcraft/vault";
 
 export const RAG_SOURCE_TYPES = ["chapter_text", "world_entity", "character", "memory", "outline"] as const;
 export type RagSourceType = (typeof RAG_SOURCE_TYPES)[number];
@@ -109,10 +109,26 @@ export interface RagIndexFile {
   embedding_dimension?: number;
 }
 
-export function rebuildRagIndex(root: string, chunks: RagChunk[], now: Date = new Date()): RagIndexFile {
-  const index: RagIndexFile = { rebuilt_at: now.toISOString(), chunks };
+function ragIndexFile(root: string): string {
+  const file = guardPath(root, `${paths(root).assistant.dir}/rag-index.json`);
+  assertNoSymlinkOnPath(root, file);
+  return file;
+}
+
+export function rebuildRagIndex(
+  root: string,
+  chunks: RagChunk[],
+  now: Date = new Date(),
+  metadata: Pick<RagIndexFile, "embedding_model" | "embedding_dimension"> = {},
+): RagIndexFile {
+  const index: RagIndexFile = {
+    rebuilt_at: now.toISOString(),
+    chunks,
+    ...(metadata.embedding_model !== undefined ? { embedding_model: metadata.embedding_model } : {}),
+    ...(metadata.embedding_dimension !== undefined ? { embedding_dimension: metadata.embedding_dimension } : {}),
+  };
   writeFileSync(
-    `${paths(root).assistant.dir}/rag-index.json`,
+    ragIndexFile(root),
     JSON.stringify(index, null, 2) + "\n",
     "utf8",
   );
@@ -120,7 +136,7 @@ export function rebuildRagIndex(root: string, chunks: RagChunk[], now: Date = ne
 }
 
 export function readRagIndex(root: string): RagIndexFile | undefined {
-  const file = `${paths(root).assistant.dir}/rag-index.json`;
+  const file = ragIndexFile(root);
   if (!existsSync(file)) return undefined;
   return JSON.parse(readFileSync(file, "utf8")) as RagIndexFile;
 }

@@ -3,7 +3,7 @@
 // 断言 §15 不变量: 顺序 / 审批 / checkpoint / 分片 / 降级 / 授权。
 // 注释引用规则/裁定编号(沿用 phase1.test.ts 约定)。
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -213,6 +213,36 @@ describe("runDeepImport · 顺序(§15: begin_import 先于 stage_candidates 先
     // 2b 无独立审批请求(approval 仅 commit_scenes 一次)
     const approves = recorder.eventsOf("approval") as ApprovalEvent[];
     expect(approves.map((e) => e.action)).toEqual(["commit_scenes"]);
+  });
+
+  it("legacy Phase 3 显式来源遇 symlink 时 provider 前 fail-closed(RV-08)", async () => {
+    const root = makeRoot(1);
+    const outside = mkdtempSync(join(tmpdir(), "ncitc-outside-"));
+    dirs.push(outside);
+    const external = join(outside, "scene.md");
+    writeFileSync(external, "EXTERNAL", "utf8");
+    const base = new MockProvider({ retryable: false, responses: happyResponses(1) });
+    let calls = 0;
+    const racing: Provider = {
+      async complete(request) {
+        const response = await base.complete(request);
+        calls += 1;
+        if (calls === 4) {
+          const scene = join(root, "scenes", "s001.md");
+          rmSync(scene);
+          symlinkSync(external, scene);
+        }
+        return response;
+      },
+    };
+
+    await expect(runDeepImport(
+      root,
+      planImport(root, { startChapter: 1, endChapter: 1, confirmed: true }),
+      runtime(1, new MockApproval({ decisions: ["allowed-once"] }), { provider: racing }),
+    )).rejects.toThrow(/symlink/i);
+    expect(base.calls).toHaveLength(4);
+    expect(readFileSync(external, "utf8")).toBe("EXTERNAL");
   });
 });
 

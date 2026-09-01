@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
 import { StoreError, gitAdd, gitCommit, gitStatusEntries, relOf, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
-import { analyzeOutline, generateOutlineItem, generateStoryOutline, listOutlinePreviews, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
+import { analyzeOutline, buildOutlineSelectedContext, generateOutlineItem, generateStoryOutline, listOutlinePreviews, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -174,6 +174,17 @@ describe("写链 gitAdd 精确 pathspec(不 -A, 保留无关 staged/unstaged)", 
 });
 
 describe("结构创作编排(catalog §2)", () => {
+  it("selected outline target 进入预算内 P0 与 context_hash(RV-05)", () => {
+    const root = makeRoot();
+    const selection = { instruction: "根据已确认资料生成结构资产", budget_tokens: 200 };
+    const thread = buildOutlineSelectedContext(root, "outline_item", selection, "plot_thread");
+    const arc = buildOutlineSelectedContext(root, "outline_item", selection, "outline_arc");
+    expect(thread.rendered_text).toContain("【target: plot_thread】");
+    expect(arc.rendered_text).toContain("【target: outline_arc】");
+    expect(thread.context_hash).not.toBe(arc.context_hash);
+    expect(thread.total_tokens).toBeLessThanOrEqual(thread.budget_tokens);
+  });
+
   it("总纲生成落 outline.md", async () => {
     const root = makeRoot();
     const provider = new MockProvider({

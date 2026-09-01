@@ -242,6 +242,28 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
     journal.push({ ...entry, promptHash: sysHash, schemaInjection: composed.schemaInjection });
   };
   let lastUsage: Usage = { inputTokens: estimatedInput, outputTokens: 0 };
+  let sawUsage = false;
+  const addUsage = (usage: Usage | undefined): void => {
+    if (usage === undefined) return;
+    if (!sawUsage) {
+      lastUsage = { inputTokens: 0, outputTokens: 0 };
+      sawUsage = true;
+    }
+    const optional = (key: "cacheReadTokens" | "cacheWriteTokens" | "reasoningTokens"): number | undefined =>
+      lastUsage[key] === undefined && usage[key] === undefined
+        ? undefined
+        : (lastUsage[key] ?? 0) + (usage[key] ?? 0);
+    const cacheReadTokens = optional("cacheReadTokens");
+    const cacheWriteTokens = optional("cacheWriteTokens");
+    const reasoningTokens = optional("reasoningTokens");
+    lastUsage = {
+      inputTokens: lastUsage.inputTokens + usage.inputTokens,
+      outputTokens: lastUsage.outputTokens + usage.outputTokens,
+      ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+      ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    };
+  };
   // 跟踪最后一次失败类型: 尝试耗尽时按此分类(schema 耗尽 → schema_violation;
   // retryable provider 耗尽 → provider_retryable + 最后 message)
   let lastFailure: { kind: "schema_violation" | "provider_retryable"; message: string } | undefined;
@@ -300,7 +322,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
         return fail(spec, req, "timeout", "timeout", journal, lastUsage, fingerprint, latestEffective);
       }
       const resp = outcome.value;
-      lastUsage = resp.usage ?? lastUsage;
+      addUsage(resp.usage);
       if (resp.callReceipt !== undefined) {
         latestEffective = withCallReceipt(effective, resp.callReceipt);
       }
@@ -394,7 +416,7 @@ export async function runStep(provider: Provider, req: StepRequest, options?: Ru
       const thrown = (err ?? {}) as ThrownProviderFacts;
       const errorReceipt = thrown.callReceipt;
       if (errorReceipt !== undefined) latestEffective = withCallReceipt(effective, errorReceipt);
-      if (thrown.usage !== undefined) lastUsage = thrown.usage;
+      addUsage(thrown.usage);
       const errorReceiptFields = {
         ...(thrown.usage !== undefined ? { usage: thrown.usage } : {}),
         ...(thrown.finishReason !== undefined ? { finishReason: thrown.finishReason } : {}),

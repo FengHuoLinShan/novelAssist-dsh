@@ -27,6 +27,7 @@ export interface FakeLlmResponse {
   finishKind?: 'stop' | 'tool-calls' | 'max-tokens' | 'error' | 'aborted';
   failure?: { code: string; message: string };
   reasoningDeltas?: string[];
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
   omitFinish?: boolean;
 }
 
@@ -55,6 +56,12 @@ export class FakeAdapter extends LlmAdapter {
     }
     for (const text of next.reasoningDeltas ?? []) {
       yield { type: 'reasoning-delta', index: 1, text };
+    }
+    for (const [index, call] of (next.toolCalls ?? []).entries()) {
+      yield {
+        type: 'tool-call-delta', index: index + 2, id: call.id as never,
+        name: call.name, argumentsDelta: call.arguments,
+      };
     }
     if (next.usage) {
       yield { type: 'usage', usage: next.usage };

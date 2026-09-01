@@ -1,5 +1,5 @@
 // rag 行为契约(small-modules §3 + D16 + R12)
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -47,6 +47,18 @@ describe("rebuildRagIndex / readRagIndex(R12 可重建)", () => {
     const a = chunkChapterText("A 段。\n\nB 段。", { chapterIndex: 1, contentHash: "h" });
     const b = chunkChapterText("A 段。\n\nB 段。", { chapterIndex: 1, contentHash: "h" });
     expect(a.map((c) => c.chunk_id)).toEqual(b.map((c) => c.chunk_id));
+  });
+  it("rag-index symlink 读写均 fail-closed，Vault 外文件不变(RV-10)", () => {
+    const root = makeRoot();
+    const outside = mkdtempSync(join(tmpdir(), "ncr-outside-"));
+    dirs.push(outside);
+    const sentinel = join(outside, "sentinel.json");
+    writeFileSync(sentinel, "OUTSIDE", "utf8");
+    symlinkSync(sentinel, join(root, ".assistant", "rag-index.json"));
+
+    expect(() => readRagIndex(root)).toThrow(/symlink/i);
+    expect(() => rebuildRagIndex(root, [])).toThrow(/symlink/i);
+    expect(readFileSync(sentinel, "utf8")).toBe("OUTSIDE");
   });
 });
 

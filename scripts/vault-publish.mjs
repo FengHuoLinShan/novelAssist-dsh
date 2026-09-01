@@ -37,9 +37,19 @@ const fail = (code, message) => { throw new PublishError(code, message); };
 
 function xml(value) {
   return String(value)
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '')
     .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+}
+
+const GIT_ENV_KEYS = ['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'SystemRoot', 'TMPDIR', 'TEMP', 'TMP'];
+function gitEnv() {
+  const env = {
+    LC_ALL: 'C', LANG: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+  };
+  for (const key of GIT_ENV_KEYS) if (process.env[key] !== undefined) env[key] = process.env[key];
+  return env;
 }
 
 function scanLine(text, start) {
@@ -68,7 +78,9 @@ function parseFrontmatter(raw, file) {
 
 function git(root, args) {
   try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', ['-C', root, ...args], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv(),
+    }).trim();
   } catch (error) {
     fail('GIT_UNAVAILABLE', `git 读取失败: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -77,7 +89,9 @@ function git(root, args) {
 function assertHeadFile(root, rel, currentSha256) {
   let committed;
   try {
-    committed = execFileSync('git', ['-C', root, 'show', `HEAD:${rel}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    committed = execFileSync('git', ['-C', root, 'show', `HEAD:${rel}`], {
+      stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv(),
+    });
   } catch {
     fail('DIRTY_SOURCE', `${rel} 未被当前 HEAD 跟踪，不能发布`);
   }
@@ -282,7 +296,7 @@ function zipNames(bytes) {
 
 function writeFailure(destination, source, error) {
   const file = `${destination}.failure.json`;
-  if (existsSync(file)) return;
+  if (lstatSync(file, { throwIfNoEntry: false }) !== undefined) return;
   try {
     writeFileSync(file, `${JSON.stringify({
       schema: SCHEMA,
@@ -310,10 +324,12 @@ export function publishVault(vaultPath, destinationPath) {
   if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
     fail('INVALID_TARGET', '目标不得位于源 vault 内部');
   }
+  if (lstatSync(destination, { throwIfNoEntry: false }) !== undefined) fail('TARGET_EXISTS', `目标已存在，拒绝覆盖: ${destination}`);
+  if (lstatSync(`${destination}.failure.json`, { throwIfNoEntry: false }) !== undefined) {
+    fail('FAILURE_RECEIPT_EXISTS', '旧失败回执存在，请先审阅并归档');
+  }
   let temporary;
   try {
-    if (existsSync(destination)) fail('TARGET_EXISTS', `目标已存在，拒绝覆盖: ${destination}`);
-    if (existsSync(`${destination}.failure.json`)) fail('FAILURE_RECEIPT_EXISTS', '旧失败回执存在，请先审阅并归档');
     const before = sourceSnapshot(source);
     temporary = path.join(parent, `.${path.basename(destination)}.novelcraft-publish-${randomUUID()}`);
     mkdirSync(temporary);
@@ -377,11 +393,16 @@ function selfTest(keep) {
     if (docx.readUInt32LE(0) !== 0x04034b50 || !zipNames(docx).includes('word/document.xml')) fail('SELF_TEST', 'DOCX 不是有效 OOXML ZIP');
     const manifest = JSON.parse(readFileSync(result.manifest, 'utf8'));
     if (manifest.source.chapters.length !== 2 || manifest.resource_count !== 1 || manifest.artifact.sha256 !== sha256(docx)) fail('SELF_TEST', '发布 manifest 不闭合');
+    const existing = path.join(root, 'existing-bundle');
+    mkdirSync(existing);
+    let rejected = false;
+    try { publishVault(vault, existing); } catch (error) { rejected = error instanceof PublishError && error.code === 'TARGET_EXISTS'; }
+    if (!rejected || existsSync(`${existing}.failure.json`)) fail('SELF_TEST', '目标已存在的 preflight 不应写失败回执');
     const nestedParent = path.join(vault, 'exports');
     const nestedLink = path.join(root, 'nested-link');
     mkdirSync(nestedParent);
     symlinkSync(nestedParent, nestedLink, 'dir');
-    let rejected = false;
+    rejected = false;
     try { publishVault(vault, path.join(nestedLink, 'nested-bundle')); } catch (error) { rejected = error instanceof PublishError && error.code === 'INVALID_TARGET'; }
     if (!rejected || existsSync(path.join(nestedParent, 'nested-bundle')) || existsSync(path.join(nestedParent, 'nested-bundle.failure.json'))) {
       fail('SELF_TEST', '未拒绝经 symlink 落入源 vault 的发布目标');

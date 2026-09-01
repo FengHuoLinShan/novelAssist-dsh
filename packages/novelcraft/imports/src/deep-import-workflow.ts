@@ -29,6 +29,7 @@ import {
   probeTxCommitForTargets,
   recoverInterruptedTransactions,
   sha256Hex,
+  StoreError,
   type TargetSpec,
   type TransactionOptions,
 } from "@novelcraft/store";
@@ -611,7 +612,11 @@ function makeGenerator(ctx: DriverContext): RunGeneratorPort {
           const reused: Array<{ name: string; target: string }> = [];
           let uncertain = 0;
           for (const batch of chunk(created, ctx.policy.phase2BatchSize)) {
-            const r = await planEntityBatch(ctx.provider, ctx.root, batch, { workflowId: input.workflowId, budget: ctx.budget });
+            const r = await planEntityBatch(ctx.provider, ctx.root, batch, {
+              workflowId: input.workflowId,
+              budget: ctx.budget,
+              serialStart: createdOut.length,
+            });
             files.push(...r.files);
             createdOut.push(...r.created);
             reused.push(...r.reused);
@@ -817,15 +822,18 @@ function makeApplyPort(ctx: DriverContext): RunApplyPort {
 
 // —— 事务化 materialize(候选/draft 写面; 非 adopt, 不经审批) ——
 
-/** 计划文件 → writeSet(expected = 当前工作树状态, 幂等: 已存在且字节相同则剔除)。 */
+/** 计划文件 → writeSet(仅允许创建或字节相同的幂等跳过，绝不覆盖现存资产)。 */
 function plannedFilesToWriteSet(ctx: DriverContext, files: ReadonlyArray<{ relativePath: string; bytes: string }>): TargetSpec[] {
   const writeSet: TargetSpec[] = [];
   for (const f of files) {
     const current = readFileIfExists(path.join(ctx.root, f.relativePath));
     if (current !== undefined && bytesToUtf8(current) === f.bytes) continue; // 幂等命中
+    if (current !== undefined) {
+      throw new StoreError("CONFLICT", `深度导入目标已存在且内容不同，拒绝覆盖: ${f.relativePath}`);
+    }
     writeSet.push({
       path: f.relativePath,
-      expected: current === undefined ? { absent: true, sha256: "" } : { absent: false, sha256: sha256Hex(current) },
+      expected: { absent: true, sha256: "" },
       output: f.bytes,
     });
   }

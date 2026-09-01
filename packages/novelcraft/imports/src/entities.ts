@@ -76,7 +76,7 @@ export async function planEntityBatch(
   provider: Provider,
   root: string,
   sceneSlugs: string[],
-  opts: { workflowId?: string; minReuseConfidence?: number; budget?: WorkflowBudget } = {},
+  opts: { workflowId?: string; minReuseConfidence?: number; budget?: WorkflowBudget; serialStart?: number } = {},
 ): Promise<EntityPlanResult> {
   // R17: 写前范围外脏工作区拒绝(imports 自身工件除外), 先于任何 LLM 调用。
   assertImportWorkspaceClean(root);
@@ -124,7 +124,7 @@ export async function planEntityBatch(
   const unique = dedupeByEntityKey(drafts); // R21
   const created: string[] = [];
   const reused: EntityBatchResult["reused"] = [];
-  let serial = 0;
+  let serial = opts.serialStart ?? 0;
   const files: EntityPlannedFile[] = [];
 
   for (const d of unique) {
@@ -166,7 +166,7 @@ export async function extractEntityBatch(
   provider: Provider,
   root: string,
   sceneSlugs: string[],
-  opts: { workflowId?: string; minReuseConfidence?: number; budget?: WorkflowBudget } = {},
+  opts: { workflowId?: string; minReuseConfidence?: number; budget?: WorkflowBudget; serialStart?: number } = {},
 ): Promise<EntityBatchResult> {
   const plan = await planEntityBatch(provider, root, sceneSlugs, opts);
   const created: string[] = [];

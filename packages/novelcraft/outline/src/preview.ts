@@ -79,11 +79,14 @@ export function buildOutlineSelectedContext(
   root: string,
   task: "story_outline" | "outline_item",
   selection: OutlineContextSelection,
+  target?: "plot_thread" | "outline_arc",
 ) {
   return compileSelectedVaultContext(root, {
     task: task === "story_outline" ? "生成小说总纲 preview" : "生成 P20 结构资产 preview",
     scope: task === "story_outline" ? "project" : "arc",
-    selection,
+    selection: task === "outline_item" && target !== undefined
+      ? { ...selection, instruction: `【target: ${target}】\n${selection.instruction}` }
+      : selection,
     classify: outlineSourceRule,
   });
 }
@@ -303,18 +306,17 @@ export async function previewOutlineItemSelected(
   now: Date = new Date(),
 ): Promise<{ ok: true; file: string; record: OutlinePreviewRecord } | { ok: false; error: StepResult["error"] }> {
   registerOutlineSpecs();
-  const context = buildOutlineSelectedContext(root, "outline_item", selection);
-  const input = `【target: ${target}】\n${context.rendered_text}`;
-  const r = await runStep(provider, { specRef: "outline_generate", input });
+  const context = buildOutlineSelectedContext(root, "outline_item", selection, target);
+  const r = await runStep(provider, { specRef: "outline_generate", input: context.rendered_text });
   if (!r.ok) return { ok: false, error: r.error };
-  const current = buildOutlineSelectedContext(root, "outline_item", selection);
+  const current = buildOutlineSelectedContext(root, "outline_item", selection, target);
   if (current.context_hash !== context.context_hash) throw new Error("outline item selected context 在 provider 调用期间漂移");
   const record: OutlinePreviewRecord = {
     kind: "outline_item",
     target,
     run_id: runIdOf(now),
     generated_at: now.toISOString(),
-    input_hash: inputHash(input),
+    input_hash: inputHash(context.rendered_text),
     result: r.result as Record<string, unknown>,
     context_receipt: receiptOf(context),
     ...(r.promptFingerprint !== undefined

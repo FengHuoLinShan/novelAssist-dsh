@@ -1,6 +1,6 @@
 // syncRagIndex 行为契约(M6 Track A1, L0 增量索引同步)。
 // 风格同 rag.test.ts: mkdtemp + initVault + afterEach 清理。
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -126,6 +126,20 @@ describe("syncRagIndex(增量)", () => {
     // 未变化的 object chunk 同样保留字段。
     const objAfter = after.chunks.find((c) => c.chunk_id === "obj-o1")!;
     expect(objAfter.text).toBe("对象正文。");
+  });
+
+  it("事件同步保留索引级 embedding 身份元数据(RV-15)", () => {
+    const root = makeRoot();
+    writeChapter(root, 1, "正文。");
+    syncRagIndex(root, NOW);
+    const file = join(root, ".assistant", "rag-index.json");
+    const seeded = JSON.parse(readFileSync(file, "utf8"));
+    seeded.embedding_model = "test-embed";
+    seeded.embedding_dimension = 3;
+    writeFileSync(file, JSON.stringify(seeded, null, 2) + "\n", "utf8");
+
+    syncRagIndex(root, NOW);
+    expect(readRagIndex(root)).toMatchObject({ embedding_model: "test-embed", embedding_dimension: 3 });
   });
 
   it("删章 → 其 chunk 移除(removed)", () => {

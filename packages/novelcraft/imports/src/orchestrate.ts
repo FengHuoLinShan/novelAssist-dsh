@@ -15,8 +15,9 @@
 // - provider 失败触发对应降级事件(R52–R55);
 // - runtime.trace 为可注入 sink(测试注入 TraceRecorder; 缺省也落 TraceRecorder 供检查)。
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { assertNoSymlinkOnPath, guardPath } from "@novelcraft/vault";
 import { DEGRADATION_CLAUSE, TraceRecorder, loadPolicyDefaults } from "@novelcraft/trace";
 import type { ApprovalDecision, DeepImportPolicy, TraceEventInput, TraceSink } from "@novelcraft/trace";
 import type { Provider, ProviderRequest, WorkflowBudget } from "@novelcraft/llm-step";
@@ -28,7 +29,7 @@ import { commitScenesTx } from "./commit.js";
 import { extractEntityBatch } from "./entities.js";
 import { applyAliasRelationChangesTx, planAliasRelationChanges, proposeAliasRelations } from "./alias-relation.js";
 import type { AliasRelationProposal } from "./alias-relation.js";
-import { analyzeStructureWithSources, type StructureContextReceipt, type StructureSourceFile } from "./structure.js";
+import { analyzeStructureWithSources, StructureContextError, type StructureContextReceipt, type StructureSourceFile } from "./structure.js";
 import { commitImportState } from "./workspace.js";
 
 /** runDeepImport 的可注入运行时(provider/审批/trace sink/策略)。 */
@@ -114,7 +115,11 @@ function chunk<T>(arr: T[], size: number): T[][] {
 function readExplicitFiles(root: string, prefix: string, slugs: readonly string[]): StructureSourceFile[] {
   return slugs.map((slug) => {
     const relativePath = `${prefix}/${slug}.md`;
-    return { relativePath, bytes: readFileSync(path.join(root, relativePath), "utf8") };
+    const file = guardPath(root, path.join(root, relativePath));
+    assertNoSymlinkOnPath(root, file);
+    if (!existsSync(file)) throw new StructureContextError("SOURCE_MISSING", `结构来源缺失: ${relativePath}`);
+    if (!lstatSync(file).isFile()) throw new StructureContextError("INVALID_SOURCE", `结构来源不是普通文件: ${relativePath}`);
+    return { relativePath, bytes: readFileSync(file, "utf8") };
   });
 }
 
@@ -342,7 +347,11 @@ export async function runDeepImport(
 
     // --- Phase 2a: entities(按 phase2 batch 12 分片) ---
     for (const batch of chunk(result.committed, policy.phase2BatchSize)) {
-      const r = await extractEntityBatch(provider, root, batch, { workflowId, budget: runtime.budget });
+      const r = await extractEntityBatch(provider, root, batch, {
+        workflowId,
+        budget: runtime.budget,
+        serialStart: result.entities.created.length,
+      });
       result.entities.created.push(...r.created);
       result.entities.reused.push(...r.reused);
       result.entities.uncertain += r.uncertain;

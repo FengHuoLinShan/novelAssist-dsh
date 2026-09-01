@@ -8,7 +8,7 @@ import { capReceipt, llmError, requireRoot } from './shared.js';
 
 const selectedContextParameters = {
   source_refs: { type: 'array' as const, description: '显式选择的 vault 相对来源路径；不传则只用作者任务' },
-  include_working_drafts: { type: 'boolean' as const, description: '显式允许所选 draft/candidate；默认 false' },
+  include_working_drafts: { type: 'boolean' as const, description: '仅当作者本轮明确要求时允许所选 draft/candidate；默认 false' },
   context_budget_tokens: { type: 'integer' as const, description: '本次 auditable context 估算预算' },
 };
 

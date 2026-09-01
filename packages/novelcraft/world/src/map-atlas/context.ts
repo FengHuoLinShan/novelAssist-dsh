@@ -271,7 +271,7 @@ export async function compileAtlasContext(
   const packets: AtlasContextPacket[] = [];
   const sourceByKey = new Map<string, { fullText: string; ref: SourceRef }>();
   const includedByKey = new Map<string, string>();
-  const locationSourceHashes: Record<string, string[]> = {};
+  const locationSourceHashMap = new Map<string, string[]>();
 
   for (const loc of selected) {
     const nameKeys = [loc.name, ...loc.aliases].filter(Boolean);
@@ -353,10 +353,11 @@ export async function compileAtlasContext(
     packet.wiki = packet.wiki.map(normalize);
     packet.rag = packet.rag.map(normalize);
     packet.source_keys = [...packet.wiki, ...packet.rag].map((item) => item.source_key);
-    locationSourceHashes[packet.location_key] = [...packet.wiki, ...packet.rag]
+    locationSourceHashMap.set(packet.location_key, [...packet.wiki, ...packet.rag]
       .map((item) => sha256Hex(`${item.source_key}\n${item.text}`).slice(0, 16))
-      .sort();
+      .sort());
   }
+  const locationSourceHashes = Object.fromEntries(locationSourceHashMap);
 
   const manifest: SourceRef[] = [...sourceByKey.entries()].map(([key, source]) => {
     const included = includedByKey.get(key);

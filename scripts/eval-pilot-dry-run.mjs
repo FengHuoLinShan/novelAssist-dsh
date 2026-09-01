@@ -118,6 +118,7 @@ function validateFixtures(document) {
 function validateAuthorization(auth, fixtureIds) {
   const issues = [];
   if (!auth || typeof auth !== 'object') return ['authorization_manifest_missing'];
+  if (auth.version !== '1.0.0') issues.push('version_must_equal_1_0_0');
   const strings = [
     'model',
     'effort',
@@ -199,6 +200,15 @@ export async function buildDryRun(authorizationPath) {
       provided: authorization !== undefined,
       valid: authorizationIssues.length === 0,
       issues: authorizationIssues,
+      ...(authorization !== undefined ? {
+        manifest: {
+          version: authorization.version,
+          model: authorization.model,
+          effort: authorization.effort,
+          seed: authorization.seed,
+          rolling_alias: authorization.rolling_alias,
+        },
+      } : {}),
     },
     limits: {
       logical_calls: 36,
@@ -239,11 +249,15 @@ if (invokedDirectly) {
       fail('此 runner 只支持 dry-run；真实付费执行尚未获用户费用/数据授权，且必须另接 DSH ctx.llm');
     }
     const report = await buildDryRun(args.authorization);
+    if (args.authorization && !report.authorization.valid) {
+      fail(`授权清单无效: ${report.authorization.issues.join(', ')}`);
+    }
     if (args.selfTest) {
-      if (report.provider_calls !== 0 || report.limits.logical_calls !== 36 || report.calls.length !== 36) {
+      if (report.provider_calls !== 0 || report.limits.logical_calls !== 36 || report.calls.length !== 36 ||
+          report.authorization.valid || !report.authorization.issues.includes('authorization_manifest_missing')) {
         fail('self-test 断言失败');
       }
-      process.stdout.write(`${JSON.stringify({ self_test: 'ok', provider_calls: 0, logical_calls: 36 })}\n`);
+      process.stdout.write(`${JSON.stringify({ self_test: 'ok', provider_calls: 0, logical_calls: 36, authorization_gate: 'ok' })}\n`);
     } else {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     }

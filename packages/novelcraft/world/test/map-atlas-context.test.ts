@@ -293,6 +293,18 @@ describe("compileAtlasContext 预算与确定性(计划 §4 Phase 2 预算; 规�
     );
   });
 
+  it("__proto__ 地点的证据 hash 被保留并参与 context_hash(RV-04)", async () => {
+    const root = makeRoot();
+    writeObject(root, { id: "__proto__", name: "原型城" });
+    writeBiblePage(root, { slug: "bp-proto", title: "原型城志" }, "旧证据");
+    const first = await compileAtlasContext(root);
+    expect(Object.hasOwn(first.location_source_hashes, "__proto__")).toBe(true);
+
+    writeBiblePage(root, { slug: "bp-proto", title: "原型城志" }, "新证据");
+    const changed = await compileAtlasContext(root);
+    expect(changed.context_hash).not.toBe(first.context_hash);
+  });
+
   it("同一 source 跨地点只有一条无歧义 manifest，context_hash 覆盖实际 packet", async () => {
     const root = makeRoot();
     writeObject(root, { id: "loc-a", name: "甲城", importance: 10 });

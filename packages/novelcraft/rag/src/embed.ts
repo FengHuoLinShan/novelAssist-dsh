@@ -9,8 +9,6 @@
 // - 有任一 succeeded 时索引文件 embedding_model=backend.name;
 // - skipped = 有 vector 或 status='skipped' 的现存 chunk 数(口径注释: 这些不在本次目标内)。
 // cosineSimilarity — 余弦相似度(长度不等 → 0 防御; 空数组 → 0)。
-import { writeFileSync } from "node:fs";
-import { paths } from "@novelcraft/vault";
 import {
   readRagIndex,
   rebuildRagIndex,
@@ -41,14 +39,10 @@ function persistIndex(
     rebuildRagIndex(root, chunks);
     return;
   }
-  const file = `${paths(root).assistant.dir}/rag-index.json`;
-  const index = {
-    rebuilt_at: new Date().toISOString(),
-    chunks,
+  rebuildRagIndex(root, chunks, new Date(), {
     embedding_model: embeddingModel,
     ...(embeddingDimension !== undefined ? { embedding_dimension: embeddingDimension } : {}),
-  };
-  writeFileSync(file, JSON.stringify(index, null, 2) + "\n", "utf8");
+  });
 }
 
 export function validateVector(

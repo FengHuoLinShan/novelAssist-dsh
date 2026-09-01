@@ -59,7 +59,7 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         input: { type: 'string', required: true, description: '生成输入(当前设定摘要/方向要求等上下文)' },
         source_refs: { type: 'array', description: '显式选择的 vault 相对来源路径；不传则只用作者任务' },
-        include_working_drafts: { type: 'boolean', description: '显式允许所选 draft/candidate；默认 false' },
+        include_working_drafts: { type: 'boolean', description: '仅当作者本轮明确要求时允许所选 draft/candidate；默认 false' },
         context_budget_tokens: { type: 'integer', description: '本次 auditable context 估算预算' },
       },
       output: {
@@ -117,7 +117,7 @@ export function buildOutlineTools(ctx: Context, service: NovelCraftService): Too
         target: { type: 'string', required: true, description: "'plot_thread' | 'outline_arc'" },
         input: { type: 'string', required: true, description: '生成输入(当前层上下文/要求)' },
         source_refs: { type: 'array', description: '显式选择的 vault 相对来源路径；不传则只用作者任务' },
-        include_working_drafts: { type: 'boolean', description: '显式允许所选 draft/candidate；默认 false' },
+        include_working_drafts: { type: 'boolean', description: '仅当作者本轮明确要求时允许所选 draft/candidate；默认 false' },
         context_budget_tokens: { type: 'integer', description: '本次 auditable context 估算预算' },
       },
       output: {

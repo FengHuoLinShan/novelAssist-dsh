@@ -169,6 +169,21 @@ describe('DshProvider', () => {
     expect(JSON.stringify(responses)).not.toContain('hidden');
   });
 
+  it('finish=stop 但实际含 tool-call block 时仍拒绝为 unexpected_tool_calls(RV-14)', async () => {
+    h.adapter.enqueue({
+      deltas: ['visible'],
+      toolCalls: [{ id: 'call-1', name: 'forbidden', arguments: '{}' }],
+      finishKind: 'stop',
+    });
+    const response = await new DshProvider({ ctx: h.ctx, provider: 'fake', model: 'm' })
+      .complete({ messages: [{ role: 'user', content: 'x' }] });
+    expect(response).toMatchObject({
+      finishReason: 'stop',
+      textStatus: 'present',
+      providerOutcome: 'unexpected_tool_calls',
+    });
+  });
+
   it('usage 保留互不重叠的 cache/reasoning buckets，不重复计入 output', async () => {
     h.adapter.enqueue({
       deltas: ['ok'],

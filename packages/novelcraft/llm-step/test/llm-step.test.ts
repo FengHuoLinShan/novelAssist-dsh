@@ -122,6 +122,22 @@ describe("runStep(主流程, 设计文档 §12 契约)", () => {
     expect(r.journal[0].errorKind).toBe("schema_violation");
   });
 
+  it("repair 多次物理调用的 usage 在顶层累计(RV-12)", async () => {
+    const provider = new MockProvider({
+      responses: [
+        { text: "不是 JSON", usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: 3 } },
+        { text: JSON.stringify({ entities: [] }), usage: { inputTokens: 12, outputTokens: 4, cacheReadTokens: 5 } },
+      ],
+    });
+    const result = await runStep(provider, { specRef: "entity_extraction", input: "x" });
+    expect(result.ok).toBe(true);
+    expect(result.usage).toEqual({ inputTokens: 22, outputTokens: 6, cacheReadTokens: 8 });
+    expect(result.journal.map((entry) => entry.usage)).toEqual([
+      { inputTokens: 10, outputTokens: 2, cacheReadTokens: 3 },
+      { inputTokens: 12, outputTokens: 4, cacheReadTokens: 5 },
+    ]);
+  });
+
   it("schema 违例超过修复预算 → schema_violation 失败", async () => {
     const provider = new MockProvider({
       responses: [

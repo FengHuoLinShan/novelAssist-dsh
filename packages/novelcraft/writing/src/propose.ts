@@ -454,14 +454,23 @@ export function frozenProposalById(record: FrozenProposalRecord, proposalId: str
 
 export function assertFrozenProposalCurrent(root: string, record: FrozenProposalRecord): AuditableProposalContext {
   const current = buildAuditableProposalContext(root, record.chapter_index);
-  if (current.base_content_hash !== record.base_content_hash || current.context_hash !== record.context_hash ||
-      current.budget_tokens !== record.context_budget_tokens || current.total_tokens !== record.context_total_tokens ||
-      JSON.stringify(current.source_manifest) !== JSON.stringify(record.source_manifest) ||
-      JSON.stringify(current.omitted_source_ids) !== JSON.stringify(record.omitted_source_ids) ||
-      JSON.stringify(current.warnings) !== JSON.stringify(record.warnings)) {
+  if (!sameProposalContext(current, record)) {
     throw new StoreError("CONFLICT", `提案 ${record.run_id} 的正文或上下文来源已变化；请重新生成提案`);
   }
   return current;
+}
+
+function sameProposalContext(
+  current: AuditableProposalContext,
+  frozen: Pick<FrozenProposalRecord,
+    "base_content_hash" | "context_hash" | "context_budget_tokens" | "context_total_tokens" |
+    "source_manifest" | "omitted_source_ids" | "warnings">,
+): boolean {
+  return current.base_content_hash === frozen.base_content_hash && current.context_hash === frozen.context_hash &&
+    current.budget_tokens === frozen.context_budget_tokens && current.total_tokens === frozen.context_total_tokens &&
+    JSON.stringify(current.source_manifest) === JSON.stringify(frozen.source_manifest) &&
+    JSON.stringify(current.omitted_source_ids) === JSON.stringify(frozen.omitted_source_ids) &&
+    JSON.stringify(current.warnings) === JSON.stringify(frozen.warnings);
 }
 
 /**
@@ -521,7 +530,15 @@ export async function proposeNextChapterAuditable(
     return { ok: false, error: { kind: "schema_violation", message: "提案为空(无 proposals)" } };
   }
   const current = buildAuditableProposalContext(root, chapterIndex);
-  if (current.base_content_hash !== context.base_content_hash || current.context_hash !== context.context_hash) {
+  if (!sameProposalContext(current, {
+    base_content_hash: context.base_content_hash,
+    context_hash: context.context_hash,
+    context_budget_tokens: context.budget_tokens,
+    context_total_tokens: context.total_tokens,
+    source_manifest: context.source_manifest,
+    omitted_source_ids: context.omitted_source_ids,
+    warnings: context.warnings,
+  })) {
     throw new StoreError("CONFLICT", `第 ${chapterIndex} 章或提案上下文在生成期间变化，结果未落盘`);
   }
   const proposals: FrozenChapterProposal[] = rawProposals.map((proposal, index) => ({

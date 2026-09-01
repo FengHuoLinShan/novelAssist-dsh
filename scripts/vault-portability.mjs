@@ -75,8 +75,8 @@ function assertNoCredentialFiles(root, entries) {
     const parts = entry.path.replace(/\/$/, '').split('/');
     const base = parts.at(-1)?.toLowerCase() ?? '';
     return base === '.env' || base.startsWith('.env.') ||
-      ['.git-credentials', '.netrc', '.npmrc', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'].includes(base) ||
-      base === 'credentials.json' || base === 'secrets.json' ||
+      ['.git-credentials', '.netrc', '.npmrc', '.pypirc', '.envrc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'].includes(base) ||
+      ['credentials.json', 'secrets.json', 'client_secret.json', 'auth.json'].includes(base) ||
       /\.(?:key|pem|p12|pfx)$/.test(base) ||
       parts.some((part) => ['credentials', 'secrets', '.aws', '.ssh'].includes(part.toLowerCase()));
   });
@@ -85,7 +85,17 @@ function assertNoCredentialFiles(root, entries) {
     const entry = entries.find((candidate) => candidate.path === rel && candidate.type === 'file');
     if (!entry) continue;
     const text = readFileSync(path.join(root, rel), 'utf8');
-    if (/\bhttps?:\/\/[^\s/@]+(?::[^\s/@]*)?@/i.test(text) || /^\s*extraheader\s*=\s*authorization\s*:/im.test(text)) {
+    const includesConfig = /^\s*include(?:if\.[^=]+)?\.path\s*=/im.test(text) || text.split(/\r?\n/).some((line, index, lines) => {
+      if (!/^\s*path\s*=/i.test(line)) return false;
+      for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+        const section = /^\s*\[([^\]]+)]/.exec(lines[cursor]);
+        if (section) return /^include(?:if\b|$)/i.test(section[1].trim());
+      }
+      return false;
+    });
+    if (/\bhttps?:\/\/[^\s/@]+(?::[^\s/@]*)?@/i.test(text) ||
+        /^\s*(?:[^=\r\n]+\.)?extraheader\s*=\s*authorization\s*:/im.test(text) ||
+        /^\s*(?:credential\.)?helper\s*=.*\b(?:password|token|secret)\s*=/im.test(text) || includesConfig) {
       fail(`${rel} 含内嵌认证信息；请先改用 DSH credentials 或系统 credential helper`);
     }
   }
@@ -116,7 +126,7 @@ export function verifyPortableVault(vaultPath) {
   if (sidecarStat === undefined) fail(`缺少清单: ${sidecar}`);
   if (sidecarStat.isSymbolicLink() || !sidecarStat.isFile()) fail(`清单必须是普通文件: ${sidecar}`);
   const receipt = JSON.parse(readFileSync(sidecar, 'utf8'));
-  if (receipt?.schema !== SCHEMA || !Array.isArray(receipt.entries)) fail(`清单形态非法: ${sidecar}`);
+  if (receipt?.schema !== SCHEMA || !['backup', 'restore'].includes(receipt.mode) || !Array.isArray(receipt.entries)) fail(`清单形态非法: ${sidecar}`);
   if (receipt.manifest_sha256 !== manifestHash(receipt.entries)) fail(`清单自身哈希失配: ${sidecar}`);
   const current = manifest(vault);
   assertVaultShape(vault);
@@ -258,6 +268,22 @@ function selfTest() {
     try { copyPortableVault('backup', source, path.join(root, 'blocked-git-token')); } catch { rejected = true; }
     if (!rejected || existsSync(path.join(root, 'blocked-git-token'))) fail('self-test 未拒绝 Git 配置内嵌凭据');
     writeFileSync(path.join(source, '.git', 'config'), safeGitConfig);
+    for (const [name, unsafe] of [
+      ['dotted-extraheader', `${safeGitConfig}\nhttp.https://example.invalid.extraheader = AUTHORIZATION: basic abc\n`],
+      ['inline-helper', `${safeGitConfig}\ncredential.helper = !f() { echo password=secret; }; f\n`],
+      ['include-path', `${safeGitConfig}\n[include]\n\tpath = auth.cfg\n`],
+    ]) {
+      writeFileSync(path.join(source, '.git', 'config'), unsafe);
+      rejected = false;
+      try { copyPortableVault('backup', source, path.join(root, `blocked-${name}`)); } catch { rejected = true; }
+      if (!rejected || entryExists(path.join(root, `blocked-${name}`))) fail(`self-test 未拒绝 Git 凭据变体 ${name}`);
+    }
+    writeFileSync(path.join(source, '.git', 'config'), safeGitConfig);
+    writeFileSync(path.join(source, 'auth.json'), '{"token":"secret"}\n');
+    rejected = false;
+    try { copyPortableVault('backup', source, path.join(root, 'blocked-auth-file')); } catch { rejected = true; }
+    if (!rejected || entryExists(path.join(root, 'blocked-auth-file'))) fail('self-test 未拒绝扩展凭据文件名');
+    rmSync(path.join(source, 'auth.json'));
     const fake = path.join(root, 'fake-vault');
     initVault(fake, { title: 'fake' });
     rmSync(path.join(fake, '.git'), { recursive: true, force: true });

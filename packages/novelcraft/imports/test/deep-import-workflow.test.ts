@@ -233,6 +233,60 @@ describe("runDeepImportWorkflow(durable driver)", () => {
     expect(provider.calls).toHaveLength(5);
   });
 
+  itSlow("2a 跨 chunk 同名实体使用唯一 pending slug(RV-01)", async () => {
+    const root = makeRoot();
+    const responses = happyResponses();
+    for (const index of [5, 6]) {
+      responses[index] = {
+        text: JSON.stringify({
+          entities: [{ name: "同名人物", entity_type: "character", evidence: [`chunk-${index}`], confidence: 0.8 }],
+        }),
+      };
+    }
+    const result = await runDeepImportWorkflow(
+      root,
+      makePlan(root),
+      runtime(
+        new MockProvider({ retryable: false, responses }),
+        new MockApproval({ decisions: ["allowed-once"] }),
+        { policy: loadPolicyDefaults({ phase2BatchSize: 1 }) },
+      ),
+    );
+
+    expect(result.entities.created).toEqual(["obj-同名人物-0", "obj-同名人物-1"]);
+    expect(new Set(result.entities.created).size).toBe(result.entities.created.length);
+  });
+
+  itSlow("已 materialize 的 pending 被作者修改后 resume 冲突且不覆盖(RV-02)", async () => {
+    const root = makeRoot();
+    const responses = happyResponses();
+    responses[5] = {
+      text: JSON.stringify({
+        entities: [{ name: "人物甲", entity_type: "character", evidence: ["正文"], confidence: 0.8 }],
+      }),
+    };
+    const plan = makePlan(root);
+    const first = await runDeepImportWorkflow(
+      root,
+      plan,
+      runtime(new MockProvider({ retryable: false, responses }), new MockApproval({ decisions: ["allowed-once"] })),
+    );
+    const pending = join(root, "world", "pending", `${first.entities.created[0]}.md`);
+    const edited = readFileSync(pending, "utf8") + "\n作者补充。\n";
+    writeFileSync(pending, edited);
+    gitAdd(root, [join("world", "pending", `${first.entities.created[0]}.md`)]);
+    gitCommit(root, "author edits pending");
+
+    const resumedProvider = new MockProvider({ responses: [] });
+    await expect(runDeepImportWorkflow(
+      root,
+      plan,
+      runtime(resumedProvider, new MockApproval({ decisions: [] })),
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(readFileSync(pending, "utf8")).toBe(edited);
+    expect(resumedProvider.calls).toEqual([]);
+  });
+
   itSlow("已完成 Phase 3 的复用 canonical 来源漂移 → typed context_drift，零 provider 重调", async () => {
     const root = makeRoot();
     seedCanonicalObjects(root);

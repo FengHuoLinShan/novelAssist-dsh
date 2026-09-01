@@ -189,6 +189,6 @@ export function syncRagIndex(root: string, now: Date = new Date()): RagSyncStats
 
   // 5. 落盘。
   mkdirSync(p.assistant.dir, { recursive: true });
-  rebuildRagIndex(root, newChunks, now);
+  rebuildRagIndex(root, newChunks, now, old);
   return { added, updated, removed, total: newChunks.length };
 }
