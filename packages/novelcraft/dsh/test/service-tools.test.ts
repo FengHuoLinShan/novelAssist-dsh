@@ -439,12 +439,24 @@ describe('NovelCraftService 端到端', () => {
     const out = (await t.execute(
       { spec: 'semantic_review', input: '正文', model: 'fake-model-x', temperature: 0.2 },
       { ...env.exec, name: 'novelcraft_llm_step' },
-    )) as { effective_model: string; effective_temperature: number; effective_provider: string };
+    )) as {
+      effective_model: string;
+      effective_temperature: number;
+      effective_provider: string;
+      requested_effort: string;
+      effective_effort: string;
+      effort_source: string;
+      context_window_status: string;
+    };
     // A6 缺省分支: 未传 provider override → Config.llm.provider('fake')经
     // executionDefaults/merge 链填入 effective(防「回执空、实际走 Config 路由」失真)
     expect(out.effective_provider).toBe('fake');
     expect(out.effective_model).toBe('fake-model-x');
     expect(out.effective_temperature).toBe(0.2);
+    expect(out.requested_effort).toBe('');
+    expect(out.effective_effort).toBe('');
+    expect(out.effort_source).toBe('provider_default');
+    expect(out.context_window_status).toBe('unknown');
     expect(env.h.adapter.requests).toHaveLength(1);
     env.cleanup();
 

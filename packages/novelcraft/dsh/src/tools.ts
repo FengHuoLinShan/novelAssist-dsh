@@ -117,6 +117,7 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
         spec: { type: 'string', required: true, description: '步骤 specRef(如 semantic_review / world_ask)' },
         input: { type: 'string', required: true, description: '步骤输入内容(原文/上下文)' },
         model: { type: 'string', description: '覆盖模型 id(默认取 profile 配置)' },
+        reasoning_effort: { type: 'string', description: '覆盖思考等级(adapter exact-model 不透明 id)' },
         temperature: { type: 'number', description: '覆盖温度' },
         max_tokens: { type: 'integer', description: '覆盖输出预算' },
         timeout_ms: { type: 'integer', description: '覆盖超时毫秒' },
@@ -140,6 +141,11 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           // M10-A6: 生效调用参数(合并链终值; 未定字段空串/0)
           effective_provider: { type: 'string', required: true },
           effective_model: { type: 'string', required: true },
+          requested_effort: { type: 'string', required: true },
+          effective_effort: { type: 'string', required: true },
+          effort_source: { type: 'string', required: true },
+          context_window: { type: 'integer', required: true },
+          context_window_status: { type: 'string', required: true },
           effective_temperature: { type: 'number', required: true },
           effective_max_tokens: { type: 'integer', required: true },
           effective_timeout_ms: { type: 'integer', required: true },
@@ -157,6 +163,7 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           input: args.input,
           overrides: {
             ...(args.model ? { model: args.model } : {}),
+            ...(args.reasoning_effort !== undefined ? { reasoning_effort: args.reasoning_effort } : {}),
             ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
             // 显式 undefined 判断(零值不吞): max_tokens=0 是「不限输出」的合法语义,
             // timeout_ms=0 由 core deadline 检查响亮失败 —— 都不静默回退默认。
@@ -197,6 +204,11 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
           // 未定字段空串/0)。
           effective_provider: result.effective?.provider ?? '',
           effective_model: result.effective?.model ?? '',
+          requested_effort: result.effective?.requested_effort ?? '',
+          effective_effort: result.effective?.effective_effort ?? '',
+          effort_source: result.effective?.effort_source ?? '',
+          context_window: result.effective?.context_window ?? 0,
+          context_window_status: result.effective?.context_window_status ?? '',
           effective_temperature: result.effective?.temperature ?? 0,
           effective_max_tokens: result.effective?.maxTokens ?? 0,
           effective_timeout_ms: result.effective?.timeoutMs ?? 0,
@@ -212,6 +224,25 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
             ...(e.errorMessage !== undefined ? { errorMessage: e.errorMessage } : {}),
             ...(e.promptHash !== undefined ? { promptHash: e.promptHash } : {}),
             ...(e.schemaInjection !== undefined ? { schemaInjection: e.schemaInjection } : {}),
+            ...(e.callReceipt !== undefined
+              ? {
+                  callReceipt: {
+                    provider: e.callReceipt.provider,
+                    model: e.callReceipt.model,
+                    ...(e.callReceipt.requestedEffort !== undefined
+                      ? { requestedEffort: e.callReceipt.requestedEffort }
+                      : {}),
+                    ...(e.callReceipt.effectiveEffort !== undefined
+                      ? { effectiveEffort: e.callReceipt.effectiveEffort }
+                      : {}),
+                    effortSource: e.callReceipt.effortSource,
+                    ...(e.callReceipt.contextWindow !== undefined
+                      ? { contextWindow: e.callReceipt.contextWindow }
+                      : {}),
+                    contextWindowKnown: e.callReceipt.contextWindowKnown,
+                  },
+                }
+              : {}),
           })),
         };
       },

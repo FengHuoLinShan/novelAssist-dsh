@@ -40,6 +40,8 @@ export interface StepRequest {
     /** DSH provider 路由(如 'deepseek'); 缺省由 Provider 实现侧默认承接 */
     provider?: string;
     model?: string;
+    /** Adapter-owned opaque reasoning effort id; DSH validates exact-model support. */
+    reasoning_effort?: string;
     temperature?: number;
     /** top_p [0,1](审查项 4: core strict 参数面支持; 传输契约不支持处由实现侧明确拒绝) */
     top_p?: number;
@@ -70,6 +72,19 @@ export interface Usage {
   outputTokens: number;
 }
 
+export type ReasoningEffortSource = "request" | "adapter_default" | "provider_default";
+
+/** Secret-free receipt returned by a provider after exact-model preparation. */
+export interface ProviderCallReceipt {
+  provider: string;
+  model: string;
+  requestedEffort?: string;
+  effectiveEffort?: string;
+  effortSource: ReasoningEffortSource;
+  contextWindow?: number;
+  contextWindowKnown: boolean;
+}
+
 export interface JournalEntry {
   attempt: number;
   startedAt: string;
@@ -82,6 +97,8 @@ export interface JournalEntry {
   promptHash?: string;
   /** 本次 attempt 的输出契约注入模式: text-contract = JSON Schema 文本注入 system; none = text 输出形态不注入 */
   schemaInjection?: "text-contract" | "none";
+  /** Exact prepared call used by this physical attempt; never includes reasoning text or secrets. */
+  callReceipt?: ProviderCallReceipt;
 }
 
 /** 模型可见输入指纹(M10-A3/A6/N38 加法): 恢复/审计用, 不含正文与 Key。 */
@@ -99,6 +116,11 @@ export interface StepPromptFingerprint {
 export interface StepEffectiveParams {
   provider?: string;
   model?: string;
+  requested_effort?: string;
+  effective_effort?: string;
+  effort_source?: ReasoningEffortSource;
+  context_window?: number;
+  context_window_status?: "known" | "unknown";
   temperature?: number;
   top_p?: number;
   maxTokens?: number;
@@ -127,6 +149,8 @@ export interface ProviderRequest {
   /** DSH provider 路由覆盖(加法, N20 预设卡); 缺省由实现侧默认承接 */
   provider?: string;
   model?: string;
+  /** Opaque effort id passed to the DSH exact-model adapter as reasoningEffort. */
+  reasoning_effort?: string;
   temperature?: number;
   /** top_p [0,1](审查项 4: core strict 参数面支持; 传输契约不支持处由实现侧明确拒绝) */
   top_p?: number;
@@ -142,6 +166,8 @@ export interface ProviderRequest {
 export interface ProviderResponse {
   text: string;
   usage?: { inputTokens: number; outputTokens: number };
+  /** Exact registration-bound preparation receipt, when the provider supports it. */
+  callReceipt?: ProviderCallReceipt;
 }
 
 /**
@@ -157,6 +183,8 @@ export interface StepExecutionDefaults {
   provider?: string;
   /** 模型 id 默认; 请求级 override 优先 */
   model?: string;
+  /** Adapter-owned opaque reasoning effort id; request override wins. */
+  reasoning_effort?: string;
   /** 单步温度默认, [0,2] 有限数字; 请求级 override 优先 */
   temperature?: number;
   /** 单步 top_p 默认, [0,1] 有限数字; 请求级 override 优先(审查项 4) */

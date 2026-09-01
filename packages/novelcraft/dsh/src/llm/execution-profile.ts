@@ -68,7 +68,7 @@ export class ExecutionProfileError extends Error {
 
 /**
  * 不可变执行画像(N34 §6): 编排启动解析一次、core 深冻结后透传。
- * 类型面 = @novelcraft/llm-step 的 ExecutionProfile(核心包唯一真源, 白名单 11 键,
+ * 类型面 = @novelcraft/llm-step 的 ExecutionProfile(核心包唯一真源, 白名单 12 键,
  * version/source/policy/contractVersions 由组合器确定性生成); 本模块不定义
  * 自己的 ExecutionProfile 形状(独立审查 P1: 不保留 DSH 不兼容接口)。
  */
@@ -195,6 +195,7 @@ export async function resolveExecutionProfile(
   assignDefined(raw, {
     provider: config.provider,
     model: config.model,
+    reasoning_effort: config.reasoningEffort,
     timeoutMs: config.timeoutMs,
     maxTokens: config.maxTokens,
     workflowBudget: config.workflowBudget,

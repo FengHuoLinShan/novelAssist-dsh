@@ -40,6 +40,7 @@ import type { NovelcraftCache } from '../storage/domain.js';
 export interface ResolvedContentDefaults {
   provider?: string;
   model?: string;
+  reasoning_effort?: string;
   temperature?: number;
   top_p?: number;
   maxTokens?: number;
@@ -179,6 +180,7 @@ export function withResolvedDefaults(inner: Provider, defaults: ResolvedContentD
   const executionDefaults: StepExecutionDefaults = {
     ...(defaults.provider !== undefined ? { provider: defaults.provider } : {}),
     ...(defaults.model !== undefined ? { model: defaults.model } : {}),
+    ...(defaults.reasoning_effort !== undefined ? { reasoning_effort: defaults.reasoning_effort } : {}),
     ...(defaults.temperature !== undefined ? { temperature: defaults.temperature } : {}),
     ...(defaults.top_p !== undefined ? { top_p: defaults.top_p } : {}),
     ...(defaults.maxTokens !== undefined ? { maxTokens: defaults.maxTokens } : {}),
@@ -196,6 +198,9 @@ export function withResolvedDefaults(inner: Provider, defaults: ResolvedContentD
           ? { provider: req.provider ?? defaults.provider }
           : {},
         ...(req.model ?? defaults.model) !== undefined ? { model: req.model ?? defaults.model } : {},
+        ...(req.reasoning_effort ?? defaults.reasoning_effort) !== undefined
+          ? { reasoning_effort: req.reasoning_effort ?? defaults.reasoning_effort }
+          : {},
         ...(req.temperature ?? defaults.temperature) !== undefined
           ? { temperature: req.temperature ?? defaults.temperature }
           : {},
@@ -265,6 +270,8 @@ export function mergeStepOverrides(
   if (provider !== undefined) out.provider = provider;
   const model = overrides?.model ?? defaults.model;
   if (model !== undefined) out.model = model;
+  const reasoningEffort = overrides?.reasoning_effort ?? defaults.reasoning_effort;
+  if (reasoningEffort !== undefined) out.reasoning_effort = reasoningEffort;
   const temperature = overrides?.temperature ?? defaults.temperature;
   if (temperature !== undefined) out.temperature = temperature;
   const top_p = overrides?.top_p ?? defaults.top_p;

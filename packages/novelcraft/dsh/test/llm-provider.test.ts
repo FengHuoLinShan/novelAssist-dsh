@@ -5,9 +5,36 @@
 // 审查项 6: 取消三条路径(finish aborted / adapter AbortError / signal abort)统一抛
 // name=AbortError + retryable=false(llm-step classifyError 零重试, provider 前 fail-closed)。
 import { beforeEach, describe, expect, it } from 'vitest';
-import { LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import {
+  LlmError,
+  ReasoningEffortId,
+  type GenerateOptions,
+  type LlmResolvedModelInfo,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm';
 import { DshProvider } from '../src/index.js';
 import { FakeAdapter, makeContext, type HarnessServices } from './helpers.js';
+
+class ReasoningAdapter extends FakeAdapter {
+  constructor(private readonly defaultEffort?: string) {
+    super();
+  }
+
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return {
+      provider,
+      id: model,
+      name: model,
+      context: { contextWindow: 1_000_000 },
+      reasoning: {
+        efforts: ['off', 'high', 'max'].map((id) => ({ id: ReasoningEffortId(id), name: id })),
+        ...(this.defaultEffort !== undefined
+          ? { defaultEffort: ReasoningEffortId(this.defaultEffort) }
+          : {}),
+      },
+    };
+  }
+}
 
 describe('DshProvider', () => {
   let h: HarnessServices;
@@ -33,6 +60,12 @@ describe('DshProvider', () => {
 
     expect(resp.text).toBe('{"findings":[{"category":"c","severity":"high","quote":"q","suggestion":"s"}],"verdict":"ok"}');
     expect(resp.usage).toEqual({ inputTokens: 12, outputTokens: 34 });
+    expect(resp.callReceipt).toMatchObject({
+      provider: 'fake',
+      model: 'fake-model',
+      effortSource: 'provider_default',
+      contextWindowKnown: false,
+    });
 
     const sent = h.adapter.requests[0];
     expect(sent.provider).toBe('fake');
@@ -53,6 +86,81 @@ describe('DshProvider', () => {
       model: '覆盖模型',
     });
     expect(h.adapter.requests[0].model).toBe('覆盖模型');
+  });
+
+  it('opaque effort 经 prepareCall 贯通；请求覆盖 adapter 默认并回执真实 context', async () => {
+    const adapter = new ReasoningAdapter('high');
+    h.ctx.llm.registerAdapter(['reasoning-request'], adapter);
+    adapter.enqueue({ deltas: ['ok'] });
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'reasoning-request', model: 'model-x' });
+    const response = await provider.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoning_effort: 'max',
+    });
+    expect(adapter.requests[0].reasoningEffort).toBe('max');
+    expect(response.callReceipt).toEqual({
+      provider: 'reasoning-request',
+      model: 'model-x',
+      requestedEffort: 'max',
+      effectiveEffort: 'max',
+      effortSource: 'request',
+      contextWindow: 1_000_000,
+      contextWindowKnown: true,
+    });
+  });
+
+  it('未请求 effort 时 materialize adapter default；无默认则标 provider_default', async () => {
+    const withDefault = new ReasoningAdapter('high');
+    const providerOwned = new ReasoningAdapter();
+    h.ctx.llm.registerAdapter(['reasoning-default'], withDefault);
+    h.ctx.llm.registerAdapter(['reasoning-provider'], providerOwned);
+    withDefault.enqueue({ deltas: ['a'] });
+    providerOwned.enqueue({ deltas: ['b'] });
+    const a = await new DshProvider({ ctx: h.ctx, provider: 'reasoning-default', model: 'm' })
+      .complete({ messages: [{ role: 'user', content: 'hi' }] });
+    const b = await new DshProvider({ ctx: h.ctx, provider: 'reasoning-provider', model: 'm' })
+      .complete({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(a.callReceipt).toMatchObject({ effectiveEffort: 'high', effortSource: 'adapter_default' });
+    expect(b.callReceipt).toMatchObject({ effortSource: 'provider_default' });
+    expect(b.callReceipt?.effectiveEffort).toBeUndefined();
+  });
+
+  it('unsupported effort 在 adapter stream 前 fail-closed', async () => {
+    const adapter = new ReasoningAdapter('high');
+    h.ctx.llm.registerAdapter(['reasoning-unsupported'], adapter);
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'reasoning-unsupported', model: 'm' });
+    await expect(provider.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoning_effort: 'low',
+    })).rejects.toMatchObject({ code: 'UNSUPPORTED_REASONING_EFFORT', retryable: false });
+    expect(adapter.requests).toHaveLength(0);
+  });
+
+  it('prepareCall 绑定一次 registration：解析期间替换 adapter 仍由旧 adapter dispatch', async () => {
+    const next = new ReasoningAdapter('max');
+    let swap = () => {};
+    class SwappingAdapter extends ReasoningAdapter {
+      override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        const info = await super.resolveModel(provider, model);
+        swap();
+        return info;
+      }
+    }
+    const old = new SwappingAdapter('high');
+    const handle = h.ctx.llm.registerAdapter(['reasoning-swap'], old);
+    swap = () => {
+      handle.replace([]);
+      h.ctx.llm.registerAdapter(['reasoning-swap'], next);
+      swap = () => {};
+    };
+    old.enqueue({ deltas: ['old'] });
+    next.enqueue({ deltas: ['new'] });
+    const provider = new DshProvider({ ctx: h.ctx, provider: 'reasoning-swap', model: 'm' });
+    expect((await provider.complete({ messages: [{ role: 'user', content: 'hi' }] })).text).toBe('old');
+    expect(old.requests).toHaveLength(1);
+    expect(next.requests).toHaveLength(0);
+    expect((await provider.complete({ messages: [{ role: 'user', content: 'hi' }] })).text).toBe('new');
+    expect(next.requests).toHaveLength(1);
   });
 
   it('error 终止(RATE_LIMIT)→ retryable 错误(供 llm-step 重试分类)', async () => {

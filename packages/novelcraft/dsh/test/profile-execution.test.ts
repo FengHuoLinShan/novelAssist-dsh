@@ -72,13 +72,22 @@ class AbortHangingAdapter extends FakeAdapter {
   }
 }
 
-async function setup(opts: { provider?: string; adapter?: FakeAdapter; durable?: boolean } = {}): Promise<Env> {
+async function setup(opts: {
+  provider?: string;
+  adapter?: FakeAdapter;
+  durable?: boolean;
+  reasoningEffort?: string;
+} = {}): Promise<Env> {
   const h = await makeContext({ approval: { outcome: 'allowed-once' } });
   const provider = opts.provider ?? 'fake';
   if (opts.adapter) h.ctx.llm.registerAdapter([provider], opts.adapter);
   const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-prof-'));
   await h.ctx.plugin(NovelCraftService, {
-    llm: { provider, model: 'fake-default' },
+    llm: {
+      provider,
+      model: 'fake-default',
+      ...(opts.reasoningEffort !== undefined ? { reasoningEffort: opts.reasoningEffort } : {}),
+    },
     vaultsDir,
     watch: { enabled: false, intervalMinutes: 60 },
   });
@@ -141,6 +150,18 @@ function seedChapters(root: string, llmYmlContent?: string): void {
 }
 
 describe('解析一次并冻结(N34 §6 / ADR-0023 §6: 启动解析一次, 不可变, 透传零重解析)', () => {
+  it('Config reasoningEffort 进入 core ExecutionProfile 与 fingerprint', async () => {
+    const env = await setup({ reasoningEffort: 'vendor-high' });
+    const withEffort = await env.service.resolveProfile(env.root);
+    expect(withEffort.reasoning_effort).toBe('vendor-high');
+    const withoutEffort = parseExecutionProfile({
+      ...withEffort,
+      reasoning_effort: undefined,
+    });
+    expect(fingerprintExecutionProfile(withEffort)).not.toBe(fingerprintExecutionProfile(withoutEffort));
+    env.cleanup();
+  });
+
   it('resolveProfile: 解析结果冻结; 带 profile 的 runStep/contentProviderFor 零重解析(list 只调一次)', async () => {
     const env = await setup();
     // 引用一张卡(种子 default, 无 provider 覆盖 → 仍走 Config.llm), 让「解析」可被计数。

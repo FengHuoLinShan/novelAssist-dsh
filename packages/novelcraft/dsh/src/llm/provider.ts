@@ -7,16 +7,17 @@
 // 原文直通 —— 本适配器只转发, 不落盘、不记录正文)。
 // 审查项 6: 取消三条路径(finish aborted / adapter AbortError / signal abort)统一抛
 // name=AbortError + retryable=false, llm-step 对其零重试(provider 前 fail-closed)。
-import { createUserMessage, LlmError, type LlmRuntime } from '@deepseek-ai/dsh-llm';
+import { createUserMessage, LlmError, ReasoningEffortId, type LlmRuntime } from '@deepseek-ai/dsh-llm';
 import type {
   GenerateOptions,
+  LlmCallConfig,
   LlmFailure,
   Message,
   StreamChunk,
   TokenUsage,
 } from '@deepseek-ai/dsh-llm';
 import type { Context } from '@deepseek-ai/cordis';
-import type { Provider, ProviderRequest, ProviderResponse } from '@novelcraft/llm-step';
+import type { Provider, ProviderCallReceipt, ProviderRequest, ProviderResponse } from '@novelcraft/llm-step';
 import { svc } from '../ctx.js';
 
 export interface DshProviderOptions {
@@ -54,6 +55,13 @@ function abortError(message: string): Error {
 function isAbortError(err: unknown): boolean {
   if (err instanceof LlmError) return err.failure.code === 'ABORTED';
   return (err as Error | undefined)?.name === 'AbortError';
+}
+
+function attachCallReceipt(err: Error, callReceipt: ProviderCallReceipt | undefined): Error {
+  if (callReceipt !== undefined) {
+    (err as Error & { callReceipt?: ProviderCallReceipt }).callReceipt = callReceipt;
+  }
+  return err;
 }
 
 /**
@@ -120,23 +128,45 @@ export class DshProvider implements Provider {
       );
     }
 
-    const options: GenerateOptions = {
-      // 请求级 provider 覆盖优先(N20 预设卡); 缺省 = Config.llm.provider。
-      provider: req.provider ?? provider,
+    const callConfig: LlmCallConfig = {
+      provider: route,
       model: req.model ?? this.opts.model ?? '',
-      messages,
-      ...(system !== undefined ? { system } : {}),
+      ...(req.reasoning_effort !== undefined
+        ? { reasoningEffort: ReasoningEffortId(req.reasoning_effort) }
+        : {}),
       ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
-      ...(req.signal ? { signal: req.signal } : {}),
     };
 
     let text = '';
     let usage: TokenUsage | undefined;
     let failure: LlmFailure | undefined;
     let aborted = false;
+    let callReceipt: ProviderCallReceipt | undefined;
     try {
-      for await (const chunk of llm.stream(options) as AsyncIterable<StreamChunk>) {
+      const prepared = await llm.prepareCall(callConfig, req.signal);
+      callReceipt = {
+        provider: prepared.config.provider,
+        model: prepared.config.model,
+        ...(req.reasoning_effort !== undefined ? { requestedEffort: req.reasoning_effort } : {}),
+        ...(prepared.config.reasoningEffort !== undefined
+          ? { effectiveEffort: prepared.config.reasoningEffort }
+          : {}),
+        effortSource: req.reasoning_effort !== undefined
+          ? 'request'
+          : prepared.adapterDefaults.reasoningEffort
+            ? 'adapter_default'
+            : 'provider_default',
+        ...(prepared.context !== undefined ? { contextWindow: prepared.context.contextWindow } : {}),
+        contextWindowKnown: prepared.context !== undefined,
+      };
+      const options: GenerateOptions = {
+        ...prepared.config,
+        messages,
+        ...(system !== undefined ? { system } : {}),
+        ...(req.signal ? { signal: req.signal } : {}),
+      };
+      for await (const chunk of prepared.stream(options) as AsyncIterable<StreamChunk>) {
         switch (chunk.type) {
           case 'text-delta':
             text += chunk.text;
@@ -164,12 +194,12 @@ export class DshProvider implements Provider {
       // LlmError ABORTED 码)统一映射为 AbortError, 其余 LlmError 走 mapFailure 分类。
       if (err instanceof LlmError) {
         if (err.failure.code === 'ABORTED') {
-          throw abortError(`调用已被取消(aborted): ${err.failure.message}`);
+          throw attachCallReceipt(abortError(`调用已被取消(aborted): ${err.failure.message}`), callReceipt);
         }
-        throw mapFailure(err.failure);
+        throw attachCallReceipt(mapFailure(err.failure), callReceipt);
       }
       if (isAbortError(err)) {
-        throw abortError('调用已被取消(aborted)');
+        throw attachCallReceipt(abortError('调用已被取消(aborted)'), callReceipt);
       }
       throw err;
     }
@@ -177,24 +207,25 @@ export class DshProvider implements Provider {
     // 抛 name=AbortError + retryable=false —— 不返回半截文本、不产生「假成功」,
     // llm-step classifyError 对其零重试(provider 前 fail-closed)。
     if (aborted) {
-      throw abortError(
+      throw attachCallReceipt(abortError(
         failure ? `调用已被取消(aborted): ${failure.code} ${failure.message}` : '调用已被取消(aborted)',
-      );
+      ), callReceipt);
     }
     if (failure) {
-      throw mapFailure(failure);
+      throw attachCallReceipt(mapFailure(failure), callReceipt);
     }
     // P2 修复: 调用因 signal abort 提前结束(流已消费完但信号已 abort, 如 wall-clock
     // 超时掐断)→ 视为取消(AbortError, 不可重试), 而非返回半截文本 ——
     // trace(provider 层 llm_step ok:false)与 runStep 超时语义对齐, 不产生「假成功」。
     if (req.signal?.aborted) {
-      throw abortError('调用已被取消(aborted)');
+      throw attachCallReceipt(abortError('调用已被取消(aborted)'), callReceipt);
     }
     return {
       text,
       usage: usage
         ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
         : undefined,
+      ...(callReceipt !== undefined ? { callReceipt } : {}),
     };
   }
 }

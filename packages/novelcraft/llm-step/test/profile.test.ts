@@ -214,6 +214,61 @@ describe("top_p 进入 core strict 参数面与 fingerprint(审查项 4)", () =>
   });
 });
 
+describe("reasoning_effort 不透明传输与真实 prepared receipt(M3a)", () => {
+  it("合法 id 进入 profile/fingerprint；请求 override 优先；非法空白 id 拒绝", () => {
+    const profile = parseExecutionProfile({ ...valid, reasoning_effort: "adapter-high" });
+    expect(profile.reasoning_effort).toBe("adapter-high");
+    expect(canonicalProfileJson(profile)).toContain('"reasoning_effort":"adapter-high"');
+    expect(fingerprintExecutionProfile(profile)).not.toBe(
+      fingerprintExecutionProfile(parseExecutionProfile(valid)),
+    );
+    expect(applyExecutionProfileToRequest(profile, { specRef: "x", input: "y" }).overrides)
+      .toMatchObject({ reasoning_effort: "adapter-high" });
+    expect(applyExecutionProfileToRequest(profile, {
+      specRef: "x",
+      input: "y",
+      overrides: { reasoning_effort: "adapter-max" },
+    }).overrides?.reasoning_effort).toBe("adapter-max");
+    for (const reasoning_effort of ["", "bad effort", "x".repeat(65)]) {
+      expect(() => parseExecutionProfile({ ...valid, reasoning_effort })).toThrow(ProfileValidationError);
+    }
+  });
+
+  it("runStep 分开记录 requested/effective/source/context，journal 保存物理调用回执", async () => {
+    const provider: Provider = {
+      executionDefaults: { provider: "fake", model: "requested-model", reasoning_effort: "adapter-high" },
+      async complete(req) {
+        return {
+          text: JSON.stringify({ entities: [] }),
+          callReceipt: {
+            provider: "fake",
+            model: "resolved-model",
+            requestedEffort: req.reasoning_effort,
+            effectiveEffort: "adapter-high",
+            effortSource: "request",
+            contextWindow: 1_000_000,
+            contextWindowKnown: true,
+          },
+        };
+      },
+    };
+    const result = await runStep(provider, { specRef: "entity_extraction", input: "x" });
+    expect(result.effective).toMatchObject({
+      provider: "fake",
+      model: "resolved-model",
+      requested_effort: "adapter-high",
+      effective_effort: "adapter-high",
+      effort_source: "request",
+      context_window: 1_000_000,
+      context_window_status: "known",
+    });
+    expect(result.journal[0].callReceipt).toMatchObject({
+      effectiveEffort: "adapter-high",
+      contextWindowKnown: true,
+    });
+  });
+});
+
 describe("EXECUTION_PROFILE_WHITELIST 运行时不可变(P1: 防 push 注入 secret 键)", () => {
   it("导出常量是真正冻结的 readonly 数组: push 篡改抛 TypeError 且内容不变", () => {
     expect(Object.isFrozen(EXECUTION_PROFILE_WHITELIST)).toBe(true);
@@ -224,6 +279,7 @@ describe("EXECUTION_PROFILE_WHITELIST 运行时不可变(P1: 防 push 注入 sec
       "version",
       "provider",
       "model",
+      "reasoning_effort",
       "temperature",
       "top_p",
       "maxTokens",
@@ -233,7 +289,7 @@ describe("EXECUTION_PROFILE_WHITELIST 运行时不可变(P1: 防 push 注入 sec
       "contractVersions",
       "source",
     ]);
-    expect(EXECUTION_PROFILE_WHITELIST).toHaveLength(11);
+    expect(EXECUTION_PROFILE_WHITELIST).toHaveLength(12);
     expect(EXECUTION_PROFILE_WHITELIST).not.toContain("apiKey");
   });
 
@@ -241,7 +297,7 @@ describe("EXECUTION_PROFILE_WHITELIST 运行时不可变(P1: 防 push 注入 sec
     expect(() => {
       (EXECUTION_PROFILE_WHITELIST as unknown as string[]).splice(0, 1);
     }).toThrow(TypeError);
-    expect(EXECUTION_PROFILE_WHITELIST).toHaveLength(11);
+    expect(EXECUTION_PROFILE_WHITELIST).toHaveLength(12);
   });
 
   it("篡改失败后安全语义不变: 投影面仍只 pick 非 secret 白名单键, secret 不进指纹", () => {

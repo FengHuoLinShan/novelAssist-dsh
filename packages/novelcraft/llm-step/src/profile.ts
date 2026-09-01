@@ -4,7 +4,7 @@
 // 内部所有 llm-step 调用经 applyExecutionProfileToRequest 统一继承 profile 默认,
 // 请求级 override 优先(对齐 N20 withResolvedDefaults/mergeStepOverrides 语义)。
 //
-// 类型面 = 显式非 secret 白名单(11 键: version/provider/model/temperature/top_p/
+// 类型面 = 显式非 secret 白名单(12 键: version/provider/model/reasoning_effort/temperature/top_p/
 // maxTokens/timeoutMs/workflowBudget/policy/contractVersions/source); 未知/secret 字段:
 //   - 配置面(parse)直接拒绝(白名单外键即非法, fail-closed);
 //   - 指纹面(canonicalProfileJson/fingerprint)始终只投影白名单键——即使运行时对象
@@ -38,6 +38,7 @@ export const EXECUTION_PROFILE_WHITELIST = Object.freeze([
   "version",
   "provider",
   "model",
+  "reasoning_effort",
   "temperature",
   "top_p",
   "maxTokens",
@@ -71,6 +72,8 @@ export interface ExecutionProfile {
   provider?: string;
   /** 模型 id 默认; 请求级 override 优先 */
   model?: string;
+  /** Adapter-owned opaque reasoning effort id; request override wins. */
+  reasoning_effort?: string;
   /** 单步温度默认, [0,2]; 请求级 override 优先 */
   temperature?: number;
   /** 单步 top_p 默认, [0,1]; 请求级 override 优先(审查项 4: 进入 core strict 参数面) */
@@ -197,6 +200,9 @@ function validatePlainProfile(o: Record<string, unknown>): string[] {
   if (o.model !== undefined && (typeof o.model !== "string" || !NO_WS_RE.test(o.model) || o.model.length > 128)) {
     issues.push("model 必须是非空无空白字符串(≤128)");
   }
+  if (o.reasoning_effort !== undefined && (typeof o.reasoning_effort !== "string" || !NO_WS_RE.test(o.reasoning_effort) || o.reasoning_effort.length > 64)) {
+    issues.push("reasoning_effort 必须是 adapter 声明的非空无空白标识(≤64)");
+  }
   if (o.temperature !== undefined && (typeof o.temperature !== "number" || !Number.isFinite(o.temperature) || o.temperature < 0 || o.temperature > 2)) {
     issues.push("temperature 必须在 [0,2] 的有限数字");
   }
@@ -295,6 +301,7 @@ export function parseExecutionProfile(v: unknown): ExecutionProfile {
   const profile: ExecutionProfile = { version: o.version as string };
   if (o.provider !== undefined) profile.provider = o.provider as string;
   if (o.model !== undefined) profile.model = o.model as string;
+  if (o.reasoning_effort !== undefined) profile.reasoning_effort = o.reasoning_effort as string;
   if (o.temperature !== undefined) profile.temperature = o.temperature as number;
   if (o.top_p !== undefined) profile.top_p = o.top_p as number;
   if (o.maxTokens !== undefined) profile.maxTokens = o.maxTokens as number;
@@ -366,7 +373,7 @@ export function fingerprintExecutionProfile(profile: ExecutionProfile): string {
 
 /**
  * 把 profile 执行级默认并入 StepRequest.overrides(请求级字段优先, N20 对齐)。
- * 只处理六个 per-step 执行面字段(provider/model/temperature/top_p/maxTokens/timeoutMs);
+ * 只处理七个 per-step 执行面字段(provider/model/reasoning_effort/temperature/top_p/maxTokens/timeoutMs);
  * workflowBudget/policy/contractVersions/version/source 是编排级元数据, 不外泄到请求。
  * 返回的仍是完整 StepRequest → runStep 签名不变: runStep(provider, applyExecutionProfileToRequest(p, req))。
  */
@@ -378,6 +385,8 @@ export function applyExecutionProfileToRequest(profile: ExecutionProfile, req: S
   if (provider !== undefined) out.provider = provider;
   const model = o.model ?? profile.model;
   if (model !== undefined) out.model = model;
+  const reasoningEffort = o.reasoning_effort ?? profile.reasoning_effort;
+  if (reasoningEffort !== undefined) out.reasoning_effort = reasoningEffort;
   const temperature = o.temperature ?? profile.temperature;
   if (temperature !== undefined) out.temperature = temperature;
   const top_p = o.top_p ?? profile.top_p;

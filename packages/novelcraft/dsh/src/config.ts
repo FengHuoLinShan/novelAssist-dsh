@@ -11,6 +11,8 @@ export interface LlmRoute {
   provider: string;
   /** 内容手默认模型 id; 每次调用可被 policy/调用方覆盖 */
   model: string;
+  /** Adapter-owned opaque reasoning effort id; exact-model prepareCall validates it. */
+  reasoningEffort?: string;
   /** 内容手执行级默认(可选, N34/ADR-0023 §6): ExecutionProfile 覆盖链最低层取值;
    *  该书 preset 卡(llm.yml preset 键)与 llm.yml 直键可覆盖; 请求级 override 优先。
    *  越界值由 resolveExecutionProfile 在 provider 前拒绝(fail-closed)。 */
@@ -62,6 +64,7 @@ export const Config: z<Config> = z.object({
     .object({
       provider: z.string().default('deepseek'),
       model: z.string().default('deepseek-v4-flash'),
+      reasoningEffort: z.string().min(1).max(64),
       // N34 执行级默认(可选; 边界与 llm-step validateContentPreset 一致, 解析时再兜底校验)。
       // schemastery 对象归一化会丢弃 undefined 键(实测), 缺省即不出现; 类型经
       // `undefined as unknown as number` 桥接 ObjectT 的「键必填」静态约束。
@@ -75,6 +78,7 @@ export const Config: z<Config> = z.object({
     .default({
       provider: 'deepseek',
       model: 'deepseek-v4-flash',
+      reasoningEffort: undefined as unknown as string,
       timeoutMs: undefined as unknown as number,
       maxTokens: undefined as unknown as number,
       workflowBudget: undefined as unknown as number,
