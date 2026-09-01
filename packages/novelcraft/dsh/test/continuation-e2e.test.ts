@@ -3,12 +3,13 @@
 // → 审批门控采用(铁律 3: allowed-once 放行一次, rejected/cancelled/unavailable 一律拒绝)。
 // 断言引 AGENTS.md 铁律 3/5 与规则/裁定编号(R17 干净工作区、R34 copy-on-adopt、
 // R3/R19 状态机、N13 hash 格式)。
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
 import { gitAdd, gitCommit, gitLogSubjects } from '@novelcraft/store';
+import { appendEvent } from '@novelcraft/memory';
 import { ingestChapter } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
 import { makeContext, type HarnessServices } from './helpers.js';
@@ -90,6 +91,27 @@ function seedChapterOne(env: TestEnv): void {
   gitCommit(env.root, 'fixture ch1');
 }
 
+function seedPovKnowledge(env: TestEnv): void {
+  writeFileSync(path.join(env.root, 'scenes', 's002.md'), [
+    '---', 'id: s002', 'status: canonical', 'title: 第二章', 'chapter_ids: [2]',
+    'pov_character_id: char-a', 'must_not_happen: 不得提前公布门后真相', '---', '',
+  ].join('\n'), 'utf8');
+  appendEvent(env.root, {
+    chapter_index: 1, sequence: 0, event_type: 'knowledge_changed', dimension: 'knowledge', source: 'manual_edit',
+    snapshot_after: { character_id: 'char-a', fact_id: 'rain', state: 'known', text: '角色知道北闸雨夜关闭' },
+  });
+  appendEvent(env.root, {
+    chapter_index: 1, sequence: 1, event_type: 'knowledge_changed', dimension: 'knowledge', source: 'manual_edit',
+    snapshot_after: { character_id: 'char-b', fact_id: 'unknown', state: 'known', text: 'DSH_OTHER_CHARACTER_SECRET' },
+  });
+  appendEvent(env.root, {
+    chapter_index: 1, sequence: 2, event_type: 'knowledge_changed', dimension: 'knowledge', source: 'manual_edit',
+    snapshot_after: { character_id: 'char-a', fact_id: 'door', state: 'excluded', exclusion: '不得把门后内容写成角色已知' },
+  });
+  gitAdd(env.root);
+  gitCommit(env.root, 'fixture pov knowledge');
+}
+
 /** 提案 JSON 输出(next_chapter_proposal spec 要求 proposals 数组, 每项含 title/premise)。 */
 const proposalJson = JSON.stringify({
   proposals: [
@@ -162,6 +184,34 @@ describe('续写提案第二阶段端到端(fail-closed 验收)', () => {
     expect(raw).toContain('第二章正文候选');
     // 候选只进 pending, 不直写 canonical 正文(铁律 5)。
     expect(existsSync(path.join(env.root, 'chapters', '002.md'))).toBe(false);
+    env.cleanup();
+  });
+
+  it('POV/知识 P3 同时进入生成与独立审查，工具返回审计 receipt', async () => {
+    const env = await setup();
+    seedChapterOne(env);
+    seedPovKnowledge(env);
+    const frozen = await freezeDirection(env);
+    env.h.adapter.enqueue({ deltas: ['第二章正文候选'] });
+    await tool(env, 'novelcraft_generate_next_chapter').execute(
+      { root: env.root, run_id: frozen.run_id, proposal_id: frozen.proposal_id },
+      { ...env.exec, name: 'novelcraft_generate_next_chapter' },
+    );
+    env.h.adapter.enqueue({ deltas: [JSON.stringify({ findings: [], verdict: 'pass' })] });
+    const reviewed = await tool(env, 'novelcraft_chapter_review').execute(
+      { root: env.root, action: 'review', target: 'candidate', chapter: 2, ref: '002' },
+      { ...env.exec, name: 'novelcraft_chapter_review' },
+    ) as { context_hash: string; source_manifest: Array<{ source_type: string }> };
+    expect(reviewed.context_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(reviewed.source_manifest).toContainEqual(expect.objectContaining({ source_type: 'pov_knowledge' }));
+    expect(env.h.adapter.requests).toHaveLength(3);
+    for (const request of env.h.adapter.requests) {
+      const text = request.messages.flatMap((message) => message.content)
+        .map((block) => block.type === 'text' ? block.text : '')
+        .join('\n');
+      expect(text).toContain('角色知道北闸雨夜关闭');
+      expect(text).not.toContain('DSH_OTHER_CHARACTER_SECRET');
+    }
     env.cleanup();
   });
 

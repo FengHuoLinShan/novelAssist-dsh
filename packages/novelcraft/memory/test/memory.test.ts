@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
-import { appendEvent, chapterCoverage, eventId, projectWorldState, readEvents } from "../src/index";
+import { appendEvent, chapterCoverage, eventId, projectCharacterKnowledge, projectWorldState, readEvents } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -138,5 +138,32 @@ describe("chapterCoverage(增量导入/雷达用)", () => {
     const cov = chapterCoverage(events);
     expect(cov.get(2)).toEqual({ count: 2, lastSequence: 5 });
     expect(cov.get(3)).toEqual({ count: 1, lastSequence: 1 });
+  });
+});
+
+describe("projectCharacterKnowledge(P1-M1)", () => {
+  it("只返回截止章前 POV 人物的已知与安全 exclusion", () => {
+    const event = (
+      id: string,
+      chapter: number,
+      sequence: number,
+      snapshot_after: unknown,
+    ) => ({
+      id, chapter_index: chapter, sequence, event_type: "knowledge_changed" as const,
+      snapshot_after, source: "manual_edit" as const, created_at: "2026-09-01T00:00:00Z",
+    });
+    const projected = projectCharacterKnowledge([
+      event("later-wall-clock", 1, 1, { character_id: "char-a", fact_id: "door", state: "known", text: "门在北侧" }),
+      event("earlier-wall-clock", 1, 2, { character_id: "char-a", fact_id: "door", state: "excluded", exclusion: "不得推断门后内容", text: "SECRET" }),
+      event("other-character", 1, 3, { character_id: "char-b", fact_id: "secret", state: "known", text: "OTHER_SECRET" }),
+      event("same-target-chapter", 2, 0, { character_id: "char-a", fact_id: "future", state: "known", text: "FUTURE_SECRET" }),
+      event("broken", 1, 4, { character_id: "char-a", state: "known", text: "BROKEN_SECRET" }),
+      { ...event("bad-metadata", 1, 5, { character_id: "char-a", fact_id: "bad", state: "known", text: "BAD_SECRET" }), id: undefined } as never,
+    ], "char-a", 1);
+    expect(projected.known).toEqual([]);
+    expect(projected.excluded).toEqual([expect.objectContaining({ fact_id: "door", exclusion: "不得推断门后内容" })]);
+    expect(JSON.stringify(projected)).not.toContain("SECRET");
+    expect(projected.future_event_count).toBe(1);
+    expect(projected.invalid_event_count).toBe(2);
   });
 });

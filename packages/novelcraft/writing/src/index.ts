@@ -9,3 +9,4 @@ export * from "./import-text.js";
 export * from "./intake.js";
 export * from "./version.js";
 export * from "./view-reads.js";
+export * from "./pov-context.js";

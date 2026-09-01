@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MockProvider, type Provider } from "@novelcraft/llm-step";
 import { chunkChapterText, rebuildRagIndex, type RagChunk } from "@novelcraft/rag";
 import { initVault } from "@novelcraft/vault";
+import { appendEvent } from "@novelcraft/memory";
 import {
   adoptChapterCandidate,
   buildAuditableProposalContext,
@@ -45,7 +46,52 @@ async function freezeProposal(root: string) {
   return result.proposal;
 }
 
+function seedPovKnowledge(root: string): void {
+  writeFileSync(join(root, "scenes", "s002.md"), [
+    "---", "id: s002", "status: canonical", "title: 第二章", "chapter_ids: [2]",
+    "pov_character_id: char-a", "must_not_happen: 不得让角色直接说出密门真相", "---", "",
+  ].join("\n"), "utf8");
+  appendEvent(root, {
+    chapter_index: 1, sequence: 0, event_type: "knowledge_changed", dimension: "knowledge",
+    snapshot_after: { character_id: "char-a", fact_id: "weather", state: "known", text: "角色知道北闸会在雨夜关闭" },
+    source: "manual_edit",
+  });
+  appendEvent(root, {
+    chapter_index: 1, sequence: 1, event_type: "knowledge_changed", dimension: "knowledge",
+    snapshot_after: { character_id: "char-b", fact_id: "other-secret", state: "known", text: "OTHER_CHARACTER_SECRET" },
+    source: "manual_edit",
+  });
+  appendEvent(root, {
+    chapter_index: 1, sequence: 2, event_type: "knowledge_changed", dimension: "knowledge",
+    snapshot_after: {
+      character_id: "char-a", fact_id: "door-truth", state: "excluded",
+      exclusion: "不得把密门后的内容写成角色已知", text: "RAW_EXCLUDED_SECRET",
+    },
+    source: "manual_edit",
+  });
+  appendEvent(root, {
+    chapter_index: 2, sequence: 0, event_type: "knowledge_changed", dimension: "knowledge",
+    snapshot_after: { character_id: "char-a", fact_id: "future", state: "known", text: "SAME_CHAPTER_FUTURE_SECRET" },
+    source: "manual_edit",
+  });
+}
+
 describe("auditable writing context (P0-W1)", () => {
+  it("POV P3 只给当前角色截止章前已知事实与脱敏 exclusion", () => {
+    const root = makeRoot();
+    seedPovKnowledge(root);
+    const context = buildAuditableProposalContext(root, 1);
+    expect(context.rendered_text).toContain("角色知道北闸会在雨夜关闭");
+    expect(context.rendered_text).toContain("不得把密门后的内容写成角色已知");
+    expect(context.rendered_text).toContain("不得让角色直接说出密门真相");
+    expect(context.rendered_text).not.toContain("OTHER_CHARACTER_SECRET");
+    expect(context.rendered_text).not.toContain("RAW_EXCLUDED_SECRET");
+    expect(context.rendered_text).not.toContain("SAME_CHAPTER_FUTURE_SECRET");
+    expect(context.source_manifest).toContainEqual(expect.objectContaining({
+      source_id: "pov:char-a:chapter:2", source_type: "pov_knowledge", truncated: false,
+    }));
+  });
+
   it("BM25 只纳入 hash 可复核的当前/历史 chapter_text；未来与 stale 均排除", () => {
     const root = makeRoot(2);
     const ch1 = chapterBody(root, 1).body;
@@ -118,6 +164,77 @@ describe("auditable writing context (P0-W1)", () => {
 });
 
 describe("frozen proposal generation and adoption (P0-W1)", () => {
+  it("同模型生成与独立审查是两次 run，审查复用同一脱敏 POV 边界并落 receipt", async () => {
+    const root = makeRoot();
+    seedPovKnowledge(root);
+    const record = await freezeProposal(root);
+    const provider = new MockProvider({ responses: [
+      { text: "第二章候选" },
+      { text: JSON.stringify({ findings: [], verdict: "pass" }) },
+    ] });
+    await generateNextChapterFromProposal(provider, root, {
+      runId: record.run_id,
+      proposalId: record.proposals[0].proposal_id,
+    });
+    const reviewed = await reviewChapterCandidate(provider, root, 2, "002", new Date("2026-09-01T00:01:00.000Z"));
+    expect(reviewed.review?.verdict).toBe("pass");
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[0].messages[1].content).toContain("角色知道北闸");
+    expect(provider.calls[1].messages[1].content).toContain("第二章候选");
+    expect(provider.calls[1].messages[1].content).toContain("角色知道北闸");
+    expect(provider.calls[1].messages[1].content).not.toContain("OTHER_CHARACTER_SECRET");
+    expect(reviewed.review?.pov_context_receipt?.source_manifest).toContainEqual(expect.objectContaining({
+      source_type: "pov_knowledge", truncated: false,
+    }));
+  });
+
+  it("独立审查 provider 期间 POV/知识漂移 → 审查回执零落盘", async () => {
+    const root = makeRoot();
+    seedPovKnowledge(root);
+    const record = await freezeProposal(root);
+    await generateNextChapterFromProposal(new MockProvider({ responses: [{ text: "第二章候选" }] }), root, {
+      runId: record.run_id,
+      proposalId: record.proposals[0].proposal_id,
+    });
+    const base = new MockProvider({ responses: [{ text: JSON.stringify({ findings: [], verdict: "pass" }) }] });
+    const racing: Provider = {
+      async complete(request) {
+        const response = await base.complete(request);
+        appendEvent(root, {
+          chapter_index: 1, sequence: 3, event_type: "knowledge_changed", dimension: "knowledge",
+          snapshot_after: { character_id: "char-a", fact_id: "late", state: "known", text: "调用期间新知识" },
+          source: "manual_edit",
+        });
+        return response;
+      },
+    };
+    await expect(reviewChapterCandidate(racing, root, 2, "002")).rejects.toMatchObject({ code: "CONFLICT" });
+    const reviewDir = join(root, ".assistant", "reviews");
+    expect(existsSync(reviewDir) ? (await import("node:fs")).readdirSync(reviewDir) : []).toEqual([]);
+  });
+
+  it("独立审查后知识漂移 → adopt prepare 保持 pending 且零正文写", async () => {
+    const root = makeRoot();
+    seedPovKnowledge(root);
+    const record = await freezeProposal(root);
+    await generateNextChapterFromProposal(new MockProvider({ responses: [{ text: "第二章候选" }] }), root, {
+      runId: record.run_id,
+      proposalId: record.proposals[0].proposal_id,
+    });
+    await reviewChapterCandidate(
+      new MockProvider({ responses: [{ text: JSON.stringify({ findings: [], verdict: "pass" }) }] }),
+      root, 2, "002",
+    );
+    appendEvent(root, {
+      chapter_index: 1, sequence: 3, event_type: "knowledge_changed", dimension: "knowledge",
+      snapshot_after: { character_id: "char-a", fact_id: "late", state: "known", text: "审查后新知识" },
+      source: "manual_edit",
+    });
+    expect(() => prepareReviewedChapterCandidateAdopt(root, "002")).toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    expect(existsSync(join(root, "chapters", "pending", "002.md"))).toBe(true);
+    expect(existsSync(join(root, "chapters", "002.md"))).toBe(false);
+  });
+
   it("安全生成只消费 run_id/proposal_id；调用方伪造 title/premise 不进入输入", async () => {
     const root = makeRoot();
     const record = await freezeProposal(root);

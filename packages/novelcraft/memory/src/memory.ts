@@ -182,6 +182,114 @@ export function chapterCoverage(events: MemoryEvent[]): Map<number, { count: num
   return out;
 }
 
+export interface CharacterKnowledgeFact {
+  fact_id: string;
+  text: string;
+  chapter_index: number;
+  event_id: string;
+}
+
+export interface CharacterKnowledgeExclusion {
+  fact_id: string;
+  exclusion: string;
+  chapter_index: number;
+  event_id: string;
+}
+
+export interface CharacterKnowledgeProjection {
+  known: CharacterKnowledgeFact[];
+  excluded: CharacterKnowledgeExclusion[];
+  invalid_event_count: number;
+  future_event_count: number;
+}
+
+type KnowledgeDelta =
+  | { character_id: string; fact_id: string; state: "known"; text: string }
+  | { character_id: string; fact_id: string; state: "excluded"; exclusion: string };
+
+function knowledgeDelta(value: unknown): KnowledgeDelta | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.character_id !== "string" || !v.character_id || typeof v.fact_id !== "string" || !v.fact_id) {
+    return undefined;
+  }
+  if (v.state === "known" && typeof v.text === "string" && v.text.trim()) {
+    return { character_id: v.character_id, fact_id: v.fact_id, state: "known", text: v.text.trim() };
+  }
+  if (v.state === "excluded" && typeof v.exclusion === "string" && v.exclusion.trim()) {
+    return { character_id: v.character_id, fact_id: v.fact_id, state: "excluded", exclusion: v.exclusion.trim() };
+  }
+  return undefined;
+}
+
+/**
+ * P1-M1 最小人物知识投影：只消费显式 knowledge_changed delta，按故事章/
+ * Scene/序列重放。excluded 的原始 text 永不返回，只返回作者明示的安全 exclusion。
+ */
+export function projectCharacterKnowledge(
+  events: readonly MemoryEvent[],
+  characterId: string,
+  throughChapter: number,
+): CharacterKnowledgeProjection {
+  if (!characterId || !Number.isSafeInteger(throughChapter) || throughChapter < 0) {
+    throw new Error("characterId/throughChapter 非法");
+  }
+  const state = new Map<string, { delta: KnowledgeDelta; event: MemoryEvent }>();
+  let invalidEventCount = 0;
+  let futureEventCount = 0;
+  const knowledgeEvents: Array<{ event: MemoryEvent; delta: KnowledgeDelta }> = [];
+  for (const event of events) {
+    if (event.event_type !== "knowledge_changed") continue;
+    const delta = knowledgeDelta(event.snapshot_after);
+    if (delta === undefined || typeof event.id !== "string" || !event.id ||
+        !Number.isSafeInteger(event.chapter_index) || event.chapter_index < 1 ||
+        !Number.isSafeInteger(event.sequence) || event.sequence < 0 ||
+        !EVENT_SOURCES.includes(event.source) || typeof event.created_at !== "string" || !Number.isFinite(Date.parse(event.created_at)) ||
+        (event.dimension !== undefined && event.dimension !== "knowledge") ||
+        (event.scene_index !== undefined && (!Number.isSafeInteger(event.scene_index) || event.scene_index < 0)) ||
+        (event.scene_sequence !== undefined && (!Number.isSafeInteger(event.scene_sequence) || event.scene_sequence < 0))) {
+      invalidEventCount += 1;
+      continue;
+    }
+    knowledgeEvents.push({ event, delta });
+  }
+  knowledgeEvents.sort((a, b) =>
+    a.event.chapter_index - b.event.chapter_index ||
+    (a.event.scene_index ?? Number.MAX_SAFE_INTEGER) - (b.event.scene_index ?? Number.MAX_SAFE_INTEGER) ||
+    (a.event.scene_sequence ?? a.event.sequence) - (b.event.scene_sequence ?? b.event.sequence) ||
+    a.event.sequence - b.event.sequence ||
+    a.event.id.localeCompare(b.event.id));
+  for (const { event, delta } of knowledgeEvents) {
+    if (delta.character_id !== characterId) continue;
+    if (event.chapter_index > throughChapter) {
+      futureEventCount += 1;
+      continue;
+    }
+    state.set(delta.fact_id, { delta, event });
+  }
+  const known: CharacterKnowledgeFact[] = [];
+  const excluded: CharacterKnowledgeExclusion[] = [];
+  for (const factId of [...state.keys()].sort()) {
+    const current = state.get(factId)!;
+    if (current.delta.state === "known") {
+      known.push({
+        fact_id: factId,
+        text: current.delta.text,
+        chapter_index: current.event.chapter_index,
+        event_id: current.event.id,
+      });
+    } else {
+      excluded.push({
+        fact_id: factId,
+        exclusion: current.delta.exclusion,
+        chapter_index: current.event.chapter_index,
+        event_id: current.event.id,
+      });
+    }
+  }
+  return { known, excluded, invalid_event_count: invalidEventCount, future_event_count: futureEventCount };
+}
+
 /** 事件行哈希(校验/审计用, N13 纯 hex)。 */
 export function eventLineHash(line: string): string {
   return createHash("sha256").update(line, "utf8").digest("hex");

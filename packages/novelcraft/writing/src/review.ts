@@ -23,6 +23,12 @@ import {
 import { runStep, registerSpec } from "@novelcraft/llm-step";
 import type { Provider } from "@novelcraft/llm-step";
 import type { StepResult } from "@novelcraft/llm-step";
+import {
+  assertPovKnowledgeReceiptCurrent,
+  compilePovKnowledgeContext,
+  povKnowledgeReceipt,
+  type PovKnowledgeReceipt,
+} from "./pov-context.js";
 
 /** N30 · writing.md:284: 回执层 severity 存储词表(LLM 输出 high/medium/low 摄入时归一化)。 */
 export type ReviewSeverity = "blocker" | "major" | "minor";
@@ -52,6 +58,8 @@ export interface ReviewRecord {
   discarded_finding_count?: number;
   unlocated_finding_ids?: string[];
   rejected_findings?: Record<string, { at: string; reason?: string }>;
+  /** candidate 独立审查的脱敏 POV/知识来源回执。 */
+  pov_context_receipt?: PovKnowledgeReceipt;
 }
 
 export interface CandidateReviewRecord extends ReviewRecord {
@@ -63,6 +71,7 @@ export interface CandidateReviewRecord extends ReviewRecord {
   raw_verdict?: string;
   discarded_finding_count: number;
   unlocated_finding_ids: string[];
+  pov_context_receipt: PovKnowledgeReceipt;
 }
 
 export interface ReviewResult {
@@ -288,7 +297,11 @@ export async function reviewChapterCandidate(
   now: Date = new Date(),
 ): Promise<ReviewResult> {
   const frozen = readChapterCandidate(root, chapterIndex, ref);
-  const result = await runStep(provider, { specRef: "semantic_review", input: frozen.body });
+  const povContext = compilePovKnowledgeContext(root, chapterIndex);
+  const input = povContext.rendered_text
+    ? `${frozen.body}\n\n【独立审查的 POV/知识边界】\n${povContext.rendered_text}`
+    : frozen.body;
+  const result = await runStep(provider, { specRef: "semantic_review", input });
   if (!result.ok) return { ok: false, error: result.error };
   const parsed = result.result as { findings?: unknown[]; verdict?: string };
   const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
@@ -317,6 +330,7 @@ export async function reviewChapterCandidate(
     ...(typeof parsed.verdict === "string" ? { raw_verdict: parsed.verdict } : {}),
     discarded_finding_count: discarded,
     unlocated_finding_ids: unlocated,
+    pov_context_receipt: povKnowledgeReceipt(povContext),
   };
   const file = paths(root).assistant.reviewFile(
     `candidate-review-${String(chapterIndex).padStart(3, "0")}-${frozen.ref}-${reviewId}`,
@@ -332,6 +346,7 @@ export async function reviewChapterCandidate(
       if (readChapterCandidate(root, chapterIndex, ref).fileHash !== frozen.fileHash) {
         throw new StoreError("CONFLICT", `候选 ${ref} 在审查期间发生变化, 审查结果未落盘`);
       }
+      assertPovKnowledgeReceiptCurrent(root, record.pov_context_receipt);
     },
   });
   return { ok: true, review: record };

@@ -19,6 +19,27 @@ function reviewFindingCards(findings: readonly writing.ReviewFinding[]): Array<R
   }));
 }
 
+function povReceiptProjection(receipt?: writing.PovKnowledgeReceipt) {
+  return {
+    context_hash: receipt?.context_hash ?? '',
+    source_manifest: (receipt?.source_manifest ?? []).map((source) => ({
+      source_id: source.source_id,
+      source_type: source.source_type,
+      name: source.name,
+      source_status: source.source_status ?? '',
+      source_hash: source.source_hash,
+      included_content_hash: source.included_content_hash,
+      truncated: source.truncated,
+    })),
+    omitted_source_ids: receipt?.omitted_source_ids ?? [],
+    warnings: (receipt?.warnings ?? []).map((warning) => ({
+      code: warning.code,
+      message: warning.message,
+      source_id: 'source_id' in warning ? warning.source_id : '',
+    })),
+  };
+}
+
 export function buildWritingTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   const tool = novelcraftToolFactory(ctx, service);
   return [
@@ -156,6 +177,10 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           review_id: { type: 'string', required: true },
           verdict: { type: 'string', required: true },
           content_hash: { type: 'string', required: true },
+          context_hash: { type: 'string', required: true },
+          source_manifest: { type: 'array', required: true },
+          omitted_source_ids: { type: 'array', required: true },
+          warnings: { type: 'array', required: true },
           findings: { type: 'array', required: true },
           file: { type: 'string', required: true },
           commit: { type: 'string', required: true },
@@ -175,6 +200,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
           review_id: '',
           verdict: '',
           content_hash: '',
+          ...povReceiptProjection(),
           findings: [] as Array<Record<string, string>>,
           file: '',
           commit: '',
@@ -187,6 +213,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
                 review_id: review.review_id,
                 verdict: review.verdict ?? '',
                 content_hash: review.target_content_hash ?? review.content_hash,
+                ...povReceiptProjection(review.pov_context_receipt),
                 findings: reviewFindingCards(review.findings),
                 message: `第 ${args.chapter} 章 ${target} 最新审查: ${review.verdict ?? '未裁定'}。`,
               }
@@ -206,6 +233,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
             review_id: result.review.review_id,
             verdict: result.review.verdict ?? '',
             content_hash: result.review.target_content_hash ?? result.review.content_hash,
+            ...povReceiptProjection(result.review.pov_context_receipt),
             findings: reviewFindingCards(result.review.findings),
             message: `第 ${args.chapter} 章 ${target} 审查完成: ${result.review.verdict ?? '未裁定'}，${result.review.findings.length} 条 finding。`,
           };

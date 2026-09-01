@@ -31,6 +31,7 @@ import {
 } from "@novelcraft/store";
 import { chapterBody, latestCandidateReview, latestReview, registerWritingSpecsOnce } from "./review.js";
 import type { ReviewFinding } from "./review.js";
+import { assertPovKnowledgeReceiptCurrent, type PovKnowledgeReceipt } from "./pov-context.js";
 import { chapterBodyText, contentHashOf } from "./ingest.js";
 import {
   assertFrozenProposalCurrent,
@@ -313,6 +314,7 @@ function prepareChapterCandidateAdopt(
   // 与 store.prepareAdopt 同款防线; 执行器只兜底最终组件)。
   assertNoInternalSymlink(root, paths(root).chapters.chapterFile(chapterIndex));
   assertNoInternalSymlink(root, asset.abs);
+  let reviewReceipt: PovKnowledgeReceipt | undefined;
   if (requireReview) {
     const review = latestCandidateReview(root, chapterIndex, asset.slug);
     if (
@@ -320,6 +322,14 @@ function prepareChapterCandidateAdopt(
       review.target_content_hash !== actualHash || review.target_file_hash !== contentHash(raw)
     ) {
       throw new StoreError("VALIDATION_FAILED", `章节候选 ${ref} 缺少 fresh 独立审查 pass`);
+    }
+    if (review.pov_context_receipt === undefined) {
+      if (fm.source === "writing_generate" && fm.proposal_run_id !== undefined) {
+        throw new StoreError("VALIDATION_FAILED", `章节候选 ${ref} 缺少 POV/知识独立审查回执，请重新审查`);
+      }
+    } else {
+      assertPovKnowledgeReceiptCurrent(root, review.pov_context_receipt);
+      reviewReceipt = review.pov_context_receipt;
     }
   }
   const now = new Date().toISOString();
@@ -346,8 +356,12 @@ function prepareChapterCandidateAdopt(
     ], {
       purpose: `adopt(chapter): ${asset.slug} -> ${targetRel}`,
       expectedHead: gitHead(root),
-      ...(fm.source === "writing_generate"
-        ? { validate: (target: string) => { if (target === targetRel) assertGeneratedProposalBaseline(root, fm, asset.slug); } }
+      ...(fm.source === "writing_generate" || reviewReceipt !== undefined
+        ? { validate: (target: string) => {
+            if (target !== targetRel) return;
+            if (fm.source === "writing_generate") assertGeneratedProposalBaseline(root, fm, asset.slug);
+            if (reviewReceipt !== undefined) assertPovKnowledgeReceiptCurrent(root, reviewReceipt);
+          } }
         : {}),
       ...(opts.tx ? { tx: opts.tx } : {}),
     }),

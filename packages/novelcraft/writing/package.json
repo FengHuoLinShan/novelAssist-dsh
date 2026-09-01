@@ -16,6 +16,7 @@
   "dependencies": {
     "@novelcraft/context": "*",
     "@novelcraft/llm-step": "*",
+    "@novelcraft/memory": "*",
     "@novelcraft/outline": "*",
     "@novelcraft/rag": "*",
     "@novelcraft/store": "*",

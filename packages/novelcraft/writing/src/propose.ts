@@ -19,6 +19,7 @@ import { readOutline } from "@novelcraft/outline";
 import { rankChunksBm25, readRagIndex, type RagChunk } from "@novelcraft/rag";
 import { chapterBody } from "./review.js";
 import { contentHashOf } from "./ingest.js";
+import { resolvePovKnowledgeContext, type PovContextWarning } from "./pov-context.js";
 
 export interface ChapterProposal {
   /** 新冻结提案路径必有；旧回执可缺。 */
@@ -68,6 +69,7 @@ export interface FrozenProposalRecord extends ProposalRecord {
 
 export type WritingContextWarning =
   | AuditableContextWarning
+  | PovContextWarning
   | { code: "rag_index_missing" | "rag_no_match" | "future_chapter_excluded"; message: string }
   | { code: "rag_source_missing" | "rag_source_stale" | "rag_chunk_mismatch"; source_id: string; message: string };
 
@@ -270,6 +272,8 @@ export function buildAuditableProposalContext(
   const task = proposalTask(chapterIndex, opts.selected);
   const tail = body.trim().slice(-1500);
   const warnings: WritingContextWarning[] = [];
+  const pov = resolvePovKnowledgeContext(root, chapterIndex + 1);
+  warnings.push(...pov.warnings);
   const sources: Parameters<typeof compileAuditableContext>[1]["sources"] = [{
     tier: "P0",
     name: opts.selected === undefined ? "续写提案任务" : "冻结续写方向",
@@ -306,6 +310,7 @@ export function buildAuditableProposalContext(
   sources.push(...map.threads.map((item) => storySource("P2", "thread", item)));
   sources.push(...map.arcs.map((item) => storySource("P2", "arc", item)));
   sources.push(...map.foreshadowing.map((item) => storySource("P3", "foreshadowing", item)));
+  if (pov.source) sources.push(pov.source);
   sources.push(...p4ChapterSources(root, chapterIndex, `${task}\n${tail}`, warnings));
   const compiled = compileAuditableContext(
     {
@@ -315,6 +320,12 @@ export function buildAuditableProposalContext(
     },
     { sources },
   );
+  if (pov.source) {
+    const retained = compiled.source_manifest.find((source) => source.source_id === pov.source!.source_id);
+    if (!retained || retained.truncated) {
+      throw new StoreError("VALIDATION_FAILED", `第 ${chapterIndex + 1} 章 POV/知识边界无法完整进入生成上下文`);
+    }
+  }
   return {
     ...compiled,
     base_content_hash: baseHash,
