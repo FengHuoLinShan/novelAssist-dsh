@@ -123,6 +123,20 @@ function responseFacts(resp: ProviderResponse): {
   if (textStatus !== "present") {
     return { finishReason, textStatus, providerOutcome: "empty_response", failure: { kind: "empty_response", message: "模型返回空 visible text" } };
   }
+  // DSH 还会从实际 block 形状识别 outcome（例如适配器错把带 tool-call
+  // 的流标成 stop）。finish/text 通过后仍必须尊重这个更严格的事实。
+  if (resp.providerOutcome !== undefined && resp.providerOutcome !== "success") {
+    const failures: Record<Exclude<ProviderOutcome, "success">, { kind: StepErrorKind; message: string }> = {
+      truncated: { kind: "truncated", message: "模型输出被截断，结果不完整" },
+      cancelled: { kind: "cancelled", message: "模型调用已取消" },
+      provider_error: { kind: "provider_fatal", message: "provider 以 error outcome 终止" },
+      unexpected_tool_calls: { kind: "unexpected_tool_calls", message: "内容步骤未配置工具，却收到 tool-call block" },
+      empty_response: { kind: "empty_response", message: "模型返回空 visible text" },
+      protocol_error: { kind: "protocol_error", message: "provider stream 协议异常" },
+      context_overflow: { kind: "context_overflow", message: "完整请求超过模型上下文" },
+    };
+    return { finishReason, textStatus, providerOutcome: resp.providerOutcome, failure: failures[resp.providerOutcome] };
+  }
   return { finishReason, textStatus, providerOutcome: "success" };
 }
 

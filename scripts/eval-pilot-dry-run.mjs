@@ -9,6 +9,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const evalRoot = path.join(repoRoot, 'evals', 'deepseek-v4-flash');
 const catalogPath = path.join(evalRoot, 'catalog.json');
 const fixturesPath = path.join(evalRoot, 'fixtures.json');
+const EXPECTED_CATEGORIES = [
+  'json_schema_first_pass', 'scene_slicing', 'entity_extraction', 'alias_relation',
+  'structure_analysis', 'continuation_proposal', 'chapter_prose', 'semantic_review',
+  'targeted_revision', 'outline_world_planning', 'rag_rerank_abstention',
+  'continuity_pov_knowledge_foreshadowing',
+];
+const EXPECTED_PILOT_CHAINS = [
+  'structure_analysis', 'continuation_proposal', 'chapter_prose', 'semantic_review',
+];
 
 function fail(message) {
   throw new Error(`eval dry-run: ${message}`);
@@ -46,6 +55,15 @@ function validateCatalog(catalog, fixtureSet) {
   if (!Array.isArray(catalog.pilot_chains) || catalog.pilot_chains.length !== 4) {
     fail('pilot_chains 必须恰好为四条首轮链');
   }
+  if (catalog.candidate_model !== 'deepseek-v4-flash' || catalog.pilot_effort !== 'high') {
+    fail('catalog candidate_model/pilot_effort 必须固定为 deepseek-v4-flash/high');
+  }
+  if (!sameStrings(catalog.categories.map((category) => category.id), EXPECTED_CATEGORIES)) {
+    fail('catalog 必须精确覆盖冻结的 12 类任务');
+  }
+  if (!sameStrings(catalog.pilot_chains, EXPECTED_PILOT_CHAINS)) {
+    fail('pilot_chains 必须精确为冻结的四条链');
+  }
   if (catalog.repetitions !== 3) fail('repetitions 必须为 3');
   const ids = new Set();
   for (const category of catalog.categories) {
@@ -59,6 +77,7 @@ function validateCatalog(catalog, fixtureSet) {
       if (!Array.isArray(category.fixture_ids) || category.fixture_ids.length !== 3) {
         fail(`ready category ${category.id} 必须恰好绑定 3 个 fixture`);
       }
+      if (new Set(category.fixture_ids).size !== 3) fail(`ready category ${category.id} fixture 不得重复`);
       for (const fixtureId of category.fixture_ids) {
         if (!fixtureSet.has(fixtureId)) fail(`category ${category.id} 引用未知 fixture ${fixtureId}`);
       }
@@ -69,6 +88,12 @@ function validateCatalog(catalog, fixtureSet) {
   if (!catalog.pilot_chains.every((id) => ids.has(id))) fail('pilot_chains 含未知 category');
   const ready = catalog.categories.filter((category) => category.status === 'ready').map((category) => category.id);
   if (!sameStrings(ready, catalog.pilot_chains)) fail('ready categories 必须与 pilot_chains 完全一致');
+  const pilotFixtureIds = catalog.categories
+    .filter((category) => category.status === 'ready')
+    .flatMap((category) => category.fixture_ids);
+  if (new Set(pilotFixtureIds).size !== 12 || !sameStrings(pilotFixtureIds, fixtureSet)) {
+    fail('四条 pilot 必须覆盖 12 个互异 synthetic fixture');
+  }
 }
 
 function validateFixtures(document) {
@@ -110,7 +135,7 @@ function validateAuthorization(auth, fixtureIds) {
   }
   if (auth.model !== 'deepseek-v4-flash') issues.push('model_must_be_deepseek_v4_flash');
   if (auth.effort !== 'high') issues.push('effort_must_be_high');
-  if (!Number.isSafeInteger(auth.seed)) issues.push('seed_invalid');
+  if (!Number.isSafeInteger(auth.seed) || auth.seed < 0) issues.push('seed_invalid');
   if (auth.max_logical_calls !== 36) issues.push('max_logical_calls_must_equal_36');
   if (auth.max_physical_calls !== 72) issues.push('max_physical_calls_must_equal_72');
   for (const field of ['per_call_output_token_cap', 'max_total_input_tokens', 'max_total_output_tokens']) {
@@ -196,7 +221,11 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === '--self-test') parsed.selfTest = true;
     else if (arg === '--execute') parsed.execute = true;
-    else if (arg === '--authorization') parsed.authorization = argv[++index];
+    else if (arg === '--authorization') {
+      const value = argv[++index];
+      if (!nonEmptyString(value) || value.startsWith('--')) fail('--authorization 必须紧跟 JSON 路径');
+      parsed.authorization = value;
+    }
     else fail(`未知参数 ${arg}`);
   }
   return parsed;

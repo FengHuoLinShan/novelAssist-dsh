@@ -147,7 +147,13 @@ describe("public current/candidate review gate (§6.16)", () => {
         writeFileSync(join(root, "notes.md"), "与章节无关", "utf8");
         gitAdd(root, ["notes.md"]);
         gitCommit(root, "unrelated note");
-        return { text: JSON.stringify({ findings: [] }), usage: { inputTokens: 1, outputTokens: 1 } };
+        return {
+          text: JSON.stringify({ findings: [] }),
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: "stop",
+          textStatus: "present",
+          providerOutcome: "success",
+        };
       },
     };
     const reviewed = await reviewCurrentChapter(provider, root, 1);

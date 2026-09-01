@@ -237,6 +237,23 @@ describe("runStep(主流程, 设计文档 §12 契约)", () => {
     expect(result.journal[0]).toMatchObject({ finishReason, errorKind: expectedKind });
   });
 
+  it("block 已识别 unexpected_tool_calls 时，即使 finish=stop + text 也不接受 success", async () => {
+    const provider = new MockProvider({ responses: [{
+      text: "visible but invalid",
+      finishReason: "stop",
+      textStatus: "present",
+      providerOutcome: "unexpected_tool_calls",
+    }] });
+    const result = await runStep(provider, { specRef: "writing_generate", input: "x", fixAttempts: 0 });
+    expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe("unexpected_tool_calls");
+    expect(result.journal[0]).toMatchObject({
+      finishReason: "stop",
+      providerOutcome: "unexpected_tool_calls",
+      errorKind: "unexpected_tool_calls",
+    });
+  });
+
   it("journal 只留输出 hash/长度与完整 usage，不留正文或 reasoning bytes", async () => {
     const provider = new MockProvider({
       responses: [{
