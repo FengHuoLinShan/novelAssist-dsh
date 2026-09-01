@@ -1,0 +1,86 @@
+{
+  "version": "1.0.0",
+  "candidate_model": "deepseek-v4-flash",
+  "pilot_effort": "high",
+  "repetitions": 3,
+  "pilot_chains": [
+    "structure_analysis",
+    "continuation_proposal",
+    "chapter_prose",
+    "semantic_review"
+  ],
+  "categories": [
+    {
+      "id": "json_schema_first_pass",
+      "status": "contract_only",
+      "spec_ref": "entity_extraction",
+      "reason": "由所有 JSON pilot 输出共同计量，不单独增加付费调用"
+    },
+    {
+      "id": "scene_slicing",
+      "status": "contract_only",
+      "spec_ref": "scene_slicing",
+      "reason": "已实现但不在首轮四链付费 pilot"
+    },
+    {
+      "id": "entity_extraction",
+      "status": "contract_only",
+      "spec_ref": "entity_extraction",
+      "reason": "已实现但不在首轮四链付费 pilot"
+    },
+    {
+      "id": "alias_relation",
+      "status": "contract_only",
+      "spec_ref": "alias_relation",
+      "reason": "已实现但不在首轮四链付费 pilot"
+    },
+    {
+      "id": "structure_analysis",
+      "status": "ready",
+      "spec_ref": "structure_analysis",
+      "fixture_ids": ["structure-01", "structure-02", "structure-03"]
+    },
+    {
+      "id": "continuation_proposal",
+      "status": "ready",
+      "spec_ref": "next_chapter_proposal",
+      "fixture_ids": ["proposal-01", "proposal-02", "proposal-03"]
+    },
+    {
+      "id": "chapter_prose",
+      "status": "ready",
+      "spec_ref": "writing_generate",
+      "fixture_ids": ["prose-01", "prose-02", "prose-03"]
+    },
+    {
+      "id": "semantic_review",
+      "status": "ready",
+      "spec_ref": "semantic_review",
+      "fixture_ids": ["review-01", "review-02", "review-03"]
+    },
+    {
+      "id": "targeted_revision",
+      "status": "contract_only",
+      "spec_ref": "targeted_revision",
+      "reason": "首轮先评审查建议，不把返修质量混入同一费用批次"
+    },
+    {
+      "id": "outline_world_planning",
+      "status": "contract_only",
+      "spec_ref": "outline_generation/world_converge",
+      "reason": "来源选择合同待 P1-C1 闭合"
+    },
+    {
+      "id": "rag_rerank_abstention",
+      "status": "blocked",
+      "spec_ref": "rag_rerank",
+      "reason": "P1-R1 前向量身份与弃权合同未闭合"
+    },
+    {
+      "id": "continuity_pov_knowledge_foreshadowing",
+      "status": "blocked",
+      "spec_ref": "writing_generate/semantic_review",
+      "reason": "P1-M1 前无可验证 POV/知识边界消费合同"
+    }
+  ]
+}

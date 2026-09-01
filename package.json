@@ -18,6 +18,8 @@
     "check:distribution": "node scripts/check-distribution-profile.mjs",
     "check:audit-gate": "node scripts/audit-baseline-selftest.mjs",
     "bench:read-paths": "npm run build && node scripts/benchmark-read-paths.mjs",
+    "eval:pilot:dry-run": "node scripts/eval-pilot-dry-run.mjs",
+    "eval:pilot:self-test": "node scripts/eval-pilot-dry-run.mjs --self-test",
     "audit:default": "node scripts/check-audit-baseline.mjs --profile=default",
     "audit:bge": "node scripts/check-audit-baseline.mjs --profile=bge"
   },
