@@ -95,7 +95,12 @@ export interface SourceRef {
   summary?: string;
   /** 前端可打开目标(如 {kind: 'object', slug} / {kind: 'bible_page', slug})。 */
   open_target?: Record<string, unknown>;
+  /** 原始来源全文 hash。 */
   source_hash?: string;
+  /** 实际进入 packet 的片段 hash/range；旧资产可缺省。 */
+  included_content_hash?: string;
+  included_range?: { start: number; end: number };
+  truncated?: boolean;
   source_status?: string;
 }
 

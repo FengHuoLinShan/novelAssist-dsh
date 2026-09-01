@@ -13,6 +13,7 @@ import {
   compileAtlasContext,
   computePlanSemanticKeys,
   newSourceIdentities,
+  normalizePlanSources,
   planMapAtlas,
   readAtlasTree,
   validateAtlasPlan,
@@ -194,6 +195,26 @@ describe("validatePlanSources 来源白名单(规则 3)", () => {
       { label: "x", position_x: 0, position_y: 0, source_ref: src({ source_id: "bp-ghost" }) },
     ];
     expect(validatePlanSources(plan, MANIFEST).join()).toContain("not in compiled context");
+  });
+
+  it("normalize 回填 actual-input hash/range，不信任模型伪造片段", () => {
+    const plan = validPlan();
+    plan.nodes[1].sources[0] = src({
+      included_content_hash: "spoof",
+      included_range: { start: 9, end: 10 },
+      truncated: false,
+    });
+    normalizePlanSources(plan, [{
+      ...MANIFEST[0],
+      included_content_hash: "actual",
+      included_range: { start: 0, end: 42 },
+      truncated: true,
+    }]);
+    expect(plan.nodes[1].sources[0]).toMatchObject({
+      included_content_hash: "actual",
+      included_range: { start: 0, end: 42 },
+      truncated: true,
+    });
   });
 });
 
@@ -538,9 +559,9 @@ describe("planMapAtlas orchestrator(计划 Phase 3 步骤 1-7)", () => {
       responses: [{ text: spatialResp("loc-00", "wiki:bp-00") }, { text: planResp("bp-00") }],
     });
     await planMapAtlas(root, p1, { run_kind: "initial", runId: "run-m1" });
-    // 新增地点(无新 bible; bp-00 hash 未变 → 旧节点 unchanged; loc-01 missing 但无 formal source…
-    // missing 集只看 location 是否有 atlas 节点, loc-01 无节点 → missing; plan 只规划 loc-01。
+    // 新增地点必须先有 retained/openable 证据；只有名字不进 context(A1)。
     writeLocation(root, "loc-01", "雾岭");
+    writeBible(root, "bp-01", "雾岭志", "正文");
     const p2 = new MockProvider({
       responses: [
         { text: JSON.stringify({ locations: [] }) },

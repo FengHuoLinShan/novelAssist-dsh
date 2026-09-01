@@ -100,6 +100,14 @@ function toSourceRef(value: unknown): SourceRef {
     ref.open_target = o.open_target as Record<string, unknown>;
   }
   if (typeof o.source_hash === 'string') ref.source_hash = o.source_hash;
+  if (typeof o.included_content_hash === 'string') ref.included_content_hash = o.included_content_hash;
+  if (o.included_range && typeof o.included_range === 'object' && !Array.isArray(o.included_range)) {
+    const range = o.included_range as Record<string, unknown>;
+    if (Number.isInteger(range.start) && Number.isInteger(range.end) && Number(range.start) >= 0 && Number(range.end) >= Number(range.start)) {
+      ref.included_range = { start: Number(range.start), end: Number(range.end) };
+    }
+  }
+  if (typeof o.truncated === 'boolean') ref.truncated = o.truncated;
   if (typeof o.source_status === 'string') ref.source_status = o.source_status;
   return ref;
 }

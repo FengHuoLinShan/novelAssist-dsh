@@ -10,9 +10,10 @@ import {
   ATLAS_MAX_LOCATIONS,
   ATLAS_WIKI_PER_LOCATION,
   compileAtlasContext,
+  validatePlanSources,
   writeAtlasNode,
 } from "../src/index";
-import type { AtlasNode } from "../src/index";
+import type { AtlasNode, AtlasPlan } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -112,6 +113,9 @@ describe("compileAtlasContext 地点选择(计划 §4 Phase 2)", () => {
     writeObject(root, { id: "loc-c", name: "旧港" });
     writeObject(root, { id: "char-1", name: "阿黎", kind: "character" });
     writeObject(root, { id: "loc-draft", name: "草案地", status: "draft" });
+    writeBiblePage(root, { slug: "bp-a", title: "临水城志" }, "A");
+    writeBiblePage(root, { slug: "bp-b", title: "雾岭志" }, "B");
+    writeBiblePage(root, { slug: "bp-c", title: "旧港志" }, "C");
     const r = await compileAtlasContext(root);
     expect(r.insufficient_sources).toBe(false);
     expect(r.packets.map((p) => p.location_key).sort()).toEqual(["loc-a", "loc-b", "loc-c"]);
@@ -125,7 +129,11 @@ describe("compileAtlasContext 地点选择(计划 §4 Phase 2)", () => {
     writeObject(root, { id: "loc-mid", name: "中", importance: 5 });
     writeObject(root, { id: "loc-linked", name: "链", importance: 0 });
     writeObject(root, { id: "loc-atlas", name: "册", importance: 0 });
-    writeBiblePage(root, { slug: "bp-1", title: "无关页", linked_asset_refs: ["loc-linked"] });
+    writeBiblePage(root, { slug: "bp-1", title: "无关页", linked_asset_refs: ["loc-linked"] }, "linked");
+    writeBiblePage(root, { slug: "bp-lo", title: "低志" }, "lo");
+    writeBiblePage(root, { slug: "bp-hi", title: "高志" }, "hi");
+    writeBiblePage(root, { slug: "bp-mid", title: "中志" }, "mid");
+    writeBiblePage(root, { slug: "bp-atlas", title: "册志" }, "atlas");
     writeAtlasNode(root, makeNode({ id: "n1", location_ref: "loc-atlas" }));
     const r = await compileAtlasContext(root);
     expect(r.packets.map((p) => p.location_key)).toEqual([
@@ -142,6 +150,11 @@ describe("compileAtlasContext 地点选择(计划 §4 Phase 2)", () => {
     for (let i = 0; i < 22; i++) {
       writeObject(root, { id: `loc-${String(i).padStart(2, "0")}`, name: `地点${String(i).padStart(2, "0")}` });
     }
+    writeBiblePage(root, {
+      slug: "bp-all",
+      title: "地点合集",
+      linked_asset_refs: Array.from({ length: 22 }, (_, i) => `loc-${String(i).padStart(2, "0")}`),
+    }, "可核对证据");
     const r = await compileAtlasContext(root);
     expect(r.packets.length).toBe(ATLAS_MAX_LOCATIONS);
     expect(ATLAS_MAX_LOCATIONS).toBe(20);
@@ -193,9 +206,39 @@ describe("compileAtlasContext 预算与确定性(计划 §4 Phase 2 预算; 规�
     const total = r.packets[0].wiki.reduce((s, w) => s + w.text.length, 0);
     expect(total).toBe(ATLAS_CHARS_PER_LOCATION);
     expect(ATLAS_CHARS_PER_LOCATION).toBe(8000);
-    // 截断不影响 source_keys/manifest(只截 text)。
+    // manifest 只从实际片段生成，同时保留原文/实发双 hash。
     expect(r.packets[0].source_keys).toEqual(["wiki:bp-big"]);
     expect(r.source_manifest.length).toBe(1);
+    expect(r.source_manifest[0]).toMatchObject({
+      source_id: "bp-big",
+      included_range: { start: 0, end: ATLAS_CHARS_PER_LOCATION },
+      truncated: true,
+    });
+    expect(r.source_manifest[0].included_content_hash).not.toBe(r.source_manifest[0].source_hash);
+  });
+
+  it("整条来源被预算丢弃后不进 manifest，plan validator 也不允许引用", async () => {
+    const root = makeRoot();
+    writeObject(root, { id: "loc-a", name: "临水城" });
+    writeBiblePage(root, { slug: "bp-a-big", title: "临水城 A" }, "字".repeat(9000));
+    writeBiblePage(root, { slug: "bp-z-drop", title: "临水城 Z" }, "未送入证据");
+    const dropped = await compileAtlasContext(root);
+    expect(dropped.packets[0].source_keys).toEqual(["wiki:bp-a-big"]);
+    expect(dropped.source_manifest.map((source) => source.source_id)).toEqual(["bp-a-big"]);
+    const plan: AtlasPlan = {
+      style_brief: "x",
+      nodes: [{
+        plan_key: "n1", parent_plan_key: null, location_ref: "loc-a", title: "临水城",
+        level: "city", summary: "x", visual_brief: "临水城", prompt: "x",
+        evidence: { supported: ["x"], visual_fill: [], conflicts: [] },
+        sources: [{
+          source_type: "bible_page", source_id: "bp-z-drop",
+          open_target: { kind: "bible_page", slug: "bp-z-drop" },
+        }],
+        annotations: [],
+      }],
+    };
+    expect(validatePlanSources(plan, dropped.source_manifest).join()).toContain("not in compiled context");
   });
 
   it("review F1 回归: 8 个地点各近 8000 字, 证据不被批预算清空(批预算=5×8000 结构性满足)", async () => {
@@ -227,11 +270,13 @@ describe("compileAtlasContext 预算与确定性(计划 §4 Phase 2 预算; 规�
     );
   });
 
-  it("无 RAG 索引时 rag 证据为空且不抛错(降级口径; 规则 4 确定性读面)", async () => {
+  it("只有地点名、无 retained/openable 证据时 insufficient，不为名字支付 LLM", async () => {
     const root = makeRoot();
     writeObject(root, { id: "loc-a", name: "临水城" });
     const r = await compileAtlasContext(root);
-    expect(r.packets[0].rag).toEqual([]);
-    expect(r.packets[0].location_key).toBe("loc-a");
+    expect(r.packets).toEqual([]);
+    expect(r.source_manifest).toEqual([]);
+    expect(r.insufficient_sources).toBe(true);
+    expect(r.message).toContain("没有可核对的保留证据");
   });
 });

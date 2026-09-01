@@ -366,6 +366,12 @@ export function normalizePlanSources(plan: AtlasPlan, manifest: SourceRef[]): vo
     source.summary = canonical.summary ?? "已保留资料";
     source.open_target = { ...(canonical.open_target ?? {}) };
     source.source_hash = canonical.source_hash;
+    if (canonical.included_content_hash !== undefined) source.included_content_hash = canonical.included_content_hash;
+    else delete source.included_content_hash;
+    if (canonical.included_range !== undefined) source.included_range = { ...canonical.included_range };
+    else delete source.included_range;
+    if (canonical.truncated !== undefined) source.truncated = canonical.truncated;
+    else delete source.truncated;
     source.source_status = String(canonical.source_status ?? "").toLowerCase();
   };
   for (const node of plan.nodes) {

@@ -231,36 +231,51 @@ export async function compileAtlasContext(
     }));
     const ragFull = await ragEvidence(root, loc);
 
-    // manifest 用未截断文本算 hash(预算无关, 稳定)。
+    const trimmed = trimLocationEvidence(wikiFull, ragFull);
+    const retained = [...trimmed.wiki, ...trimmed.rag];
+    // 地点名不是直接证据；无 retained/openable 来源的地点不支付 LLM。
+    if (retained.length === 0) continue;
+    const fullByKey = new Map([...wikiFull, ...ragFull].map((item) => [item.source_key, item]));
+    const wikiByKey = new Map(wikiPages.map((page) => [`wiki:${page.slug}`, page]));
     const hashes: string[] = [];
-    for (const p of wikiPages) {
-      const h = sha256Hex(p.text).slice(0, 16);
-      hashes.push(h);
-      manifest.push({
-        source_id: p.slug,
-        source_type: "bible_page",
-        title: p.title || p.slug,
-        source_hash: h,
-        source_status: p.status,
-        open_target: { kind: "bible_page", slug: p.slug },
-      });
-    }
-    for (const item of ragFull) {
-      const chunkId = item.source_key.slice("rag:".length);
-      const h = sha256Hex(item.text).slice(0, 16);
-      hashes.push(h);
-      manifest.push({
-        source_id: chunkId,
-        source_type: "rag_chunk",
-        title: item.text.slice(0, 30),
-        source_hash: h,
-        source_status: "canonical",
-        open_target: { kind: "rag_chunk", chunk_id: chunkId },
-      });
+    // A1: 先 trim，再从实际 packet 生成 manifest；原始与实发片段 hash 分列。
+    for (const item of retained) {
+      const full = fullByKey.get(item.source_key);
+      if (!full) continue;
+      const sourceHash = sha256Hex(full.text).slice(0, 16);
+      const includedHash = sha256Hex(item.text).slice(0, 16);
+      const truncated = item.text.length < full.text.length;
+      hashes.push(sourceHash);
+      if (item.source_key.startsWith("wiki:")) {
+        const page = wikiByKey.get(item.source_key);
+        if (!page) continue;
+        manifest.push({
+          source_id: page.slug,
+          source_type: "bible_page",
+          title: page.title || page.slug,
+          source_hash: sourceHash,
+          included_content_hash: includedHash,
+          included_range: { start: 0, end: item.text.length },
+          truncated,
+          source_status: page.status,
+          open_target: { kind: "bible_page", slug: page.slug },
+        });
+      } else {
+        const chunkId = item.source_key.slice("rag:".length);
+        manifest.push({
+          source_id: chunkId,
+          source_type: "rag_chunk",
+          title: full.text.slice(0, 30),
+          source_hash: sourceHash,
+          included_content_hash: includedHash,
+          included_range: { start: 0, end: item.text.length },
+          truncated,
+          source_status: "canonical",
+          open_target: { kind: "rag_chunk", chunk_id: chunkId },
+        });
+      }
     }
     hashes.sort();
-
-    const trimmed = trimLocationEvidence(wikiFull, ragFull);
     packets.push({
       location_key: loc.slug,
       name: loc.name,
@@ -268,7 +283,7 @@ export async function compileAtlasContext(
       importance: loc.importance,
       wiki: trimmed.wiki,
       rag: trimmed.rag,
-      source_keys: [...trimmed.wiki, ...trimmed.rag].map((i) => i.source_key),
+      source_keys: retained.map((i) => i.source_key),
     });
     locationSourceHashes[loc.slug] = hashes;
   }
@@ -280,7 +295,15 @@ export async function compileAtlasContext(
         include_interiors: opts?.include_interiors === true,
         style_note: opts?.style_note ?? null,
       },
-      manifest: manifest.map((m) => m.source_id).sort(),
+      manifest: manifest.map((m) => ({
+        source_type: m.source_type,
+        source_id: m.source_id,
+        source_hash: m.source_hash,
+        included_content_hash: m.included_content_hash,
+        included_range: m.included_range,
+        truncated: m.truncated,
+        source_status: m.source_status,
+      })),
       hashes: locationSourceHashes,
     }),
   );
@@ -292,7 +315,9 @@ export async function compileAtlasContext(
       location_source_hashes: locationSourceHashes,
       context_hash: contextHash,
       insufficient_sources: true,
-      message: "没有可核对的已采用地点。",
+      message: selected.length === 0
+        ? "没有可核对的已采用地点。"
+        : "已采用地点没有可核对的保留证据。",
     };
   }
   return {
