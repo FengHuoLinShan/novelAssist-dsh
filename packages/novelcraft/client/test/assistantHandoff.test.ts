@@ -35,7 +35,13 @@ describe('assistant handoff', () => {
 
   it('binds inbox actions to the expanded card instead of a shared selected index', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../src/client/InboxPanel.tsx'), 'utf8')
-    expect(source).toContain('handleAct(card, action, reason, modified)')
+    expect(source).toContain('handleAct(card, action, reason)')
     expect(source).not.toContain('const card = cards[selected]')
+  })
+
+  it('uses the stable library key when opening a displayed book title', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../src/client/BookLibraryAction.tsx'), 'utf8')
+    expect(source).toContain('book: book.book')
+    expect(source).toContain('title: book.title')
   })
 })

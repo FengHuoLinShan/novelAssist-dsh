@@ -10,24 +10,19 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { PetAction } from './PetAction.tsx'
 import type { PetActionProps } from './PetAction.tsx'
-import { StoryMapAction } from './StoryMapAction.tsx'
 import type { StoryMapActionProps } from './StoryMapAction.tsx'
-import { WritingDeskAction } from './WritingDeskAction.tsx'
 import type { WritingDeskActionProps } from './WritingDeskAction.tsx'
 import type { ChapterDossierProps } from './ChapterDossier.tsx'
-import { ModelPresetsAction } from './ModelPresetsAction.tsx'
-import { MapAtlasAction } from './MapAtlasAction.tsx'
 import type { MapAtlasActionProps } from './MapAtlasAction.tsx'
 import type { ModelPresetsActionProps } from './ModelPresetsAction.tsx'
 import { ChapterWorkspaceView } from './ChapterWorkspaceView.tsx'
 import type { ChapterWorkspaceViewProps } from './ChapterWorkspaceView.tsx'
-import { WorkflowAction } from './WorkflowAction.tsx'
 import type { WorkflowActionProps } from './WorkflowAction.tsx'
-import { BookLibraryAction } from './BookLibraryAction.tsx'
 import type { BookLibraryActionProps } from './BookLibraryAction.tsx'
-import { WorldBibleAction } from './WorldBibleAction.tsx'
 import type { WorldBibleActionProps } from './WorldBibleAction.tsx'
 import { ActionDock } from './ActionDock.tsx'
+import { ActionLauncher } from './ActionLauncher.tsx'
+import type { ActionLauncherProps } from './ActionLauncher.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -37,7 +32,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps, MapAtlasActionProps, ChapterWorkspaceViewProps, WorkflowActionProps, BookLibraryActionProps, WorldBibleActionProps }
+export type { PetActionProps, StoryMapActionProps, WritingDeskActionProps, ChapterDossierProps, ModelPresetsActionProps, MapAtlasActionProps, ChapterWorkspaceViewProps, WorkflowActionProps, BookLibraryActionProps, WorldBibleActionProps, ActionLauncherProps }
 export { NS }
 export { PetAction } from './PetAction.tsx'
 export { StoryMapAction } from './StoryMapAction.tsx'
@@ -49,6 +44,7 @@ export { ChapterWorkspaceView } from './ChapterWorkspaceView.tsx'
 export { WorkflowAction } from './WorkflowAction.tsx'
 export { BookLibraryAction } from './BookLibraryAction.tsx'
 export { WorldBibleAction } from './WorldBibleAction.tsx'
+export { ActionLauncher } from './ActionLauncher.tsx'
 
 /** 浏览器侧连接投影(结构面; 与 dsh-client-connection/client 的 ConnectionHandle 对齐)。 */
 export interface RpcCaller {
@@ -83,21 +79,11 @@ export function apply(ctx: ClientContext): void {
     'conversation.session.header.actions',
     () => ctx.slots.register({
       name: 'conversation.session.header.actions',
-      id: 'novelcraft-book-library',
+      id: 'novelcraft-launcher',
       order: 25,
       locale: NS,
       inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, BookLibraryAction),
-  )
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'novelcraft-workflows',
-      order: 35,
-      locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, WorkflowAction),
+    }, ActionLauncher),
   )
   ctx.slots.inject(
     'conversation.session.header.actions',
@@ -121,55 +107,4 @@ export function apply(ctx: ClientContext): void {
       inject: (): { connection: RpcCaller | undefined } => actionSlot(),
     }, ChapterWorkspaceView),
   )
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'novelcraft-story-map',
-      order: 40,
-      locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, StoryMapAction),
-  )
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'novelcraft-writing-desk',
-      order: 50,
-      locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, WritingDeskAction),
-  )
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'novelcraft-model-presets',
-      order: 60,
-      locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, ModelPresetsAction),
-  )
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'novelcraft-map-atlas',
-      order: 70,
-      locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, MapAtlasAction),
-  )
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'novelcraft-world-bible',
-      order: 80,
-      locale: NS,
-      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
-    }, WorldBibleAction),
-  )
-
 }

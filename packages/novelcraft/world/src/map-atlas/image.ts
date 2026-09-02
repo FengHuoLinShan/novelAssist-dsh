@@ -94,17 +94,33 @@ export function stageAtlasImageIntake(
   fileName: string,
   bytes: Uint8Array,
   nodeRef: string,
+  opts: ImportAtlasImageOptions = {},
 ): StagedFileIntake {
   validateImage(Buffer.from(bytes));
   const tree = readAtlasTree(root);
   if (![...tree.nodes, ...tree.pendingNodes].some((node) => node.id === nodeRef)) {
     throw new StoreError("NOT_FOUND", `目标节点不存在: ${nodeRef}`);
   }
+  if (opts.pageRef) {
+    const page = tree.pendingPages.find((candidate) =>
+      candidate.id === opts.pageRef &&
+      candidate.node_ref === nodeRef &&
+      candidate.generation_status === "prompt_only" &&
+      candidate.review_status === "candidate"
+    );
+    if (!page) throw new StoreError("NOT_FOUND", `目标候选页不存在或不可上传: ${opts.pageRef}`);
+    if (!opts.expectedContentHash || page.content_hash !== opts.expectedContentHash) {
+      throw new StoreError("CONFLICT", `地图页已变化: ${opts.pageRef}`);
+    }
+  }
   return stageFileIntake(root, sessionId, {
     kind: "atlas-image",
     fileName,
     bytes,
-    metadata: { node_ref: nodeRef },
+    metadata: {
+      node_ref: nodeRef,
+      ...(opts.pageRef ? { page_ref: opts.pageRef, expected_content_hash: opts.expectedContentHash! } : {}),
+    },
   });
 }
 
@@ -116,13 +132,18 @@ export function importStagedAtlasImage(
   return consumeFileIntake(root, sessionId, receiptId, "atlas-image", ({ bytes, metadata }) => {
     const nodeRef = metadata.node_ref;
     if (!nodeRef) throw new StoreError("VALIDATION_FAILED", "图片收据缺少目标节点");
-    return importAtlasImageBytes(root, bytes, { nodeRef });
+    return importAtlasImageBytes(root, bytes, { nodeRef }, {
+      ...(metadata.page_ref ? { pageRef: metadata.page_ref } : {}),
+      ...(metadata.expected_content_hash ? { expectedContentHash: metadata.expected_content_hash } : {}),
+    });
   });
 }
 
 export interface ImportAtlasImageOptions {
-  /** 上传到 prompt_only 候选页时的目标页 id; 缺省 = 该节点下第一个 prompt_only 候选页。 */
+  /** 上传到 prompt_only 候选页时的目标页 id。多候选时必须显式提供。 */
   pageRef?: string;
+  /** 目标候选页的冻结 content hash；显式 pageRef 时必填。 */
+  expectedContentHash?: string;
 }
 
 /**
@@ -168,13 +189,20 @@ export function importAtlasImageBytes(
   }
   const atlasDir = p.world.atlas.dir;
 
-  // 目标 prompt_only 候选页(显式 pageRef 或该节点首个 prompt_only 候选)。
+  // 目标 prompt_only 候选页：多候选时禁止猜测，显式目标必须通过 hash 复核。
   const candidates = tree.pendingPages.filter(
     (pg) => pg.node_ref === target.nodeRef && pg.generation_status === "prompt_only" && pg.review_status === "candidate",
   );
-  const targetPage = opts?.pageRef
-    ? candidates.find((pg) => pg.id === opts.pageRef)
-    : candidates[0];
+  if (!opts?.pageRef && candidates.length > 1) {
+    throw new StoreError("CONFLICT", `节点 ${target.nodeRef} 有多个待补图页面，请明确选择具体页面`);
+  }
+  const targetPage = opts?.pageRef ? candidates.find((pg) => pg.id === opts.pageRef) : candidates[0];
+  if (opts?.pageRef && !targetPage) {
+    throw new StoreError("NOT_FOUND", `目标候选页不存在或不可上传: ${opts.pageRef}`);
+  }
+  if (targetPage && opts?.pageRef && (!opts.expectedContentHash || targetPage.content_hash !== opts.expectedContentHash)) {
+    throw new StoreError("CONFLICT", `地图页已变化: ${opts.pageRef}`);
+  }
 
   if (targetPage) {
     const imagesDir = path.join(atlasDir, "images", targetPage.id);

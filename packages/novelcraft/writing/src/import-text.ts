@@ -7,7 +7,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "no
 import path from "node:path";
 import { relative } from "node:path";
 import { paths, readAsset, slugify, writeAsset } from "@novelcraft/vault";
-import { gitAdd, gitCommit, validateImportFile } from "@novelcraft/store";
+import { gitAdd, gitCommit, sha256Hex, validateImportFile } from "@novelcraft/store";
 import { chapterBodyText, contentHashOf, ingestChapter, normalizeChapterText } from "./ingest.js";
 import { appendImportLog, importLogPath, readImportLog } from "./import-log.js";
 
@@ -31,26 +31,31 @@ export interface SplitChapterResult {
   warnings: string[];
 }
 
-/** 行首标题模式(行内 trim 后判定; 标题行整行 ≤40 字)。 */
-const ZH_HEADING_RE = /^第[0-9零一二三四五六七八九十百千万两]+[章节回卷幕部][^\n]{0,38}$/;
-const EN_HEADING_RE = /^chapter\s+\d+[^\n]{0,38}$/i;
-const SPECIAL_HEADING_RE = /^(序章|楔子|番外[^\n]{0,30}|尾声|后记)$/;
+/** 行首标题模式；兼容 Markdown 标题，100 字上限可覆盖常见网文章名而不吞正文段落。 */
+const ZH_HEADING_RE = /^第[0-9零一二三四五六七八九十百千万两]+[章节回卷幕部](?:\s*[:：\-—]?\s*.*)?$/;
+const EN_HEADING_RE = /^chapter\s+\d+(?:\s*[:：\-—]?\s*.*)?$/i;
+const SPECIAL_HEADING_RE = /^(序章|楔子|番外(?:\s+.*)?|尾声|后记)$/;
 
-function isHeadingLine(line: string): boolean {
-  const t = line.trim();
-  if (t.length === 0 || t.length > 40) return false;
-  return ZH_HEADING_RE.test(t) || EN_HEADING_RE.test(t) || SPECIAL_HEADING_RE.test(t);
+function headingTitle(line: string): string | null {
+  const raw = line.trim();
+  const markdown = raw.match(/^#{1,6}\s+(.+?)(?:\s+#+)?$/);
+  const title = (markdown?.[1] ?? raw).trim();
+  if (title.length === 0 || title.length > 100) return null;
+  return ZH_HEADING_RE.test(title) || EN_HEADING_RE.test(title) || SPECIAL_HEADING_RE.test(title)
+    ? title
+    : null;
 }
 
 /** 确定性章节切分: 行首标题(第X章/Chapter N/序章楔子番外尾声后记)→ 章节; 标题前 → 前言。 */
 export function splitChapterText(text: string): SplitChapterResult {
   const lines = text.split(/\r?\n/);
-  const headingLines: number[] = [];
+  const headings: Array<{ line: number; title: string }> = [];
   for (let i = 0; i < lines.length; i++) {
-    if (isHeadingLine(lines[i])) headingLines.push(i);
+    const title = headingTitle(lines[i]);
+    if (title !== null) headings.push({ line: i, title });
   }
 
-  if (headingLines.length === 0) {
+  if (headings.length === 0) {
     // 零命中 → 全文作单章(title 空串), 记 no_headings 警告。
     return {
       chapters: [{ index: 1, title: "", text: lines.join("\n").trim() }],
@@ -60,15 +65,15 @@ export function splitChapterText(text: string): SplitChapterResult {
   }
 
   // 首个标题行前内容 = 前言, 不进章节; preambleChars = 归一后字符数。
-  const preambleLines = lines.slice(0, headingLines[0]);
+  const preambleLines = lines.slice(0, headings[0].line);
   const preamble = preambleLines.join("\n").trim();
   const preambleChars = preamble.length === 0 ? 0 : normalizeChapterText(preamble).length;
 
   const chapters: ParsedChapter[] = [];
-  for (let h = 0; h < headingLines.length; h++) {
-    const start = headingLines[h];
-    const end = h + 1 < headingLines.length ? headingLines[h + 1] : lines.length;
-    const title = lines[start].trim();
+  for (let h = 0; h < headings.length; h++) {
+    const start = headings[h].line;
+    const end = h + 1 < headings.length ? headings[h + 1].line : lines.length;
+    const title = headings[h].title;
     const body = lines.slice(start + 1, end).join("\n").trim();
     chapters.push({ index: h + 1, title, text: body });
   }
@@ -111,7 +116,7 @@ export interface ImportReport {
  * 1 门禁(R31: 白名单 + 50MB + basename 净化; v1 额外只放行 .txt/.md)
  * 2 编码护栏(U+FFFD 占比 >1% 拒绝)
  * 3 归一 → 确定性章节切分
- * 4 幂等(imports.md §41: 同 (novel_id, file_name) 的 done 记录唯一 → 整体跳过)
+ * 4 幂等(imports.md §41: 同名 done 记录先以原文 hash 核对；漂移则拒绝静默跳过)
  * 5 原文停靠 imports/<slug>.md
  * 6 章节落库(冲突保护 / force 覆盖)
  * 7 追加 import-log.jsonl(spec ImportRecord)
@@ -147,13 +152,30 @@ export function importTextChapters(root: string, opts: ImportTextOptions): Impor
     return { ok: false, reason: "导入文本为空, 无法解析章节", warnings: [] };
   }
   const split = splitChapterText(normalized);
+  if (split.warnings.includes("no_headings") && normalized.length > 20_000) {
+    return {
+      ok: false,
+      reason: "长稿未识别到章节标题，已停止写入。请使用“第X章”或 Markdown“# 第X章”标题后重试",
+      warnings: split.warnings,
+    };
+  }
+  const sourceContentHash = sha256Hex(normalized);
 
-  // 4. 幂等: 同 file_name(basename) 已有 status='done' 记录 → 整体跳过, 不写任何文件。
+  // 4. 幂等: 同 file_name + 归一化内容 hash 才整体跳过；同名内容漂移 fail-closed。
   const p = paths(root);
   const existing = readImportLog(root).find(
     (r) => r.file_name === base && r.status === "done",
   );
   if (existing) {
+    if (existing.content_hash !== sourceContentHash) {
+      return {
+        ok: false,
+        reason: existing.content_hash === undefined
+          ? "同名文件已有旧导入记录但无法核对内容，请改名后重试"
+          : "同名文件内容已改变，请改名后重试以保留两次导入来源",
+        warnings: [...split.warnings, "source_changed"],
+      };
+    }
     return {
       ok: true,
       skipped: 0,
@@ -194,6 +216,7 @@ export function importTextChapters(root: string, opts: ImportTextOptions): Impor
       `file_name: ${yamlString(base)}`,
       `file_type: ${ext.slice(1)}`,
       `file_size: ${fileSize}`,
+      `source_content_hash: ${sourceContentHash}`,
       `total_chapters: ${split.chapters.length}`,
       `imported_at: "${importedAt}"`,
       `source: ${yamlString(opts.source)}`,
@@ -246,6 +269,7 @@ export function importTextChapters(root: string, opts: ImportTextOptions): Impor
       file_size: fileSize,
       total_chapters: split.chapters.length,
       imported_chapters: imported,
+      content_hash: sourceContentHash,
       status: "done",
     });
   } catch (err) {

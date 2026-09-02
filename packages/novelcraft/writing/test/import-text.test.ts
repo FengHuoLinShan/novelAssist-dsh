@@ -62,6 +62,14 @@ describe("splitChapterText(确定性章节切分)", () => {
     expect(r.chapters[4].text).toBe("夜谈之言。");
   });
 
+  it("Markdown 标题与长网文章名仍能稳定分章", () => {
+    const longTitle = "第2章 " + "很长但仍是合法标题".repeat(6);
+    const r = splitChapterText(`# 第一章 风起\n正文一。\n\n## ${longTitle}\n正文二。`);
+    expect(r.warnings).toEqual([]);
+    expect(r.chapters.map((chapter) => chapter.title)).toEqual(["第一章 风起", longTitle]);
+    expect(r.chapters.map((chapter) => chapter.text)).toEqual(["正文一。", "正文二。"]);
+  });
+
   it("零命中 → 全文作单章(title 空串) + no_headings 警告", () => {
     const text = "只有一段文字\n没有章节标题";
     const r = splitChapterText(text);
@@ -111,6 +119,15 @@ describe("importTextChapters 门禁与护栏", () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toContain("UTF-8");
     expect(existsSync(join(root, "imports", "import-log.jsonl"))).toBe(false);
+  });
+
+  it("超过 20,000 字却未识别到标题时停止写入", () => {
+    const root = makeVault();
+    const r = importTextChapters(root, { fileName: "long.txt", text: "正文".repeat(10_001), source: "t" });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("未识别到章节标题");
+    expect(existsSync(join(root, "imports", "import-log.jsonl"))).toBe(false);
+    expect(existsSync(join(root, "chapters", "001.md"))).toBe(false);
   });
 });
 
@@ -201,6 +218,17 @@ describe("importTextChapters 正常导入", () => {
     // 整体跳过: 不写任何文件(章节与日志均不变)。
     expect(readFileSync(join(root, "chapters", "001.md"), "utf8")).toBe(beforeCh1);
     expect(readFileSync(join(root, "imports", "import-log.jsonl"), "utf8")).toBe(beforeLog);
+    expect(readImportLog(root)).toHaveLength(1);
+  });
+
+  it("同 file_name 但内容变化时拒绝静默跳过", () => {
+    const root = makeVault();
+    const first = importTextChapters(root, { fileName: "changed.txt", text: "第1章 旧稿\n旧正文。", source: "t" });
+    expect(first.ok).toBe(true);
+    const second = importTextChapters(root, { fileName: "changed.txt", text: "第1章 新稿\n新正文。", source: "t" });
+    expect(second.ok).toBe(false);
+    expect(second.reason).toContain("内容已改变");
+    expect(second.warnings).toContain("source_changed");
     expect(readImportLog(root)).toHaveLength(1);
   });
 

@@ -5,7 +5,7 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SignalCard } from '../wire.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { useInbox } from './useWatch.ts'
-import { buildActPayload, type ActModifyFields, type InboxAction } from './actPayload.ts'
+import { buildActPayload, type InboxAction } from './actPayload.ts'
 import css from './novelcraft.module.css'
 
 export { buildActPayload, type ActModifyFields, type InboxAction } from './actPayload.ts'
@@ -15,6 +15,7 @@ export interface InboxPanelProps {
   sessionId: string | undefined
   t: TranslateNS<typeof NS>
   onClose: () => void
+  onContinue: (prompt: string) => boolean
 }
 
 const SEVERITY_DOT: Record<string, StateDotState> = {
@@ -31,13 +32,13 @@ const RADAR_LABEL: Record<string, NovelcraftKey> = {
 }
 
 const visibleEvidence = (lines: string[]): string[] => lines.filter((line) =>
-  !/^(receipt|sha256|base|node):/i.test(line) && !line.includes('chapter_ids'),
+  !/^(receipt|sha256|base|node|page):/i.test(line) && !line.includes('chapter_ids'),
 )
 
 function VerbRow(props: {
   t: TranslateNS<typeof NS>
   busy: boolean
-  onAct: (action: InboxAction, reason?: string, modified?: ActModifyFields) => void
+  onAct: (action: InboxAction, reason?: string) => void
 }): JSX.Element {
   const { t, busy, onAct } = props
   const [pending, setPending] = useState<'reject' | 'modify' | null>(null)
@@ -48,7 +49,7 @@ function VerbRow(props: {
 
   const confirm = (): void => {
     if (pending === 'reject') onAct('reject', reason)
-    if (pending === 'modify') onAct('modify', reason, { proposed_action: reason })
+    if (pending === 'modify') onAct('modify', reason)
     setPending(null)
     setReason('')
   }
@@ -77,7 +78,7 @@ function VerbRow(props: {
 }
 
 export function InboxPanel(props: InboxPanelProps): JSX.Element {
-  const { connection, sessionId, t, onClose } = props
+  const { connection, sessionId, t, onClose, onContinue } = props
   const { cards, bound, busy, loading, error, refresh, actOn } = useInbox(connection, sessionId)
   const [selected, setSelected] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -92,10 +93,18 @@ export function InboxPanel(props: InboxPanelProps): JSX.Element {
     card: SignalCard,
     action: InboxAction,
     reason?: string,
-    modified?: ActModifyFields,
   ): Promise<void> => {
-    const text = await actOn(buildActPayload(card, sessionId, action, reason, modified))
-    setMessage(text ?? t('inbox.act.fail'))
+    if (action === 'accept' || action === 'modify') {
+      const sent = onContinue(t(action === 'accept' ? 'inbox.prompt.accept' : 'inbox.prompt.modify', {
+        title: card.title,
+        id: card.id,
+        reason: reason ?? '',
+      }))
+      setMessage(sent ? t('inbox.sent') : t('inbox.chatBusy'))
+      return
+    }
+    const value = await actOn(buildActPayload(card, sessionId, action, reason))
+    setMessage(value?.message ?? t('inbox.act.fail'))
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
@@ -151,8 +160,8 @@ export function InboxPanel(props: InboxPanelProps): JSX.Element {
                   </details>
                 ) : null}
                 <p className={css.proposed}>{t('inbox.action')}：{card.proposed_action}</p>
-                <VerbRow t={t} busy={busy} onAct={(action, reason, modified) => {
-                  void handleAct(card, action, reason, modified)
+                <VerbRow t={t} busy={busy} onAct={(action, reason) => {
+                  void handleAct(card, action, reason)
                 }} />
               </div>
             ) : null}

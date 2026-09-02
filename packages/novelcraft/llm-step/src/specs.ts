@@ -170,12 +170,14 @@ export const BUILTIN_SPECS: LlmStepSpec[] = [
       properties: {
         proposals: {
           type: "array",
+          minItems: 2,
+          maxItems: 3,
           items: {
             type: "object",
             required: ["title", "premise"],
             properties: {
-              title: { type: "string" },
-              premise: { type: "string" },
+              title: { type: "string", minLength: 1 },
+              premise: { type: "string", minLength: 1 },
               basis: { type: "array", items: { type: "string" } },
               cost: { type: "string" },
               risk: { type: "string" },

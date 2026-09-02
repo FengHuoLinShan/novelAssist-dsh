@@ -46,6 +46,7 @@ import {
   reviewSummaries,
   stageChapterEditIntake,
   stageTextIntake,
+  splitChapterText,
 } from '@novelcraft/writing';
 import type { NovelcraftHostService, PresetLike } from '../src/rpc.js';
 
@@ -104,7 +105,7 @@ export function makeHostUi(
       biblePages: (root) => listBiblePages(root, true),
     },
     stage: {
-      stageTextIntake: (root, sessionId, fileName, bytes): StagedFileIntake => {
+      stageTextIntake: (root, sessionId, fileName, bytes) => {
         const staged = stageTextIntake(root, sessionId, fileName, bytes);
         pushSignal(root, {
           radar: 'ingest',
@@ -114,16 +115,28 @@ export function makeHostUi(
           proposed_action: `调用 novelcraft_ingest_file(root, receipt_id=${staged.receiptId}) 导入该手稿`,
           reversibility: true,
         });
-        return staged;
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        const split = splitChapterText(text);
+        return {
+          ...staged,
+          preview: {
+            chapter_count: split.chapters.length,
+            headings: split.chapters.map((chapter) => chapter.title).filter(Boolean).slice(0, 20),
+            preamble_chars: split.preambleChars,
+            warnings: split.warnings,
+            blocked: split.warnings.includes('no_headings') && text.length > 20_000,
+          },
+        };
       },
-      stageAtlasImageIntake: (root, sessionId, fileName, bytes, nodeRef): StagedFileIntake => {
-        const staged = stageAtlasImageIntake(root, sessionId, fileName, bytes, nodeRef);
+      stageAtlasImageIntake: (root, sessionId, fileName, bytes, nodeRef, opts): StagedFileIntake => {
+        const staged = stageAtlasImageIntake(root, sessionId, fileName, bytes, nodeRef, opts);
         pushSignal(root, {
           radar: 'suggest',
           severity: 'hint',
           title: `地图图片「${staged.fileName}」已授权, 等待导入`,
           evidence: [`receipt:${staged.receiptId}`, `node:${nodeRef}`, `sha256:${staged.sha256}`],
-          proposed_action: `调用 novelcraft_map_atlas_upload(root, receipt_id=${staged.receiptId}) 导入到节点 ${nodeRef}`,
+          proposed_action: `调用 novelcraft_map_atlas_upload(root, receipt_id=${staged.receiptId})` +
+            ` 导入到${opts?.pageRef ? `地图页 ${opts.pageRef}` : `节点 ${nodeRef}`}`,
           reversibility: true,
         });
         return staged;

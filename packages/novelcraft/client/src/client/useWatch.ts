@@ -61,12 +61,14 @@ export async function stageAtlasImageIntakeFile(
   fileName: string,
   bytesBase64: string,
   nodeRef: string,
+  page?: { ref: string; contentHash: string },
 ): Promise<AtlasImageIntakeStageValue | null> {
   return call<AtlasImageIntakeStageValue>(connection, ENDPOINTS.intakeStageImage, {
     sessionId,
     file_name: fileName,
     bytes_base64: bytesBase64,
     node_ref: nodeRef,
+    ...(page ? { page_ref: page.ref, expected_content_hash: page.contentHash } : {}),
   })
 }
 
@@ -86,12 +88,13 @@ export async function loadChapterWorkspace(
 export async function stageChapterEdit(
   connection: RpcCaller | undefined,
   sessionId: string | undefined,
-  input: { chapterIndex: number; expectedContentHash: string; title?: string; text: string },
+  input: { chapterIndex: number; expectedContentHash?: string; expectedAbsent?: boolean; title?: string; text: string },
 ): Promise<ChapterEditStageValue | null> {
   return call<ChapterEditStageValue>(connection, ENDPOINTS.chapterStageEdit, {
     sessionId,
     chapterIndex: input.chapterIndex,
-    expected_content_hash: input.expectedContentHash,
+    ...(input.expectedContentHash !== undefined ? { expected_content_hash: input.expectedContentHash } : {}),
+    ...(input.expectedAbsent ? { expected_absent: true } : {}),
     ...(input.title !== undefined ? { title: input.title } : {}),
     text: input.text,
   })
@@ -144,31 +147,60 @@ export function nextPollDelay(changed: boolean, previousDelayMs: number): number
  *   直接不续排, 轮询链就静默停摆。只要 effect 仍存活就必须确保存在下一轮
  *   短轮询。schedule 本身清旧 timer 幂等: 事件 handler 已排的 POLL_MIN_MS
  *   被同延迟替换, 不被破坏;
- * - 'changed'/'unchanged' → 沿用指数退避(变化回下界, 无变化翻倍封顶)。
+ * - 'failed' → 回短轮询，尽快恢复连接；'changed'/'unchanged' → 沿用指数退避。
  */
 export function nextPollAction(
-  result: 'changed' | 'unchanged' | 'stale',
+  result: 'changed' | 'unchanged' | 'stale' | 'failed',
   epochCurrent: boolean,
   previousDelayMs: number,
 ): number | null {
   if (!epochCurrent) return null
-  if (result === 'stale') return POLL_MIN_MS
+  if (result === 'stale' || result === 'failed') return POLL_MIN_MS
   return nextPollDelay(result === 'changed', previousDelayMs)
 }
 
-/** 宠物状态(四态 + 徽标数 + 剧情一句话)。 */
+export type WatchAvailability = 'loading' | 'live' | 'stale' | 'disconnected'
+
+export function watchAvailabilityAfterFailure(
+  previous: WatchAvailability,
+  hasConnection: boolean,
+): WatchAvailability {
+  return hasConnection && (previous === 'live' || previous === 'stale') ? 'stale' : 'disconnected'
+}
+
+/** 宠物状态(业务状态 + 连接新鲜度 + 徽标数 + 剧情一句话)。 */
 export interface WatchSnapshot {
+  availability: WatchAvailability
   bound: boolean
   book: string | null
   open: number
   attention: boolean
   threshold: number
   radarRunning: boolean
-  /** 剧情雷达一句话摘要(§9 静默态默认答复); 未绑定/失败为 null。 */
+  /** 剧情雷达一句话摘要；仅 availability=live 时展示。 */
   plotSummary: string | null
 }
 
+export interface PetState {
+  label: 'pet.connecting' | 'pet.disconnected' | 'pet.stale' |
+    'pet.attention' | 'pet.busy' | 'pet.glow' | 'pet.silent'
+  dot: 'ongoing' | 'error' | 'warning' | 'done'
+}
+
+/** 连接状态优先；在线时待确认 > 忙碌 > 微光 > 静默。 */
+export function petState(snapshot: WatchSnapshot): PetState {
+  if (snapshot.availability === 'loading') return { label: 'pet.connecting', dot: 'ongoing' }
+  if (snapshot.availability === 'disconnected') return { label: 'pet.disconnected', dot: 'error' }
+  if (snapshot.availability === 'stale') return { label: 'pet.stale', dot: 'warning' }
+  const { open, threshold, radarRunning } = snapshot
+  if (open >= threshold) return { label: 'pet.attention', dot: 'error' }
+  if (radarRunning) return { label: 'pet.busy', dot: 'warning' }
+  if (open > 0) return { label: 'pet.glow', dot: 'ongoing' }
+  return { label: 'pet.silent', dot: 'done' }
+}
+
 const EMPTY_WATCH: WatchSnapshot = {
+  availability: 'loading',
   bound: false,
   book: null,
   open: 0,
@@ -246,13 +278,26 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
 
   /** 带固定请求标号执行一次刷新; 'stale' = 已被更新请求/cleanup 作废。 */
   const run = useCallback(
-    async (token: RequestToken): Promise<'changed' | 'unchanged' | 'stale'> => {
+    async (token: RequestToken): Promise<'changed' | 'unchanged' | 'stale' | 'failed'> => {
       const value = await call<WatchStateValue>(connection, ENDPOINTS.watchState, {
         sessionId: sessionRef.current,
       })
       if (!gate.isCurrent(token)) return 'stale'
-      if (!value) return 'unchanged'
+      if (!value) {
+        const next: WatchSnapshot = {
+          ...lastRef.current,
+          availability: watchAvailabilityAfterFailure(lastRef.current.availability, Boolean(connection)),
+          radarRunning: false,
+        }
+        if (
+          next.availability !== lastRef.current.availability ||
+          next.radarRunning !== lastRef.current.radarRunning
+        ) setSnapshot(next)
+        lastRef.current = next
+        return 'failed'
+      }
       const next: WatchSnapshot = {
+        availability: 'live',
         bound: value.bound !== null,
         book: value.bound?.book ?? null,
         open: value.open,
@@ -265,6 +310,7 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
       const bookChanged = bookIdentityChanged(lastRootRef.current, nextRoot)
       const changed =
         bookChanged ||
+        next.availability !== lastRef.current.availability ||
         next.bound !== lastRef.current.bound ||
         next.book !== lastRef.current.book ||
         next.open !== lastRef.current.open ||
@@ -350,8 +396,8 @@ export function useInbox(connection: RpcCaller | undefined, sessionId: string | 
   const { data, loading, error, refresh } = useSessionView<InboxListValue>(connection, sessionId, ENDPOINTS.inboxList)
   const [busy, setBusy] = useState(false)
 
-  /** 四动词: 回宿主执行 assistant.act; 返回作者语言消息。 */
-  const actOn = useCallback(async (payload: InboxActPayload): Promise<string | null> => {
+  /** 拒绝/保留: 回宿主记录真实结果；采用/修改由面板交给助手完成。 */
+  const actOn = useCallback(async (payload: InboxActPayload): Promise<InboxActValue | null> => {
     setBusy(true)
     try {
       // call<T> 已解包 RpcResult.value: 成功直接是 InboxActValue, 失败(传输/RpcError)→ null。
@@ -359,7 +405,7 @@ export function useInbox(connection: RpcCaller | undefined, sessionId: string | 
       const value = await call<InboxActValue>(connection, ENDPOINTS.inboxAct, payload)
       if (value === null) return null
       void refresh()
-      return value.message
+      return value
     } finally {
       setBusy(false)
     }
@@ -562,7 +608,17 @@ export function useChapterDossier(
   return { data, loading, error, refresh }
 }
 
-/** Durable workflow 只读视图；session 切换/卸载后旧响应不得回填。 */
+export function workflowNeedsPolling(view: WorkflowViewValue | null): boolean {
+  return view?.runs.some((run) => run.state === 'running') ?? false
+}
+
+/** Durable workflow 只读视图；运行中每 3 秒刷新，session 切换/卸载后旧响应不得回填。 */
 export function useWorkflowView(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  return useSessionView<WorkflowViewValue>(connection, sessionId, ENDPOINTS.workflowView)
+  const view = useSessionView<WorkflowViewValue>(connection, sessionId, ENDPOINTS.workflowView)
+  useEffect(() => {
+    if (!workflowNeedsPolling(view.data)) return
+    const timer = window.setInterval(() => void view.refresh(), 3_000)
+    return () => window.clearInterval(timer)
+  }, [view.data, view.refresh])
+  return view
 }

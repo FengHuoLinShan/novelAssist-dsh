@@ -13,6 +13,8 @@ export interface ImportLogRecord {
   file_size: number;
   total_chapters: number;
   imported_chapters: number;
+  /** 归一化原文哈希；旧记录可缺省，缺省时同名重导 fail-closed。 */
+  content_hash?: string;
   status: "pending" | "processing" | "done" | "failed";
   error_message?: string;
 }
@@ -59,6 +61,7 @@ function isImportLogRecord(v: unknown): v is ImportLogRecord {
     typeof o.file_size === "number" &&
     typeof o.total_chapters === "number" &&
     typeof o.imported_chapters === "number" &&
+    (o.content_hash === undefined || (typeof o.content_hash === "string" && /^[0-9a-f]{64}$/.test(o.content_hash))) &&
     (o.status === "pending" ||
       o.status === "processing" ||
       o.status === "done" ||

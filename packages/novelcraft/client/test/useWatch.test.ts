@@ -10,8 +10,11 @@ import {
   matchesBookChangedSession,
   nextPollAction,
   nextPollDelay,
+  petState,
   POLL_MAX_MS,
   POLL_MIN_MS,
+  watchAvailabilityAfterFailure,
+  workflowNeedsPolling,
 } from '../src/client/useWatch.js';
 
 describe('nextPollDelay(轮询退避, ADR-0018 §2)', () => {
@@ -23,6 +26,39 @@ describe('nextPollDelay(轮询退避, ADR-0018 §2)', () => {
     expect(nextPollDelay(false, POLL_MIN_MS)).toBe(POLL_MIN_MS * 2);
     expect(nextPollDelay(false, POLL_MAX_MS)).toBe(POLL_MAX_MS);
     expect(nextPollDelay(false, 10_000)).toBe(POLL_MAX_MS); // 10_000*2=20_000 → 封顶 15_000
+  });
+});
+
+describe('watch availability', () => {
+  it('从未成功连接显示断线，已有成功快照后失败显示状态过期', () => {
+    expect(watchAvailabilityAfterFailure('loading', true)).toBe('disconnected');
+    expect(watchAvailabilityAfterFailure('loading', false)).toBe('disconnected');
+    expect(watchAvailabilityAfterFailure('live', true)).toBe('stale');
+    expect(watchAvailabilityAfterFailure('stale', true)).toBe('stale');
+  });
+
+  it('断线和过期优先于业务静默，在线零事项才显示静默', () => {
+    const base = {
+      bound: true, book: '测试书', open: 0, attention: false, threshold: 5,
+      radarRunning: false, plotSummary: null,
+    } as const;
+    expect(petState({ ...base, availability: 'disconnected' })).toMatchObject({ label: 'pet.disconnected' });
+    expect(petState({ ...base, availability: 'stale' })).toMatchObject({ label: 'pet.stale' });
+    expect(petState({ ...base, availability: 'live' })).toMatchObject({ label: 'pet.silent' });
+    expect(petState({ ...base, availability: 'live', open: 5, attention: true })).toMatchObject({ label: 'pet.attention' });
+  });
+});
+
+describe('workflow polling', () => {
+  it('只在存在运行中的 durable workflow 时持续刷新', () => {
+    const view = (state: 'running' | 'completed' | 'failed') => ({
+      bound: { book: 'test' }, restart_scope: null,
+      runs: [{ workflow_id: 'wf', kind: 'deep-import', state }],
+    });
+    expect(workflowNeedsPolling(view('running') as never)).toBe(true);
+    expect(workflowNeedsPolling(view('completed') as never)).toBe(false);
+    expect(workflowNeedsPolling(view('failed') as never)).toBe(false);
+    expect(workflowNeedsPolling(null)).toBe(false);
   });
 });
 
@@ -41,10 +77,15 @@ describe('nextPollAction(续排决策: stale 缺口修复)', () => {
     }
   });
 
+  it('连接失败不进入长退避，尽快恢复新鲜状态', () => {
+    expect(nextPollAction('failed', true, POLL_MAX_MS)).toBe(POLL_MIN_MS);
+  });
+
   it('epoch 已切代际(cleanup) → 一律不续排(null), stale 也不例外', () => {
     expect(nextPollAction('changed', false, POLL_MIN_MS)).toBeNull();
     expect(nextPollAction('unchanged', false, POLL_MIN_MS)).toBeNull();
     expect(nextPollAction('stale', false, POLL_MIN_MS)).toBeNull();
+    expect(nextPollAction('failed', false, POLL_MIN_MS)).toBeNull();
   });
 
   it('语义链: poll token → refresh token → poll 判 stale 后仍续排', () => {

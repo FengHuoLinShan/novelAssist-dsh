@@ -15,10 +15,10 @@ const props = {
 } as unknown as ActionDockProps
 
 describe('ActionDock', () => {
-  it('shows all author actions only while the session is blank', () => {
+  it('keeps the inbox and compact launcher reachable only while the session is blank', () => {
     const dock = ActionDock(props)
     expect(isValidElement(dock)).toBe(true)
-    expect(Children.count(dock?.props.children)).toBe(8)
+    expect(Children.count(dock?.props.children)).toBe(2)
     expect(ActionDock({ ...props, session: { ...props.session, blank: false } })).toBeNull()
   })
 })

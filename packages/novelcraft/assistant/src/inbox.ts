@@ -138,7 +138,8 @@ export function needsAttention(root: string, threshold = 5, currentContentHash?:
   return inboxView(root, currentContentHash).length >= threshold;
 }
 
-/** 四动词动作(§9): 记录决定 + 返回动作描述符; 打回理由进校准(§13 per-book 校准)。 */
+/** 四动词动作(§9): 返回动作描述符; 仅真实完成的拒绝会关闭事项。
+ * accept/modify 仍需上层完成对应采用/微工作流，defer 在缺少可靠恢复入口时保持 open。 */
 export function act(root: string, input: ActInput, now: Date = new Date()): ActionDescriptor {
   const signal = loadSignal(root, input.signalId);
   if (!signal) throw new Error(`信号不存在: ${input.signalId}`);
@@ -149,19 +150,10 @@ export function act(root: string, input: ActInput, now: Date = new Date()): Acti
     throw new Error("打回/改一改必须带一句话理由(校准原料)");
   }
 
-  const statusMap: Record<InboxAction, SignalStatus> = {
-    accept: "accepted",
-    reject: "rejected",
-    modify: "accepted", // 改一改 = 已处理(进入微工作流)
-    defer: "deferred",
-  };
-  const next: Signal = { ...signal, status: statusMap[input.action], decided_at: now.toISOString() };
-  if (input.action === "reject") next.reject_reason = input.reason;
-  if (input.action === "modify") {
-    next.title = input.modified?.title ?? next.title;
-    next.proposed_action = input.modified?.proposed_action ?? next.proposed_action;
-  }
-  saveSignal(root, next);
+  const next: Signal = input.action === "reject"
+    ? { ...signal, status: "rejected", decided_at: now.toISOString(), reject_reason: input.reason }
+    : signal;
+  if (input.action === "reject") saveSignal(root, next);
 
   const descriptor: ActionDescriptor = {
     signal: next,

@@ -2,6 +2,7 @@
 export const NS = 'novelcraft'
 
 type AdditionalNovelcraftKey =
+  | 'actions.open'
   | 'common.loading'
   | 'common.loadFailed'
   | 'common.retry'
@@ -9,7 +10,14 @@ type AdditionalNovelcraftKey =
   | 'common.untitled'
   | 'common.statusUnknown'
   | 'common.none'
+  | 'pet.connecting'
+  | 'pet.disconnected'
+  | 'pet.stale'
   | 'inbox.count'
+  | 'inbox.chatBusy'
+  | 'inbox.sent'
+  | 'inbox.prompt.accept'
+  | 'inbox.prompt.modify'
   | 'inbox.reason.reject'
   | 'inbox.reason.modify'
   | 'inbox.keyboard'
@@ -45,6 +53,8 @@ type AdditionalNovelcraftKey =
   | 'desk.chapters.empty'
   | 'desk.proposals.create'
   | 'desk.proposals.use'
+  | 'desk.proposals.intent'
+  | 'desk.proposals.pending'
   | 'desk.proposals.readOnly'
   | 'desk.reviews.findings'
   | 'desk.prompt.import'
@@ -80,6 +90,7 @@ type AdditionalNovelcraftKey =
   | 'world.run.inspect'
   | 'world.run.bible'
   | 'world.prompt.references'
+  | 'world.prompt.referenceItem'
   | 'world.prompt.drafts'
   | 'world.prompt.newPage'
   | 'world.prompt.existingPage'
@@ -109,6 +120,8 @@ type AdditionalNovelcraftKey =
   | 'atlas.annotation.saving'
   | 'atlas.annotation.save'
   | 'atlas.annotation.saved'
+  | 'atlas.annotation.queued'
+  | 'atlas.annotation.discardConfirm'
   | 'atlas.annotation.failed'
   | 'atlas.annotation.nameRequired'
   | 'atlas.chatBusyQueued'
@@ -128,6 +141,7 @@ type AdditionalNovelcraftKey =
   | 'atlas.mine.empty'
   | 'atlas.pending.empty'
   | 'atlas.selectNode'
+  | 'atlas.choosePage'
   | 'atlas.placeholderHint'
   | 'atlas.uploading'
   | 'atlas.upload'
@@ -183,6 +197,8 @@ export type NovelcraftKey = AdditionalNovelcraftKey
   | 'workflow.state.completed'
   | 'workflow.state.failed'
   | 'workflow.progress'
+  | 'workflow.phase'
+  | 'workflow.scope'
   | 'workflow.resume'
   | 'workflow.abandon'
   | 'workflow.restart'
@@ -263,6 +279,11 @@ export type NovelcraftKey = AdditionalNovelcraftKey
   | 'intake.staging'
   | 'intake.fail'
   | 'intake.tooLarge'
+  | 'intake.previewTitle'
+  | 'intake.previewSummary'
+  | 'intake.noHeadings'
+  | 'intake.unrecognizedLong'
+  | 'intake.confirm'
   | 'desk.chapters'
   | 'desk.objects'
   | 'desk.reviews'
@@ -272,6 +293,7 @@ export type NovelcraftKey = AdditionalNovelcraftKey
   | 'desk.proposals.basis'
   | 'desk.proposals.cost'
   | 'desk.proposals.risk'
+  | 'desk.proposals.sources'
   | 'dossier.title'
   | 'dossier.back'
   | 'dossier.unbound'
@@ -316,8 +338,11 @@ export type NovelcraftKey = AdditionalNovelcraftKey
   | 'preset.source.stored'
   | 'chapter.view'
   | 'chapter.select'
+  | 'chapter.option'
   | 'chapter.unbound'
   | 'chapter.empty'
+  | 'chapter.createFirst'
+  | 'chapter.new'
   | 'chapter.refresh'
   | 'chapter.title'
   | 'chapter.body'
@@ -326,8 +351,15 @@ export type NovelcraftKey = AdditionalNovelcraftKey
   | 'chapter.save'
   | 'chapter.saving'
   | 'chapter.cancel'
+  | 'chapter.editingFinishedDraftKept'
   | 'chapter.saveFailed'
   | 'chapter.chatDraftBusy'
+  | 'chapter.unsavedChangesBlocked'
+  | 'chapter.conflictTitle'
+  | 'chapter.conflictKept'
+  | 'chapter.conflictCopy'
+  | 'chapter.conflictRecover'
+  | 'chapter.conflictRecovered'
   | 'chapter.history'
   | 'chapter.current'
   | 'chapter.bytes'
@@ -356,6 +388,7 @@ export type NovelcraftKey = AdditionalNovelcraftKey
 
 export const zh: Record<NovelcraftKey, string> = {
   'actions.title': 'NovelCraft 功能',
+  'actions.open': 'NovelCraft',
   'common.loading': '正在加载…',
   'common.loadFailed': '暂时无法加载，请稍后重试。',
   'common.retry': '重试',
@@ -367,6 +400,9 @@ export const zh: Record<NovelcraftKey, string> = {
   'pet.glow': '微光',
   'pet.busy': '忙碌',
   'pet.attention': '待确认',
+  'pet.connecting': '连接中',
+  'pet.disconnected': '连接中断',
+  'pet.stale': '状态可能过期',
   'pet.title': 'NovelCraft 守望',
   'atlas.title': '地图册',
   'atlas.status.pending': '待确认',
@@ -392,6 +428,8 @@ export const zh: Record<NovelcraftKey, string> = {
   'atlas.annotation.saving': '正在提交…',
   'atlas.annotation.save': '交给助手保存',
   'atlas.annotation.saved': '已保存',
+  'atlas.annotation.queued': '已提交，等待助手应用',
+  'atlas.annotation.discardConfirm': '地图标签还有未提交的修改。确定放弃这些修改吗？',
   'atlas.annotation.failed': '暂时无法提交，本页修改仍然保留，可以重试。',
   'atlas.annotation.nameRequired': '标签名称不能为空。',
   'atlas.chatBusyQueued': '标签修改已保存为待处理内容。请先处理对话输入框里的草稿，然后告诉助手保存地图标签。',
@@ -411,6 +449,7 @@ export const zh: Record<NovelcraftKey, string> = {
   'atlas.mine.empty': '还没有已采用的地图页。',
   'atlas.pending.empty': '暂时没有待完善的地图页。',
   'atlas.selectNode': '从左侧选择一个地图页查看详情。',
+  'atlas.choosePage': '这个地点有多个地图页，请先选择具体页面。',
   'atlas.placeholderHint': '这一页还没有图片，可以直接上传。',
   'atlas.uploading': '正在检查图片…',
   'atlas.upload': '为当前页上传图片',
@@ -449,6 +488,10 @@ export const zh: Record<NovelcraftKey, string> = {
   'inbox.evidence': '证据',
   'inbox.action': '建议动作',
   'inbox.act.fail': '操作失败',
+  'inbox.chatBusy': '对话输入框已有未发送内容；事项仍保留，请先发送或清空。',
+  'inbox.sent': '已交给助手处理；完成前事项会继续保留。',
+  'inbox.prompt.accept': '请先读取待处理事项“{title}”（事项编号：{id}），完成对应操作和必要审批后再将它标记为已解决。',
+  'inbox.prompt.modify': '请先读取待处理事项“{title}”（事项编号：{id}），按这个要求调整后完成对应操作：{reason}。操作失败时保留事项。',
   'inbox.done.adopt': '已记录采纳决定',
   'inbox.done.record': '已记录',
   'story.title': '剧情地图',
@@ -465,6 +508,8 @@ export const zh: Record<NovelcraftKey, string> = {
   'workflow.state.completed': '已完成',
   'workflow.state.failed': '失败',
   'workflow.progress': '任务进度',
+  'workflow.phase': '当前阶段',
+  'workflow.scope': '章节范围',
   'workflow.resume': '继续任务',
   'workflow.abandon': '清除任务记录',
   'workflow.restart': '重新导入',
@@ -485,7 +530,7 @@ export const zh: Record<NovelcraftKey, string> = {
   'book.nameLabel': '书名',
   'book.createHint': '创建完成后会自动打开，需要你在 DSH 中确认操作。',
   'book.prompt.create': '请创建一本新书《{book}》，创建完成后打开它。',
-  'book.prompt.open': '请打开书库中的《{book}》。',
+  'book.prompt.open': '请打开书库中的《{title}》。精确书库标识：{book}。',
   'book.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
   'book.requested': '已交给助手处理。',
   'story.empty': '还没有剧情结构。先告诉助手你想写的方向吧。',
@@ -568,12 +613,13 @@ export const zh: Record<NovelcraftKey, string> = {
   'world.run.inspect': '检查已有设定',
   'world.run.bible': '生成世界书草稿',
   'world.prompt.references': '参考内容：{references}。',
+  'world.prompt.referenceItem': '《{title}》（资料标识 {reference}）',
   'world.prompt.drafts': '可以参考我明确选中的草稿。',
   'world.prompt.newPage': '请生成一页新的世界书草稿。',
   'world.prompt.existingPage': '请基于我选中的世界书页继续完善。',
   'world.prompt.mode': '请{mode}。',
   'world.prompt.request': '{intent}我想处理的问题：{input}。{references}{drafts}',
-  'world.prompt.publish': '请将世界书草稿《{title}》发布到这本书的世界书中。',
+  'world.prompt.publish': '请发布世界书草稿《{title}》，精确资料标识为 {reference}。',
   'world.chatBusy': '对话输入框已有未发送内容，请先发送或清空。',
   'world.requested': '请求已交给助手；讨论/检视零写入，草稿发布仍需审批。',
   'desk.title': '写作台',
@@ -589,10 +635,15 @@ export const zh: Record<NovelcraftKey, string> = {
   'desk.mode.reference': '参照',
   'desk.mode.import': '导入',
   'intake.choose': '选择 .txt / .md 手稿',
-  'intake.hint': '选择手稿后，会自动回到对话，由助手确认分章并导入。支持 .txt 和 .md，最大 50 MB。',
+  'intake.hint': '选择手稿后先核对分章预览，再交给助手导入。支持 .txt 和 .md，最大 50 MB。',
   'intake.staging': '正在校验并暂存…',
   'intake.fail': '文件授权失败, 请检查格式后重试。',
   'intake.tooLarge': '文件超过 50MB, 请拆分后重试。',
+  'intake.previewTitle': '分章预览',
+  'intake.previewSummary': '识别到 {count} 章 · 标题前内容 {preamble} 字',
+  'intake.noHeadings': '未识别到章节标题，将按单章导入。',
+  'intake.unrecognizedLong': '长稿未识别到章节标题，已阻止导入。请加入“第X章”或“# 第X章”标题后重新选择。',
+  'intake.confirm': '确认分章并交给助手',
   'desk.chapters': '章节',
   'desk.chapters.empty': '还没有可查看的章节。',
   'desk.objects': '世界对象',
@@ -600,16 +651,19 @@ export const zh: Record<NovelcraftKey, string> = {
   'desk.reviews.empty': '还没有章节审查记录。',
   'desk.reviews.findings': '发现问题',
   'desk.prompt.import': '请导入我刚才选择的手稿《{file}》，按章节整理后写入这本书。',
-  'desk.prompt.propose': '请以第 {chapter} 章为起点，为下一章提供 2–3 个续写方向。',
+  'desk.prompt.propose': '请以第 {chapter} 章为起点，为下一章提供 2–3 个续写方向。我的写作意图：{intent}',
   'desk.prompt.continue': '请按“{title}”这个方向续写第 {chapter} 章。任务编号：{run}；方案编号：{proposal}。',
   'desk.proposals': '续写建议',
   'desk.proposals.empty': '还没有续写建议。',
   'desk.proposals.create': '生成续写建议',
   'desk.proposals.use': '按这个方向续写',
+  'desk.proposals.intent': '这一章我想完成什么（可选）',
+  'desk.proposals.pending': '已有待确认稿，请先处理',
   'desk.proposals.readOnly': '这是旧版建议，可以查看，但无法精确选中续写。',
   'desk.proposals.basis': '依据',
   'desk.proposals.cost': '成本',
   'desk.proposals.risk': '风险',
+  'desk.proposals.sources': '参考 {used} 项 · 省略 {omitted} 项 · 警告 {warnings} 项',
   'dossier.title': '章节档案',
   'dossier.back': '返回列表',
   'dossier.unbound': '请先在书库中打开这本书。',
@@ -667,8 +721,11 @@ export const zh: Record<NovelcraftKey, string> = {
   'preset.source.stored': '自定义',
   'chapter.view': '章节正文',
   'chapter.select': '选择章节',
+  'chapter.option': '第 {index} 章 {title}',
   'chapter.unbound': '当前会话尚未绑定小说工作区。',
   'chapter.empty': '没有可编辑的当前章节。',
+  'chapter.createFirst': '新建第一章',
+  'chapter.new': '新章草稿',
   'chapter.refresh': '刷新',
   'chapter.title': '章节标题',
   'chapter.body': '章节正文',
@@ -677,8 +734,15 @@ export const zh: Record<NovelcraftKey, string> = {
   'chapter.save': '审批保存',
   'chapter.saving': '暂存中…',
   'chapter.cancel': '结束编辑',
+  'chapter.editingFinishedDraftKept': '已结束编辑；浏览器草稿仍保留，尚未保存到小说。',
   'chapter.saveFailed': '暂存失败, 请刷新后重试。',
   'chapter.chatDraftBusy': '对话里已有未发送草稿；请先发送或清空，避免覆盖。',
+  'chapter.unsavedChangesBlocked': '浏览器里还有未审批保存的修改；请先审批保存。结束编辑只会保留草稿，不会解除此保护。',
+  'chapter.conflictTitle': '发现未合并的浏览器草稿',
+  'chapter.conflictKept': '小说正文已在别处变化。当前正文已加载，原浏览器草稿保留在下方，不会被删除。',
+  'chapter.conflictCopy': '保留的草稿副本',
+  'chapter.conflictRecover': '载入此副本继续编辑',
+  'chapter.conflictRecovered': '草稿副本已载入编辑区；请核对当前版本后再审批保存。',
   'chapter.history': '版本历史',
   'chapter.current': '当前',
   'chapter.bytes': '字节',
@@ -708,6 +772,7 @@ export const zh: Record<NovelcraftKey, string> = {
 
 export const en: Record<NovelcraftKey, string> = {
   'actions.title': 'NovelCraft actions',
+  'actions.open': 'NovelCraft',
   'common.loading': 'Loading…',
   'common.loadFailed': 'Unable to load this right now. Please try again.',
   'common.retry': 'Try again',
@@ -715,7 +780,14 @@ export const en: Record<NovelcraftKey, string> = {
   'common.untitled': 'Untitled',
   'common.statusUnknown': 'Status unavailable. Refresh or try again.',
   'common.none': 'None yet',
+  'pet.connecting': 'Connecting',
+  'pet.disconnected': 'Disconnected',
+  'pet.stale': 'Status may be stale',
   'inbox.count': 'Needs attention',
+  'inbox.chatBusy': 'Chat has an unsent draft. The item remains available; send or clear the draft first.',
+  'inbox.sent': 'Sent to the assistant. The item remains until the work finishes.',
+  'inbox.prompt.accept': 'Read the pending item “{title}” (item ID: {id}), complete its action and any required approval, then mark it resolved.',
+  'inbox.prompt.modify': 'Read the pending item “{title}” (item ID: {id}) and complete its action with this change: {reason}. Keep the item if the action fails.',
   'inbox.reason.reject': 'Why do you not want to use this suggestion?',
   'inbox.reason.modify': 'How would you like to change it?',
   'inbox.keyboard': 'Shortcuts: j/k move · u refresh · Esc close',
@@ -735,7 +807,7 @@ export const en: Record<NovelcraftKey, string> = {
   'book.nameLabel': 'Book title',
   'book.createHint': 'The new book will open after creation. DSH will still ask you to confirm the actions.',
   'book.prompt.create': 'Please create a new book titled “{book}” and open it after creation.',
-  'book.prompt.open': 'Please open “{book}” from the library.',
+  'book.prompt.open': 'Please open “{title}” from the library. Exact library key: {book}.',
   'story.mode.view': 'View story structure',
   'story.mode.plan': 'Plan story structure',
   'story.chapterNumber': 'Chapter {index}',
@@ -754,10 +826,12 @@ export const en: Record<NovelcraftKey, string> = {
   'desk.chapters.empty': 'There are no chapters to view yet.',
   'desk.proposals.create': 'Generate next-chapter ideas',
   'desk.proposals.use': 'Continue in this direction',
+  'desk.proposals.intent': 'What should this chapter accomplish? (optional)',
+  'desk.proposals.pending': 'Review the pending draft first',
   'desk.proposals.readOnly': 'This older suggestion can be viewed but cannot be selected precisely.',
   'desk.reviews.findings': 'Issues found',
   'desk.prompt.import': 'Please import the manuscript “{file}” I just selected, organize it into chapters, and add it to this book.',
-  'desk.prompt.propose': 'Starting from chapter {chapter}, suggest two or three directions for the next chapter.',
+  'desk.prompt.propose': 'Starting from chapter {chapter}, suggest two or three directions for the next chapter. My writing intent: {intent}',
   'desk.prompt.continue': 'Please continue chapter {chapter} in the direction “{title}”. Task number: {run}; plan number: {proposal}.',
   'preset.purpose.writing': 'Best for ideation, drafting, and continuation',
   'preset.purpose.import': 'Best for long imports, chapter splitting, and structure',
@@ -789,12 +863,13 @@ export const en: Record<NovelcraftKey, string> = {
   'world.run.inspect': 'Check existing settings',
   'world.run.bible': 'Create worldbook draft',
   'world.prompt.references': 'Reference material: {references}.',
+  'world.prompt.referenceItem': '“{title}” (source reference {reference})',
   'world.prompt.drafts': 'You may also use the drafts I explicitly selected.',
   'world.prompt.newPage': 'Please create a new worldbook page draft.',
   'world.prompt.existingPage': 'Please continue developing the worldbook page I selected.',
   'world.prompt.mode': 'Please {mode}.',
   'world.prompt.request': '{intent} What I want to work on: {input}. {references}{drafts}',
-  'world.prompt.publish': 'Please publish the worldbook draft “{title}” to this book’s worldbook.',
+  'world.prompt.publish': 'Please publish the worldbook draft “{title}” with the exact source reference {reference}.',
   'atlas.status.pending': 'Needs review',
   'atlas.status.adopted': 'Adopted',
   'atlas.status.rejected': 'Rejected',
@@ -818,6 +893,8 @@ export const en: Record<NovelcraftKey, string> = {
   'atlas.annotation.saving': 'Submitting…',
   'atlas.annotation.save': 'Ask assistant to save',
   'atlas.annotation.saved': 'Saved',
+  'atlas.annotation.queued': 'Submitted, waiting for the assistant to apply',
+  'atlas.annotation.discardConfirm': 'This map page has unsent label changes. Discard them?',
   'atlas.annotation.failed': 'Unable to submit. Your edits remain on this page so you can retry.',
   'atlas.annotation.nameRequired': 'Label names cannot be empty.',
   'atlas.chatBusyQueued': 'The label edits are saved for later. Handle the conversation draft, then ask the assistant to save the map labels.',
@@ -837,6 +914,7 @@ export const en: Record<NovelcraftKey, string> = {
   'atlas.mine.empty': 'There are no adopted map pages yet.',
   'atlas.pending.empty': 'There are no map pages waiting for work.',
   'atlas.selectNode': 'Select a map page on the left to view its details.',
+  'atlas.choosePage': 'This location has multiple map pages. Select a specific page first.',
   'atlas.placeholderHint': 'This page still needs an image. You can upload one now.',
   'atlas.uploading': 'Checking image…',
   'atlas.upload': 'Upload image for this page',
@@ -886,6 +964,8 @@ export const en: Record<NovelcraftKey, string> = {
   'workflow.state.completed': 'Completed',
   'workflow.state.failed': 'Failed',
   'workflow.progress': 'Progress',
+  'workflow.phase': 'Current phase',
+  'workflow.scope': 'Chapter range',
   'workflow.resume': 'Continue task',
   'workflow.abandon': 'Clear task record',
   'workflow.restart': 'Import again',
@@ -962,10 +1042,15 @@ export const en: Record<NovelcraftKey, string> = {
   'desk.mode.reference': 'Reference',
   'desk.mode.import': 'Import',
   'intake.choose': 'Choose a .txt / .md manuscript',
-  'intake.hint': 'After you choose a manuscript, the dialog returns to the conversation so the assistant can confirm chapter splitting and import it. Supports .txt and .md up to 50 MB.',
+  'intake.hint': 'Choose a manuscript, review the chapter split, then send it to the assistant for import. Supports .txt and .md up to 50 MB.',
   'intake.staging': 'Validating and staging…',
   'intake.fail': 'File authorization failed. Check the format and try again.',
   'intake.tooLarge': 'The file exceeds 50MB. Split it and try again.',
+  'intake.previewTitle': 'Chapter preview',
+  'intake.previewSummary': '{count} chapters detected · {preamble} characters before the first heading',
+  'intake.noHeadings': 'No chapter heading was detected; this will import as one chapter.',
+  'intake.unrecognizedLong': 'This long manuscript has no recognized chapter headings, so import is blocked. Add “Chapter N” or Markdown headings and choose it again.',
+  'intake.confirm': 'Confirm chapters and continue',
   'desk.chapters': 'Chapters',
   'desk.objects': 'World objects',
   'desk.reviews': 'Review records',
@@ -975,6 +1060,7 @@ export const en: Record<NovelcraftKey, string> = {
   'desk.proposals.basis': 'Basis',
   'desk.proposals.cost': 'Cost',
   'desk.proposals.risk': 'Risk',
+  'desk.proposals.sources': '{used} references · {omitted} omitted · {warnings} warnings',
   'dossier.title': 'Chapter Notes',
   'dossier.back': 'Back to list',
   'dossier.unbound': 'Open this book from the library first.',
@@ -1019,8 +1105,11 @@ export const en: Record<NovelcraftKey, string> = {
   'preset.source.stored': 'Custom',
   'chapter.view': 'Chapter Text',
   'chapter.select': 'Select chapter',
+  'chapter.option': 'Chapter {index} {title}',
   'chapter.unbound': 'This session is not bound to a novel vault.',
   'chapter.empty': 'No editable current chapter.',
+  'chapter.createFirst': 'Create chapter one',
+  'chapter.new': 'New chapter draft',
   'chapter.refresh': 'Refresh',
   'chapter.title': 'Chapter title',
   'chapter.body': 'Chapter body',
@@ -1029,8 +1118,15 @@ export const en: Record<NovelcraftKey, string> = {
   'chapter.save': 'Save with approval',
   'chapter.saving': 'Staging…',
   'chapter.cancel': 'Finish editing',
+  'chapter.editingFinishedDraftKept': 'Editing ended. The browser draft is still kept and has not been saved to the novel.',
   'chapter.saveFailed': 'Staging failed. Refresh and try again.',
   'chapter.chatDraftBusy': 'Chat already has an unsent draft. Send or clear it first to avoid overwriting it.',
+  'chapter.unsavedChangesBlocked': 'The browser has changes that are not saved with approval. Save them first; finishing editing keeps the draft and does not remove this protection.',
+  'chapter.conflictTitle': 'Unmerged browser draft found',
+  'chapter.conflictKept': 'The novel changed elsewhere. The current text is loaded and the earlier browser draft remains below.',
+  'chapter.conflictCopy': 'Saved draft copy',
+  'chapter.conflictRecover': 'Load this copy for editing',
+  'chapter.conflictRecovered': 'The draft copy is loaded. Compare it with the current version before saving with approval.',
   'chapter.history': 'Version history',
   'chapter.current': 'Current',
   'chapter.bytes': 'bytes',

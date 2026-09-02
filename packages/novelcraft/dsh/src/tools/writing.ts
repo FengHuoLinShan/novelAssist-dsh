@@ -51,6 +51,7 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         chapter: { type: 'integer', required: true, description: '当前最后一章序号(1 起); 提案其下一章' },
+        intent: { type: 'string', description: '作者本次明确填写的章目标(可选, ≤1000 字)' },
       },
       output: {
         type: 'object',
@@ -69,7 +70,9 @@ export function buildWritingTools(ctx: Context, service: NovelCraftService): Too
       },
       timeoutMs: 300_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.propose.proposeNextChapter(requireRoot(run), args.chapter, run.signal);
+        const result = await run.service.capabilities.propose.proposeNextChapter(
+          requireRoot(run), args.chapter, run.signal, undefined, args.intent,
+        );
         if (!result.ok || !result.proposal) {
           throw llmError(result.error?.kind, result.error?.message ?? '提案失败');
         }

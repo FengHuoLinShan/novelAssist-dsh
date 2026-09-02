@@ -1,6 +1,6 @@
 // 极简 JSON Schema 子集校验器(R2 自实现, 零依赖)。
 // 支持: type(object/string/number/boolean/array)、properties、required、
-// additionalProperties(boolean)、items、enum、const、oneOf。
+// additionalProperties(boolean)、items/minItems/maxItems、minLength、enum、const、oneOf。
 // 错误按 JSON 指针路径归集。
 export type ValidatorSchema = {
   type?: "object" | "string" | "number" | "boolean" | "array";
@@ -8,6 +8,9 @@ export type ValidatorSchema = {
   required?: string[];
   additionalProperties?: boolean;
   items?: ValidatorSchema;
+  minItems?: number;
+  maxItems?: number;
+  minLength?: number;
   enum?: unknown[];
   const?: unknown;
   oneOf?: ValidatorSchema[];
@@ -77,6 +80,12 @@ function walk(schema: ValidatorSchema, value: unknown, path: string, out: Valida
         out.push({ path, message: `应为数组, 实际 ${kind(value)}` });
         return;
       }
+      if (schema.minItems !== undefined && value.length < schema.minItems) {
+        out.push({ path, message: `数组项数不得少于 ${schema.minItems}` });
+      }
+      if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+        out.push({ path, message: `数组项数不得多于 ${schema.maxItems}` });
+      }
       if (schema.items) {
         value.forEach((item, i) => walk(schema.items!, item, `${path}/${i}`, out));
       }
@@ -84,6 +93,9 @@ function walk(schema: ValidatorSchema, value: unknown, path: string, out: Valida
     }
     case "string": {
       if (typeof value !== "string") out.push({ path, message: `应为字符串, 实际 ${kind(value)}` });
+      else if (schema.minLength !== undefined && value.length < schema.minLength) {
+        out.push({ path, message: `字符串长度不得少于 ${schema.minLength}` });
+      }
       return;
     }
     case "number": {

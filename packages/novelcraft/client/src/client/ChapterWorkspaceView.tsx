@@ -11,33 +11,106 @@ export type ChapterWorkspaceViewProps = ConvViewProps & PropsLocale<typeof NS> &
   connection: RpcCaller | undefined
 }
 
-interface LocalDraft {
+export interface ChapterDraftSnapshot {
   base: string
   title: string
   text: string
 }
 
-function draftKey(sessionId: string, chapterIndex: number): string {
-  return `novelcraft:chapter-draft:${sessionId}:${chapterIndex}`
+export interface ChapterDraft extends ChapterDraftSnapshot {
+  conflicts: ChapterDraftSnapshot[]
 }
 
-function readDraft(sessionId: string, chapterIndex: number, base: string): LocalDraft | null {
-  try {
-    const key = draftKey(sessionId, chapterIndex)
-    const value = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<LocalDraft> | null
-    if (value?.base === base && typeof value.title === 'string' && typeof value.text === 'string') {
-      return value as LocalDraft
-    }
-    localStorage.removeItem(key)
-  } catch {
-    // Browsers may disable storage; editing still works for this mount.
+type DraftStorage = Pick<Storage, 'getItem' | 'setItem'>
+
+export function chapterDraftKey(sessionId: string, book: string, chapterIndex: number): string {
+  return `novelcraft:chapter-draft:${encodeURIComponent(sessionId)}:${encodeURIComponent(book)}:${chapterIndex}`
+}
+
+function isDraftSnapshot(value: unknown): value is ChapterDraftSnapshot {
+  if (typeof value !== 'object' || value === null) return false
+  const draft = value as Partial<ChapterDraftSnapshot>
+  return typeof draft.base === 'string' && typeof draft.title === 'string' && typeof draft.text === 'string'
+}
+
+export function reconcileChapterDraft(stored: unknown, current: ChapterDraftSnapshot): ChapterDraft {
+  if (!isDraftSnapshot(stored)) return { ...current, conflicts: [] }
+  const conflicts = Array.isArray((stored as Partial<ChapterDraft>).conflicts)
+    ? (stored as Partial<ChapterDraft>).conflicts?.filter(isDraftSnapshot) ?? []
+    : []
+  if (stored.base === current.base) return { ...stored, conflicts }
+  if (stored.title === current.title && stored.text === current.text) return { ...current, conflicts }
+  const stale = { base: stored.base, title: stored.title, text: stored.text }
+  return {
+    ...current,
+    conflicts: [stale, ...conflicts.filter((item) =>
+      item.base !== stale.base || item.title !== stale.title || item.text !== stale.text)],
   }
-  return null
 }
 
-function writeDraft(sessionId: string, chapterIndex: number, draft: LocalDraft): void {
+export function chapterDraftIsDirty(draft: ChapterDraft | null, current: ChapterDraftSnapshot | null): boolean {
+  if (!draft) return false
+  if (!current) return draft.base === 'absent' && Boolean(draft.title || draft.text)
+  return draft.title !== current.title || draft.text !== current.text
+}
+
+export function selectedChapterIndex(requested: number, chapters: Array<{ index: number }>): number {
+  return requested === 0 ? chapters[0]?.index ?? 0 : requested
+}
+
+export function readChapterDraft(
+  storage: DraftStorage,
+  sessionId: string,
+  book: string,
+  chapterIndex: number,
+  current: ChapterDraftSnapshot,
+): ChapterDraft {
+  const key = chapterDraftKey(sessionId, book, chapterIndex)
+  let stored: unknown = null
   try {
-    localStorage.setItem(draftKey(sessionId, chapterIndex), JSON.stringify(draft))
+    const raw = storage.getItem(key)
+    stored = JSON.parse(raw ?? 'null') as unknown
+    if (!isDraftSnapshot(stored)) {
+      const legacy = JSON.parse(storage.getItem(`novelcraft:chapter-draft:${sessionId}:${chapterIndex}`) ?? 'null') as unknown
+      if (isDraftSnapshot(legacy) && legacy.base === current.base) stored = legacy
+    }
+  } catch {
+    return { ...current, conflicts: [] }
+  }
+  const resolved = reconcileChapterDraft(stored, current)
+  if (isDraftSnapshot(stored) && JSON.stringify(resolved) !== JSON.stringify(stored)) {
+    try {
+      storage.setItem(key, JSON.stringify(resolved))
+    } catch {
+      // Storage is a convenience mirror; keep the recovered copy in this mount.
+    }
+  }
+  return resolved
+}
+
+export function readAbsentChapterDraft(
+  storage: DraftStorage,
+  sessionId: string,
+  book: string,
+  chapterIndex: number,
+): ChapterDraft | null {
+  try {
+    const stored = JSON.parse(storage.getItem(chapterDraftKey(sessionId, book, chapterIndex)) ?? 'null') as unknown
+    if (!isDraftSnapshot(stored) || stored.base !== 'absent' || (!stored.title && !stored.text)) return null
+    return {
+      ...stored,
+      conflicts: Array.isArray((stored as Partial<ChapterDraft>).conflicts)
+        ? (stored as Partial<ChapterDraft>).conflicts?.filter(isDraftSnapshot) ?? []
+        : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeDraft(sessionId: string, book: string, chapterIndex: number, draft: ChapterDraft): void {
+  try {
+    localStorage.setItem(chapterDraftKey(sessionId, book, chapterIndex), JSON.stringify(draft))
   } catch {
     // Storage is a convenience mirror, never the canonical write path.
   }
@@ -48,7 +121,8 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
   const chatDraft = useInput((state: InputState) => state.draft)
   const [chapterIndex, setChapterIndex] = useState(0)
   const [data, setData] = useState<ChapterWorkspaceValue | null>(null)
-  const [editor, setEditor] = useState<LocalDraft | null>(null)
+  const [editor, setEditor] = useState<ChapterDraft | null>(null)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -56,30 +130,43 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
   const [candidateRejectReason, setCandidateRejectReason] = useState('')
   const request = useRef(0)
 
-  const refresh = useCallback(async (index = chapterIndex, diffFromCommit?: string) => {
+  const refresh = useCallback(async function refreshChapter(index: number, diffFromCommit?: string): Promise<void> {
     const seq = ++request.current
+    setLoadState('loading')
     const value = await loadChapterWorkspace(connection, sessionId, index, diffFromCommit)
-    if (seq !== request.current || value === null) return
-    setData(value)
-    if (index === 0 && value.chapters[0]) {
-      setChapterIndex(value.chapters[0].index)
+    if (seq !== request.current) return
+    if (value === null) {
+      setLoadState('error')
       return
     }
-    setEditing(false)
-    setMessage('')
+    setData(value)
+    const selected = selectedChapterIndex(index, value.chapters)
+    if (selected !== index) {
+      setChapterIndex(selected)
+      await refreshChapter(selected)
+      return
+    }
+    setLoadState('ready')
     setSelectedFindings([])
     setCandidateRejectReason('')
-    if (value.chapter) {
-      const saved = readDraft(String(sessionId), value.chapter.index, value.chapter.content_hash)
-      setEditor(saved ?? {
+    if (value.chapter && value.bound) {
+      const saved = readChapterDraft(localStorage, String(sessionId), value.bound.book, value.chapter.index, {
         base: value.chapter.content_hash,
         title: value.chapter.title ?? '',
         text: value.chapter.body,
       })
+      setEditor(saved)
+      setMessage('')
+    } else if (value.bound && value.chapters.length === 0) {
+      const pending = readAbsentChapterDraft(localStorage, String(sessionId), value.bound.book, 1)
+      setEditor(pending)
+      if (pending) setChapterIndex(1)
+      setMessage('')
     } else {
       setEditor(null)
+      setMessage('')
     }
-  }, [chapterIndex, connection, sessionId])
+  }, [connection, sessionId])
 
   useEffect(() => {
     const reload = (event?: Event) => {
@@ -89,6 +176,7 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
       setEditor(null)
       setEditing(false)
       setChapterIndex(0)
+      setLoadState('loading')
       void refresh(0)
     }
     reload()
@@ -97,11 +185,15 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
       request.current += 1
       window.removeEventListener(BOOK_CHANGED_EVENT, reload)
     }
-  }, [chapterIndex, connection, sessionId])
+  }, [refresh, sessionId])
 
-  const updateEditor = (next: LocalDraft): void => {
+  const chapter = data?.chapter ?? null
+  const current = chapter ? { base: chapter.content_hash, title: chapter.title ?? '', text: chapter.body } : null
+  const dirty = chapterDraftIsDirty(editor, current)
+
+  const updateEditor = (next: ChapterDraft): void => {
     setEditor(next)
-    writeDraft(String(sessionId), chapterIndex, next)
+    if (data?.bound) writeDraft(String(sessionId), data.bound.book, chapterIndex, next)
   }
 
   const requireEmptyChatDraft = (): boolean => {
@@ -110,14 +202,22 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
     return false
   }
 
+  const requireCleanEditor = (): boolean => {
+    if (!dirty) return true
+    setMessage(t('chapter.unsavedChangesBlocked'))
+    return false
+  }
+
   const save = async (): Promise<void> => {
-    if (!editor || !data?.chapter || !requireEmptyChatDraft()) return
+    if (!editor || !data?.bound || !requireEmptyChatDraft()) return
+    const newChapter = data.chapter == null && editor.base === 'absent'
+    if (!newChapter && data.chapter == null) return
     setBusy(true)
     setMessage('')
     try {
       const staged = await stageChapterEdit(connection, sessionId, {
         chapterIndex,
-        expectedContentHash: editor.base,
+        ...(newChapter ? { expectedAbsent: true } : { expectedContentHash: editor.base }),
         title: editor.title,
         text: editor.text,
       })
@@ -135,14 +235,14 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
   }
 
   const restore = (commit: string): void => {
-    if (!data?.chapter || !requireEmptyChatDraft()) return
+    if (!data?.chapter || !requireCleanEditor() || !requireEmptyChatDraft()) return
     inputActions.setDraft(`请调用 novelcraft_chapter_version，action=restore，chapter_index=${chapterIndex}，commit=${commit}，expected_content_hash=${data.chapter.content_hash}。`)
     inputActions.submit()
     setMessage(t('chapter.restoreRequested'))
   }
 
-  const sendChapterAction = (prompt: string, sentMessage: string): void => {
-    if (!requireEmptyChatDraft()) return
+  const sendChapterAction = (prompt: string, sentMessage: string, allowDirty = false): void => {
+    if ((!allowDirty && !requireCleanEditor()) || !requireEmptyChatDraft()) return
     inputActions.setDraft(prompt)
     inputActions.submit()
     setMessage(sentMessage)
@@ -180,11 +280,31 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
     sendChapterAction(
       `请调用 novelcraft_chapter_review，action=reject，target=candidate，chapter=${chapterIndex}，ref=${data.candidate.ref}，expected_content_hash=${data.candidate.content_hash}，reason=${JSON.stringify(candidateRejectReason.trim())}。`,
       t('chapter.rejectRequested'),
+      true,
     )
   }
 
+  const finishEditing = (): void => {
+    setEditing(false)
+    setMessage(dirty ? t('chapter.editingFinishedDraftKept') : editor?.conflicts.length ? t('chapter.conflictKept') : '')
+  }
+
+  const startFirstChapter = (): void => {
+    if (!data?.bound) return
+    setChapterIndex(1)
+    setEditor({ base: 'absent', title: '', text: '', conflicts: [] })
+    setEditing(true)
+    setMessage('')
+  }
+
+  const recoverConflict = (conflict: ChapterDraftSnapshot): void => {
+    if (!editor || !chapter) return
+    updateEditor({ ...editor, base: chapter.content_hash, title: conflict.title, text: conflict.text })
+    setEditing(true)
+    setMessage(t('chapter.conflictRecovered'))
+  }
+
   const chapters = data?.chapters ?? []
-  const chapter = data?.chapter ?? null
   return (
     <main className={css.chapterWorkspace}>
       <header className={css.chapterWorkspaceHeader}>
@@ -196,20 +316,35 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
           <select
             aria-label={t('chapter.select')}
             value={chapterIndex || ''}
-            onChange={(event) => { setEditing(false); setMessage(''); setChapterIndex(Number(event.target.value)) }}
+            disabled={loadState !== 'ready'}
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              setEditing(false)
+              setMessage('')
+              setChapterIndex(next)
+              void refresh(next)
+            }}
           >
             {chapters.length === 0 ? <option value="">{t('chapter.empty')}</option> : null}
-            {chapters.map((item) => <option key={item.index} value={item.index}>ch{item.index} {item.title ?? ''}</option>)}
+            {chapters.map((item) => <option key={item.index} value={item.index}>{t('chapter.option', { index: item.index, title: item.title ?? '' })}</option>)}
           </select>
-          <button type="button" className={css.tab} onClick={() => void refresh()}>{t('chapter.refresh')}</button>
+          <button type="button" className={css.tab} disabled={loadState === 'loading'} onClick={() => void refresh(chapterIndex)}>{t('chapter.refresh')}</button>
         </div>
       </header>
 
-      {data?.bound == null ? <div className={css.empty}>{t('chapter.unbound')}</div> : chapter == null && data?.candidate == null ? (
-        <div className={css.empty}>{t('chapter.empty')}</div>
+      {loadState === 'loading' ? <div className={css.empty}>{t('common.loading')}</div> : loadState === 'error' ? (
+        <div className={css.empty} role="alert">
+          <div>{t('common.loadFailed')}</div>
+          <button type="button" className={css.tab} onClick={() => void refresh(chapterIndex)}>{t('common.retry')}</button>
+        </div>
+      ) : data?.bound == null ? <div className={css.empty}>{t('chapter.unbound')}</div> : chapter == null && data?.candidate == null && editor == null ? (
+        <div className={css.emptyState}>
+          <span>{t('chapter.empty')}</span>
+          <button type="button" className={css.tab} onClick={startFirstChapter}>{t('chapter.createFirst')}</button>
+        </div>
       ) : (
         <div className={css.chapterWorkspaceGrid}>
-          {chapter && editor ? <section className={css.chapterEditorPane}>
+          {editor ? <section className={css.chapterEditorPane}>
             <div className={css.chapterEditorToolbar}>
               <input
                 aria-label={t('chapter.title')}
@@ -218,11 +353,11 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
                 disabled={!editing || busy}
                 onChange={(event) => updateEditor({ ...editor, title: event.target.value })}
               />
-              <span className={css.chapterWorkspaceMeta}>{t('chapter.status')}: {chapter.status}</span>
+              <span className={css.chapterWorkspaceMeta}>{t('chapter.status')}: {chapter?.status ?? t('chapter.new')}</span>
               {editing ? (
                 <>
-                  <button type="button" className={css.tab} disabled={busy} onClick={() => void save()}>{busy ? t('chapter.saving') : t('chapter.save')}</button>
-                  <button type="button" className={css.tab} disabled={busy} onClick={() => { setEditing(false); void refresh() }}>{t('chapter.cancel')}</button>
+                  <button type="button" className={css.tab} disabled={busy || !editor.text.trim()} onClick={() => void save()}>{busy ? t('chapter.saving') : t('chapter.save')}</button>
+                  <button type="button" className={css.tab} disabled={busy} onClick={finishEditing}>{t('chapter.cancel')}</button>
                 </>
               ) : <button type="button" className={css.tab} onClick={() => setEditing(true)}>{t('chapter.edit')}</button>}
             </div>
@@ -234,12 +369,25 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
               readOnly={!editing}
               onChange={(event) => updateEditor({ ...editor, text: event.target.value })}
             />
+            {editor.conflicts.length > 0 ? (
+              <section className={css.chapterConflict} role="alert">
+                <strong>{t('chapter.conflictTitle')}</strong>
+                <div>{t('chapter.conflictKept')}</div>
+                {editor.conflicts.map((conflict, index) => (
+                  <details key={`${conflict.base}:${index}`}>
+                    <summary>{t('chapter.conflictCopy')} · {conflict.title}</summary>
+                    <pre>{conflict.text}</pre>
+                    <button type="button" className={css.tab} onClick={() => recoverConflict(conflict)}>{t('chapter.conflictRecover')}</button>
+                  </details>
+                ))}
+              </section>
+            ) : null}
             {data.diff ? (
-              <section className={css.chapterDiff}>
-                <div className={css.sectionTitle}>{t('chapter.diff')} · {data.diff.from_commit.slice(0, 12)} → {data.diff.to_commit.slice(0, 12)}</div>
+              <details className={css.chapterDiff}>
+                <summary className={css.sectionTitle}>{t('chapter.diff')}</summary>
                 <pre>{data.diff.patch || t('chapter.noDiff')}</pre>
                 {data.diff.truncated ? <div className={css.message}>{t('chapter.truncated')}</div> : null}
-              </section>
+              </details>
             ) : null}
           </section> : null}
 
@@ -286,6 +434,11 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
                     ? `${data.candidate.review.verdict} · ${data.candidate.review.fresh ? t('chapter.fresh') : t('chapter.stale')}`
                     : t('chapter.noReview')}
                 </div>
+                {data.candidate.review?.findings.map((finding) => (
+                  <div key={finding.finding_id} className={css.chapterFinding}>
+                    <span><strong>{finding.severity} · {finding.category}</strong><br />{finding.quote}<br />{finding.suggestion}</span>
+                  </div>
+                ))}
                 <div className={css.chapterWorkspaceActions}>
                   <button type="button" className={css.tab} onClick={() => reviewTarget('candidate')}>{t('chapter.reviewCandidate')}</button>
                   <button
@@ -296,14 +449,15 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
                   >{t('chapter.adoptCandidate')}</button>
                 </div>
                 <div className={css.chapterWorkspaceActions}>
-                  <input
-                    aria-label={t('chapter.rejectReason')}
-                    className={css.chapterTitleInput}
-                    maxLength={1000}
-                    placeholder={t('chapter.rejectReason')}
-                    value={candidateRejectReason}
-                    onChange={(event) => setCandidateRejectReason(event.target.value)}
-                  />
+                  <label className={css.presetControl}>
+                    <span>{t('chapter.rejectReason')}</span>
+                    <input
+                      className={css.chapterTitleInput}
+                      maxLength={1000}
+                      value={candidateRejectReason}
+                      onChange={(event) => setCandidateRejectReason(event.target.value)}
+                    />
+                  </label>
                   <button
                     type="button"
                     className={css.tab}
@@ -318,8 +472,8 @@ export function ChapterWorkspaceView(props: ChapterWorkspaceViewProps): JSX.Elem
             {data.history.map((item, index) => (
               <article key={item.commit} className={css.card}>
                 <header className={css.cardHeader}>
-                  <span className={css.cardTitle}>{item.subject || item.commit.slice(0, 12)}</span>
-                  <span className={css.cardMeta}>{index === 0 ? t('chapter.current') : item.commit.slice(0, 8)}</span>
+                  <span className={css.cardTitle}>{item.subject || t('chapter.history')}</span>
+                  {index === 0 ? <span className={css.cardMeta}>{t('chapter.current')}</span> : null}
                 </header>
                 <div className={css.chapterWorkspaceMeta}>{item.authored_at} · {item.byte_length} {t('chapter.bytes')}</div>
                 {!item.declared_hash_valid ? <div className={css.message}>{t('chapter.invalidHash')}</div> : null}

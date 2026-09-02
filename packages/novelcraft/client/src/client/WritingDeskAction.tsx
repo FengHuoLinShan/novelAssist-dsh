@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { Button, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
-import { MAX_TEXT_INTAKE_BYTES } from '../wire.ts'
+import { MAX_TEXT_INTAKE_BYTES, type IntakeStageValue } from '../wire.ts'
 import { readFileBase64, stageTextIntakeFile, useWritingDesk } from './useWatch.ts'
 import { ChapterDossier } from './ChapterDossier.tsx'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import css from './novelcraft.module.css'
 
 export type WritingDeskActionProps =
@@ -22,6 +23,8 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('chapters')
   const [intakeBusy, setIntakeBusy] = useState(false)
+  const [stagedIntake, setStagedIntake] = useState<IntakeStageValue | null>(null)
+  const [chapterIntent, setChapterIntent] = useState('')
   const [message, setMessage] = useState('')
   const [dossierChapter, setDossierChapter] = useState<number | null>(null)
   const { data, loading, error, refresh } = useWritingDesk(connection, sessionId)
@@ -30,6 +33,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
   const reviews = data?.reviews ?? []
   const proposals = data?.proposals ?? null
   const lastChapter = chapters.reduce((max, chapter) => Math.max(max, chapter.index), 0)
+  const proposalBlocked = Boolean(proposals && data?.pending_chapters.includes(proposals.next_chapter))
 
   const send = (prompt: string): boolean => {
     const sent = handoffToAssistant({
@@ -54,6 +58,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
       return
     }
     setIntakeBusy(true)
+    setStagedIntake(null)
     setMessage('')
     try {
       const value = await stageTextIntakeFile(connection, sessionId, file.name, await readFileBase64(file))
@@ -62,7 +67,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
         return
       }
       window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
-      send(t('desk.prompt.import', { file: value.file_name }))
+      setStagedIntake(value)
     } catch {
       setMessage(t('intake.fail'))
     } finally {
@@ -83,7 +88,7 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
         aria-label={t('desk.title')} onClick={() => setOpen(true)}>
         <span className={css.petLabel}>{t('desk.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('desk.title')}
+      <NovelcraftModal open={open} onClose={() => setOpen(false)} title={t('desk.title')}
         closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
         {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
         {error ? (
@@ -108,8 +113,12 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
               <Button size="sm" variant="toolbar" disabled={loading} onClick={() => void refresh()}>{t('inbox.refresh')}</Button>
             </div>
             {message ? <div className={css.message} role="status">{message}</div> : null}
+            <div className={css.statusLine}>{data.book}</div>
             {mode === 'chapters' ? (
-              chapters.length === 0 ? <div className={css.empty}>{t('desk.chapters.empty')}</div> : (
+              chapters.length === 0 ? <div className={css.emptyState}>
+                <span>{t('desk.chapters.empty')}</span>
+                <Button variant="primary" onClick={() => setMode('import')}>{t('intake.choose')}</Button>
+              </div> : (
                 <div className={css.workflowPanel}>
                   {chapters.map((chapter) => (
                     <button key={chapter.index} type="button" className={css.chapterRow}
@@ -125,13 +134,23 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
               proposals == null || proposals.proposals.length === 0 ? (
                 <div className={css.emptyState}>
                   <span>{t('desk.proposals.empty')}</span>
+                  <label className={css.presetControl}>
+                    <span>{t('desk.proposals.intent')}</span>
+                    <textarea className={css.outlineTask} value={chapterIntent}
+                      onChange={(event) => setChapterIntent(event.currentTarget.value)} />
+                  </label>
                   <Button variant="primary" disabled={lastChapter < 1} onClick={() => send(
-                    t('desk.prompt.propose', { chapter: lastChapter }),
+                    t('desk.prompt.propose', { chapter: lastChapter, intent: chapterIntent.trim() }),
                   )}>{t('desk.proposals.create')}</Button>
                 </div>
               ) : (
                 <div className={css.workflowPanel}>
                   <div className={css.sectionTitle}>{t('story.chapterNumber', { index: proposals.next_chapter })}</div>
+                  <p className={css.helperText}>{t('desk.proposals.sources', {
+                    used: proposals.source_count,
+                    omitted: proposals.omitted_source_count,
+                    warnings: proposals.warning_count,
+                  })}</p>
                   {proposals.proposals.map((proposal) => (
                     <article key={proposal.proposal_id ?? proposal.title} className={css.workflowCard}>
                       <header className={css.cardHeader}><span className={css.cardTitle}>{proposal.title}</span></header>
@@ -140,14 +159,14 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
                       {proposal.cost ? <p className={css.proposed}>{t('desk.proposals.cost')}：{proposal.cost}</p> : null}
                       {proposal.risk ? <p className={css.proposed}>{t('desk.proposals.risk')}：{proposal.risk}</p> : null}
                       {proposal.proposal_id ? (
-                        <Button variant="primary" onClick={() => send(
+                        <Button variant="primary" disabled={proposalBlocked} onClick={() => send(
                           t('desk.prompt.continue', {
                             title: proposal.title,
                             chapter: proposals.next_chapter,
                             run: proposals.run_id,
                             proposal: proposal.proposal_id,
                           }),
-                        )}>{t('desk.proposals.use')}</Button>
+                        )}>{t(proposalBlocked ? 'desk.proposals.pending' : 'desk.proposals.use')}</Button>
                       ) : <p className={css.helperText}>{t('desk.proposals.readOnly')}</p>}
                     </article>
                   ))}
@@ -181,11 +200,29 @@ export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
                       void chooseFile(file)
                     }} />
                 </label>
+                {stagedIntake ? (
+                  <section className={css.workflowCard} aria-label={t('intake.previewTitle')}>
+                    <strong>{stagedIntake.file_name}</strong>
+                    <p className={css.previewSummary}>{t('intake.previewSummary', {
+                      count: stagedIntake.preview.chapter_count,
+                      preamble: stagedIntake.preview.preamble_chars,
+                    })}</p>
+                    {stagedIntake.preview.headings.length > 0 ? (
+                      <ol className={css.evidence}>
+                        {stagedIntake.preview.headings.map((heading, index) => <li key={`${index}:${heading}`}>{heading}</li>)}
+                      </ol>
+                    ) : <p className={css.warning}>{t(stagedIntake.preview.blocked ? 'intake.unrecognizedLong' : 'intake.noHeadings')}</p>}
+                    <Button variant="primary" disabled={stagedIntake.preview.blocked || Boolean(chatDraft.trim())}
+                      onClick={() => send(t('desk.prompt.import', { file: stagedIntake.file_name }))}>
+                      {t('intake.confirm')}
+                    </Button>
+                  </section>
+                ) : null}
               </div>
             ) : null}
           </div>
         ) : null}
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

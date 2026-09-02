@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Button, IconRefreshOutline16, Input, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Button, IconRefreshOutline16, Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import { readFileBase64, requestAtlasAnnotations, stageAtlasImageIntakeFile, useAtlasView } from './useWatch.ts'
 import type { AtlasAnnotationOpInput, AtlasLabelCard, AtlasNodeCard, AtlasPageCard } from '../wire.ts'
 import { MAX_TEXT_INTAKE_BYTES } from '../wire.ts'
@@ -75,16 +76,23 @@ function PageCard(props: {
   sessionId: string | undefined
   onSaved: () => void
   onApply: () => boolean
+  onDirtyChange: (dirty: boolean) => void
 }): JSX.Element {
   const { page, t } = props
   const [draft, setDraft] = useState<LabelDraft>(() => ({ base: page.annotations, current: page.annotations }))
   const [saving, setSaving] = useState(false)
+  const [queued, setQueued] = useState(false)
   const [message, setMessage] = useState('')
   const imgRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<string | null>(null)
   const dirty = draftOps(draft).length > 0
   const labelsValid = draft.current.every((label) => Boolean(label.label.trim()))
   const canLabel = Boolean(page.image) && !page.image_missing
+
+  useEffect(() => {
+    props.onDirtyChange(dirty)
+    return () => props.onDirtyChange(false)
+  }, [dirty, props.onDirtyChange])
 
   const addLabel = (x = 0.5, y = 0.5): void => {
     if (!canLabel) return
@@ -127,6 +135,7 @@ function PageCard(props: {
       return
     }
     setDraft({ base: draft.current, current: draft.current })
+    setQueued(true)
     props.onSaved()
     if (!props.onApply()) setMessage(t('atlas.chatBusyQueued'))
   }
@@ -201,7 +210,9 @@ function PageCard(props: {
           </div>
           {!labelsValid ? <p className={css.warning}>{t('atlas.annotation.nameRequired')}</p> : null}
           <Button variant="primary" disabled={!dirty || saving || !labelsValid} onClick={() => void save()}>
-            {saving ? t('atlas.annotation.saving') : dirty ? t('atlas.annotation.save') : t('atlas.annotation.saved')}
+            {saving ? t('atlas.annotation.saving') : dirty
+              ? t('atlas.annotation.save')
+              : t(queued ? 'atlas.annotation.queued' : 'atlas.annotation.saved')}
           </Button>
         </section>
       ) : null}
@@ -216,6 +227,8 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'pending' | 'atlas'>('atlas')
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null)
+  const [dirtyPage, setDirtyPage] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
   const [message, setMessage] = useState('')
   const { data, loading, error, refresh } = useAtlasView(connection, sessionId)
@@ -224,8 +237,28 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
   const pendingPages = useMemo(() => data?.pending.pages ?? [], [data])
   const nodes = tab === 'atlas' ? data?.adopted.nodes ?? [] : data?.pending.nodes ?? []
   const pages = tab === 'atlas' ? adoptedPages : pendingPages
-  const selectedPage = selectedNode ? pages.find((page) => page.node_ref === selectedNode) : undefined
+  const nodePages = selectedNode ? pages.filter((page) => page.node_ref === selectedNode) : []
+  const selectedPage = selectedPageId ? pages.find((page) => page.id === selectedPageId) : undefined
   const selectedNodeCard = nodes.find((node) => node.id === selectedNode)
+
+  const confirmDiscard = (): boolean => !dirtyPage || window.confirm(t('atlas.annotation.discardConfirm'))
+  const selectNode = (nodeId: string): void => {
+    if (!confirmDiscard()) return
+    const matches = pages.filter((page) => page.node_ref === nodeId)
+    setSelectedNode(nodeId)
+    setSelectedPageId(matches.length === 1 ? matches[0].id : null)
+    setDirtyPage(false)
+  }
+  const selectTab = (next: 'pending' | 'atlas'): void => {
+    if (!confirmDiscard()) return
+    setTab(next)
+    setSelectedNode(null)
+    setSelectedPageId(null)
+    setDirtyPage(false)
+  }
+  const close = (): void => {
+    if (confirmDiscard()) setOpen(false)
+  }
 
   const send = (prompt: string): boolean => {
     const sent = handoffToAssistant({
@@ -252,7 +285,21 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
     setUploadBusy(true)
     setMessage('')
     try {
-      const result = await stageAtlasImageIntakeFile(connection, sessionId, file.name, await readFileBase64(file), selectedNode)
+      const exactPage = selectedPage?.generation_status === 'prompt_only' && selectedPage.review_status === 'candidate'
+        ? { ref: selectedPage.id, contentHash: selectedPage.content_hash }
+        : undefined
+      if (nodePages.length > 1 && !exactPage) {
+        setMessage(t('atlas.choosePage'))
+        return
+      }
+      const result = await stageAtlasImageIntakeFile(
+        connection,
+        sessionId,
+        file.name,
+        await readFileBase64(file),
+        selectedNode,
+        exactPage,
+      )
       if (!result) {
         setMessage(t('atlas.uploadFailed'))
         return
@@ -277,7 +324,7 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
         title={t('atlas.title')} aria-label={t('atlas.title')}>
         <span className={css.petLabel}>{t('atlas.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('atlas.title')}
+      <NovelcraftModal open={open} onClose={close} title={t('atlas.title')}
         closeLabel={t('inbox.close')} className={css.dialogWide} contentClassName={css.modalContent}>
         {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
         {error ? (
@@ -292,9 +339,9 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
             <div className={css.panelToolbar}>
               <div className={css.tabRow} role="tablist" aria-label={t('atlas.title')}>
                 <Pill role="tab" aria-selected={tab === 'atlas'} active={tab === 'atlas'}
-                  onClick={() => { setTab('atlas'); setSelectedNode(null) }}>{t('atlas.tab.mine')}</Pill>
+                  onClick={() => selectTab('atlas')}>{t('atlas.tab.mine')}</Pill>
                 <Pill role="tab" aria-selected={tab === 'pending'} active={tab === 'pending'}
-                  onClick={() => { setTab('pending'); setSelectedNode(null) }}>
+                  onClick={() => selectTab('pending')}>
                   {t('atlas.tab.pending')} {pendingPages.length > 0 ? `(${pendingPages.length})` : ''}
                 </Pill>
               </div>
@@ -321,16 +368,27 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
                 <aside className={css.atlasSidebar}>
                   <h3 className={css.sectionTitle}>{tab === 'atlas' ? t('atlas.tab.mine') : t('atlas.tab.pending')}</h3>
                   {nodes.length > 0 ? (
-                    <AtlasTree t={t} nodes={nodes} pages={pages} selected={selectedNode} onSelect={setSelectedNode} />
+                    <AtlasTree t={t} nodes={nodes} pages={pages} selected={selectedNode} onSelect={selectNode} />
                   ) : <div className={css.empty}>{t(tab === 'atlas' ? 'atlas.mine.empty' : 'atlas.pending.empty')}</div>}
                 </aside>
                 <main className={css.atlasDetail}>
-                  {selectedPage ? (
+                  {nodePages.length > 1 && !selectedPage ? (
+                    <div className={css.workflowPanel}>
+                      <span className={css.helperText}>{t('atlas.choosePage')}</span>
+                      {nodePages.map((page) => (
+                        <button key={page.id} type="button" className={css.chapterRow}
+                          onClick={() => setSelectedPageId(page.id)}>
+                          <span>{page.title}</span>
+                          <Pill>{t(REVIEW_STATUS[page.review_status] ?? 'common.statusUnknown')}</Pill>
+                        </button>
+                      ))}
+                    </div>
+                  ) : selectedPage ? (
                     <>
                       <PageCard key={`${selectedPage.id}:${selectedPage.content_hash}`} t={t} page={selectedPage}
                         connection={connection} sessionId={sessionId} onSaved={() => void refresh()}
-                        onApply={() => send(t('atlas.prompt.applyLabels'))} />
-                      {selectedNode ? (
+                        onApply={() => send(t('atlas.prompt.applyLabels'))} onDirtyChange={setDirtyPage} />
+                      {selectedNode && selectedPage.generation_status === 'prompt_only' && !selectedPage.image ? (
                         <label className={`${css.fileLabel} ${chatDraft.trim() ? css.fileLabelDisabled : ''}`}>
                           <span>{uploadBusy ? t('atlas.uploading') : t('atlas.upload')}</span>
                           <input className={css.fileInput} type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg"
@@ -346,7 +404,7 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
                   ) : (
                     <div className={css.emptyState}>
                       <span>{selectedNode ? t('atlas.placeholderHint') : t('atlas.selectNode')}</span>
-                      {selectedNode ? (
+                      {selectedNode && nodePages.length === 0 ? (
                         <label className={`${css.fileLabel} ${chatDraft.trim() ? css.fileLabelDisabled : ''}`}>
                           <span>{uploadBusy ? t('atlas.uploading') : t('atlas.upload')}</span>
                           <input className={css.fileInput} type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg"
@@ -365,7 +423,7 @@ export function MapAtlasAction(props: MapAtlasActionProps): JSX.Element {
             )}
           </div>
         ) : null}
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

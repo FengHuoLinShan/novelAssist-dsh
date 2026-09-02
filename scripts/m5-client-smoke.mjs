@@ -79,16 +79,18 @@ if (!chapterSlot || chapterSlot.register.id !== 'novelcraft-chapters' || chapter
   throw new Error(`FAIL: rc.8 conversation.view 章节标签缺失或注册错误: ${JSON.stringify(calls.slots)}`)
 }
 
-// ---- 断言 2: PetAction 真实渲染(静默态, 无 session) ----
+// ---- 断言 2: PetAction 真实渲染(首帧连接中, 无伪静默) ----
 const html = renderToStaticMarkup(
   createElement(PetAction, {
     sessionId: undefined,
-    t: (key) => ({ 'pet.title': 'NovelCraft 守望', 'pet.silent': '静默' }[key] ?? key),
+    t: (key) => ({ 'pet.title': 'NovelCraft 守望', 'pet.connecting': '连接中' }[key] ?? key),
     connection: { rpc: { call: async () => ({ ok: true, value: { bound: null, open: 0, attention: false, threshold: 5, radarRunning: false } }) } },
+    useInput: (select) => select({ draft: '' }),
+    inputActions: { setDraft: () => {}, submit: () => {} },
   }),
 )
-if (!html.includes('NovelCraft 守望') || !html.includes('静默')) {
-  throw new Error(`FAIL: 宠物按钮渲染缺 aria/title 或静默态: ${html.slice(0, 300)}`)
+if (!html.includes('NovelCraft 守望') || !html.includes('连接中')) {
+  throw new Error(`FAIL: 宠物按钮渲染缺 aria/title 或连接态: ${html.slice(0, 300)}`)
 }
 
 const dockHtml = renderToStaticMarkup(
@@ -124,13 +126,13 @@ if (activeDockHtml !== '') throw new Error(`FAIL: 已开始会话重复渲染功
 const chapterHtml = renderToStaticMarkup(
   createElement(ChapterWorkspaceView, {
     sessionId: 's1',
-    t: (key) => ({ 'chapter.view': '章节正文', 'chapter.unbound': '未绑定', 'chapter.select': '选择章节', 'chapter.empty': '无章节', 'chapter.refresh': '刷新' }[key] ?? key),
+    t: (key) => ({ 'chapter.view': '章节正文', 'common.loading': '加载中', 'chapter.select': '选择章节', 'chapter.empty': '无章节', 'chapter.refresh': '刷新' }[key] ?? key),
     connection: undefined,
     useInput: (select) => select({ draft: '' }),
     inputActions: { setDraft: () => {}, submit: () => {} },
   }),
 )
-if (!chapterHtml.includes('章节正文') || !chapterHtml.includes('未绑定')) {
+if (!chapterHtml.includes('章节正文') || !chapterHtml.includes('加载中')) {
   throw new Error(`FAIL: 章节 conversation.view 渲染失败: ${chapterHtml.slice(0, 300)}`)
 }
 

@@ -445,11 +445,11 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
       },
     }),
 
-    // ---- 5. 收件箱四动词(记录决定; 资产写入另走采用/微工作流工具) ----
+    // ---- 5. 收件箱四动词(路由请求; 资产写入另走采用/微工作流工具) ----
     tool({
       name: 'novelcraft_inbox_act',
       description:
-        '收件箱四动词: accept 采纳(返回 adopt 指引)/ reject 打回(理由进校准)/ modify 改一改(路由微工作流)/ defer 先放着。' +
+        '收件箱四动词: accept 采纳(返回 adopt 指引)/ reject 打回并关闭/ modify 改一改(路由微工作流)/ defer 保留。' +
         'reject/modify 必须带 reason。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
@@ -485,12 +485,13 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
               : {}),
           },
         );
-        const guide =
-          descriptor.kind === 'adopt'
+        const guide = descriptor.action === 'defer'
+          ? '事项仍保留在收件箱。'
+          : descriptor.kind === 'adopt'
             ? '采纳动作: 请按信号目标调用 novelcraft_store_adopt 完成资产采用。'
             : descriptor.kind === 'microflow'
               ? `已路由微工作流「${descriptor.microflow ?? ''}」: 请按其阶段调用对应工具执行。`
-              : '已记录决定(校准笔记已更新)。';
+              : '已记录不采用。';
         return {
           ok: true,
           action: descriptor.action,

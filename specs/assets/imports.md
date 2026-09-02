@@ -55,6 +55,7 @@
 | file_size | int | 是 | 文件字节数 |
 | total_chapters | int | 是 | 解析出的章节总数 |
 | imported_chapters | int | 是 | 成功导入章节数 |
+| content_hash | string(64 hex) | 新记录是 | 归一化原文 SHA-256；旧记录可缺省，缺省时同名重导不得猜测幂等 |
 | status | enum | 是 | 见状态机 |
 | error_message | string | 否 | status=failed 时的脱敏错误信息 |
 

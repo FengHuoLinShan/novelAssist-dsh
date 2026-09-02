@@ -38,16 +38,26 @@ export interface IntakeStageValue {
   file_name: string;
   byte_length: number;
   sha256: string;
+  preview: {
+    chapter_count: number;
+    headings: string[];
+    preamble_chars: number;
+    warnings: string[];
+    blocked: boolean;
+  };
   message: string;
 }
 
 export interface AtlasImageIntakeStagePayload extends IntakeStagePayload {
   node_ref: string;
+  page_ref?: string;
+  expected_content_hash?: string;
 }
 
-export interface AtlasImageIntakeStageValue extends IntakeStageValue {
+export type AtlasImageIntakeStageValue = Omit<IntakeStageValue, 'preview'> & {
   node_ref: string;
-}
+  page_ref?: string;
+};
 
 export interface WatchStatePayload {
   sessionId?: string;
@@ -194,6 +204,9 @@ export interface ProposalCard {
   chapter_index: number;
   next_chapter: number;
   generated_at: string;
+  source_count: number;
+  omitted_source_count: number;
+  warning_count: number;
   proposals: Array<{
     /** Stable frozen choice id; old proposal files may not contain one. */
     proposal_id?: string;
@@ -219,6 +232,8 @@ export interface WritingDeskValue {
   reviews: ReviewCard[];
   /** 计划台: 最新一条续写提案(无则 null) */
   proposals: ProposalCard | null;
+  /** 仍占用 active candidate 槽的章节；客户端据此禁止重复生成。 */
+  pending_chapters: number[];
 }
 
 export interface ChapterDossierPayload {
@@ -339,7 +354,8 @@ export interface ChapterWorkspaceValue {
 export interface ChapterEditStagePayload {
   sessionId?: string;
   chapterIndex: number;
-  expected_content_hash: string;
+  expected_content_hash?: string;
+  expected_absent?: boolean;
   title?: string;
   text: string;
 }
@@ -513,6 +529,7 @@ export interface WorkflowViewPayload {
 }
 
 export type WorkflowAuthorState = 'running' | 'needs-attention' | 'completed' | 'failed';
+export type WorkflowAvailableAction = 'resume' | 'abandon';
 
 export interface WorkflowRunCard {
   workflow_id: string;
@@ -522,6 +539,11 @@ export interface WorkflowRunCard {
   total_batches: number;
   created_at: string;
   message: string;
+  current_phase?: string;
+  current_ordinal?: number;
+  start_chapter?: number;
+  end_chapter?: number;
+  available_actions: WorkflowAvailableAction[];
   can_resume: boolean;
   can_abandon: boolean;
 }

@@ -50,6 +50,14 @@ describe("validator(自实现 JSON Schema 子集)", () => {
     expect(validateSchema(s, { a: "1" })).toEqual([]);
     expect(validateSchema(s, { a: "1", b: "2" }).length).toBe(1);
   });
+  it("数组数量与非空字符串约束可执行", () => {
+    const s: ValidatorSchema = {
+      type: "array", minItems: 2, maxItems: 3, items: { type: "string", minLength: 1 },
+    };
+    expect(validateSchema(s, ["a", "b"])).toEqual([]);
+    expect(validateSchema(s, [""])).toHaveLength(2);
+    expect(validateSchema(s, ["a", "b", "c", "d"])).toHaveLength(1);
+  });
 });
 
 describe("specs(内置注册表, catalog 转写)", () => {

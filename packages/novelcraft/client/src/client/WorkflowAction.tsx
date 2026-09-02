@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Button, IconRefreshOutline16, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutline16, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcCaller } from './index.ts'
 import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS } from './locales.ts'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import { useWorkflowView } from './useWatch.ts'
 import css from './novelcraft.module.css'
 
@@ -53,20 +54,25 @@ export function WorkflowAction(props: WorkflowActionProps): JSX.Element {
           <span className={css.cardTitle}>{label}</span>
           <Pill className={STATE_CLASS[run.state]}>{t(`workflow.state.${run.state}`)}</Pill>
         </header>
-        <div className={css.progressTrack} aria-label={t('workflow.progress')}>
+        <div className={css.progressTrack} role="progressbar" aria-label={t('workflow.progress')}
+          aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
           <span style={{ width: `${percent}%` }} />
         </div>
         <p className={css.proposed}>{run.message}</p>
+        {run.current_phase ? <p className={css.helperText}>{t('workflow.phase')}：{run.current_phase} · {run.current_ordinal ?? 0}</p> : null}
+        {run.start_chapter !== undefined && run.end_chapter !== undefined ? (
+          <p className={css.helperText}>{t('workflow.scope')}：{run.start_chapter}–{run.end_chapter}</p>
+        ) : null}
         <div className={css.chapterWorkspaceMeta}>
           {t('workflow.progress')}：{run.completed_batches}/{run.total_batches || '—'}
         </div>
         <div className={css.actionRow}>
-          {run.can_resume ? (
+          {run.available_actions.includes('resume') ? (
             <Button variant="primary" onClick={() => send(
               t('workflow.prompt.resume', { kind: label, id: run.workflow_id }),
             )}>{t('workflow.resume')}</Button>
           ) : null}
-          {run.can_abandon ? (
+          {run.available_actions.includes('abandon') ? (
             <Button size="sm" variant="outline" onClick={() => send(
               t('workflow.prompt.clear', { kind: label, id: run.workflow_id }),
             )}>{t('workflow.abandon')}</Button>
@@ -82,7 +88,7 @@ export function WorkflowAction(props: WorkflowActionProps): JSX.Element {
         title={t('workflow.title')} aria-label={t('workflow.title')}>
         <span className={css.petLabel}>{t('workflow.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('workflow.title')}
+      <NovelcraftModal open={open} onClose={() => setOpen(false)} title={t('workflow.title')}
         closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
         <div className={css.workflowPanel}>
           <div className={css.panelToolbar}>
@@ -124,7 +130,7 @@ export function WorkflowAction(props: WorkflowActionProps): JSX.Element {
             </details>
           ) : null}
         </div>
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, IconRefreshOutline16, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutline16, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -7,6 +7,7 @@ import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { BOOK_CHANGED_EVENT, matchesBookChangedSession, useStoryMap, type BookChangedDetail } from './useWatch.ts'
 import { ChapterDossier } from './ChapterDossier.tsx'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import css from './novelcraft.module.css'
 
 export type StoryMapActionProps =
@@ -126,7 +127,7 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
         aria-label={t('story.title')} onClick={() => setOpen(true)}>
         <span className={css.petLabel}>{t('story.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('story.title')}
+      <NovelcraftModal open={open} onClose={() => setOpen(false)} title={t('story.title')}
         closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
         {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
         {error ? (
@@ -264,7 +265,7 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
             )}
           </div>
         ) : null}
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

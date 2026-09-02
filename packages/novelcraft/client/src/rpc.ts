@@ -72,6 +72,7 @@ import type {
   WatchStateValue,
   WritingDeskPayload,
   WritingDeskValue,
+  WorkflowAvailableAction,
   WorkflowAuthorState,
   WorkflowViewPayload,
   WorkflowViewValue,
@@ -168,6 +169,7 @@ export interface NovelcraftHostService {
       workflowInspect?(root: string): {
         runs: Array<{
           kind: 'deep-import' | 'map-atlas'; workflow_id: string; status: string; created_at?: string;
+          cursor?: { phase: string; ordinal: number };
           batches: { total: number; completed: number; other: number }; corrupt?: string;
         }>;
         checkpoint?: { workflow_id: string; start_chapter: number; end_chapter: number };
@@ -185,13 +187,19 @@ export interface NovelcraftHostService {
       }>;
     };
     stage: {
-      stageTextIntake(root: string, sessionId: string, fileName: string, bytes: Uint8Array): StagedFileIntake;
+      stageTextIntake(
+        root: string,
+        sessionId: string,
+        fileName: string,
+        bytes: Uint8Array,
+      ): StagedFileIntake & { preview: IntakeStageValue['preview'] };
       stageAtlasImageIntake(
         root: string,
         sessionId: string,
         fileName: string,
         bytes: Uint8Array,
         nodeRef: string,
+        opts?: { pageRef?: string; expectedContentHash?: string },
       ): StagedFileIntake;
       stageChapterEditIntake(root: string, sessionId: string, input: ChapterEditStageInput): StagedFileIntake;
       queueAtlasAnnotations(
@@ -241,10 +249,44 @@ export function rpcFail<T>(message: string): RpcResult<T> {
 const INBOX_ACTIONS = ['accept', 'reject', 'modify', 'defer'] as const;
 
 export function workflowAuthorState(status: string): WorkflowAuthorState {
-  if (status === 'completed') return 'completed';
-  if (status === 'provider_outcome_unknown') return 'needs-attention';
-  if (status === 'failed' || status === 'unreadable' || status === 'unknown') return 'failed';
-  return 'running';
+  switch (status) {
+    case 'planning':
+    case 'running':
+      return 'running';
+    case 'provider_outcome_unknown':
+    case 'waiting_approval':
+    case 'apply_probe_unknown':
+      return 'needs-attention';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'unreadable':
+    case 'unknown':
+    default:
+      return 'failed';
+  }
+}
+
+const ABANDONABLE_WORKFLOW_STATUSES = new Set([
+  'completed', 'failed', 'provider_outcome_unknown', 'unreadable', 'unknown',
+]);
+const RESUMABLE_WORKFLOW_STATUSES = new Set(['provider_outcome_unknown', 'waiting_approval', 'failed']);
+
+export function workflowAvailableActions(
+  run: { kind: 'deep-import' | 'map-atlas'; workflow_id: string; status: string; corrupt?: string },
+  checkpoint?: { workflow_id: string },
+): WorkflowAvailableAction[] {
+  const actions: WorkflowAvailableAction[] = [];
+  if (
+    run.kind === 'deep-import' &&
+    run.corrupt === undefined &&
+    RESUMABLE_WORKFLOW_STATUSES.has(run.status) &&
+    checkpoint !== undefined &&
+    run.workflow_id.endsWith(`-${checkpoint.workflow_id}`) &&
+    !/-f[0-9a-z]{6,}$/.test(run.workflow_id)
+  ) actions.push('resume');
+  if (ABANDONABLE_WORKFLOW_STATUSES.has(run.status)) actions.push('abandon');
+  return actions;
 }
 
 /**
@@ -274,14 +316,23 @@ export function rpcOk<T>(value: T): RpcResult<T> {
   return { ok: true, value };
 }
 
+export function signalActionForAuthor(signal: Pick<Signal, 'radar' | 'evidence' | 'proposed_action'>): string {
+  if (!signal.evidence.some((line) => line.startsWith('receipt:'))) return signal.proposed_action;
+  if (signal.radar === 'ingest') return '确认分章并导入这份手稿';
+  if (signal.radar === 'writing') return '确认并保存这次章节修改';
+  if (signal.radar === 'suggest') return '将这张图片放入选中的地图页';
+  return '交给助手继续处理';
+}
+
 function card(signal: Signal): SignalCard {
   return {
     id: signal.id,
     radar: signal.radar,
     severity: signal.severity,
     title: signal.title,
-    evidence: signal.evidence,
-    proposed_action: signal.proposed_action,
+    evidence: signal.evidence.filter((line) =>
+      !/^(receipt|sha256|base|node|page):/i.test(line) && !line.includes('chapter_ids')),
+    proposed_action: signalActionForAuthor(signal),
     reversibility: signal.reversibility,
     status: signal.status,
     observed_at: signal.observed_at,
@@ -416,6 +467,7 @@ export function createNovelcraftHandlers(ctx: Context) {
         file_name: staged.fileName,
         byte_length: staged.byteLength,
         sha256: staged.sha256,
+        preview: staged.preview,
         message: `已授权「${staged.fileName}」。返回对话说“导入刚才的手稿”即可。`,
       });
     } catch (error) {
@@ -429,6 +481,14 @@ export function createNovelcraftHandlers(ctx: Context) {
     if (!binding) return rpcFail('当前会话未绑定 vault');
     const nodeRefError = wireRefError(payload.node_ref, 'node_ref');
     if (nodeRefError) return rpcFail(nodeRefError);
+    const hasPageRef = payload.page_ref !== undefined;
+    const hasContentHash = payload.expected_content_hash !== undefined;
+    if (hasPageRef !== hasContentHash) return rpcFail('地图页引用与内容版本必须同时提供');
+    if (hasPageRef) {
+      const pageRefError = wireRefError(payload.page_ref, 'page_ref');
+      if (pageRefError) return rpcFail(pageRefError);
+      if (!/^[a-f0-9]{64}$/i.test(payload.expected_content_hash!)) return rpcFail('地图页内容版本非法');
+    }
     if (typeof payload.file_name !== 'string') return rpcFail('图片载荷格式错误');
     if (!novelcraft?.ui) return rpcFail('宿主未提供 novelcraft UI 面');
     try {
@@ -438,6 +498,7 @@ export function createNovelcraftHandlers(ctx: Context) {
         payload.file_name,
         decodeIntakeBase64(payload.bytes_base64),
         payload.node_ref,
+        hasPageRef ? { pageRef: payload.page_ref, expectedContentHash: payload.expected_content_hash } : undefined,
       );
       return rpcOk({
         receipt_id: staged.receiptId,
@@ -445,6 +506,7 @@ export function createNovelcraftHandlers(ctx: Context) {
         byte_length: staged.byteLength,
         sha256: staged.sha256,
         node_ref: payload.node_ref,
+        ...(payload.page_ref !== undefined ? { page_ref: payload.page_ref } : {}),
         message: `已授权「${staged.fileName}」。返回对话说“导入刚才的地图图片”即可。`,
       });
     } catch (error) {
@@ -539,12 +601,11 @@ export function createNovelcraftHandlers(ctx: Context) {
             : {}),
         },
       );
-      const guide =
-        descriptor.kind === 'adopt'
-          ? '已记录你的选择。需要写入书稿时，助手会继续请求你确认。'
-          : descriptor.kind === 'microflow'
-            ? '已记录你的修改要求，助手会按此继续处理。'
-            : '已记录决定。';
+      const guide = payload.action === 'reject'
+        ? '已记录不采用，这条事项已关闭。'
+        : payload.action === 'defer'
+          ? '事项仍保留在待处理列表。'
+          : '事项仍保留在待处理列表，完成对应操作后才会关闭。';
       return rpcOk({
         ok: true,
         action: descriptor.action,
@@ -605,7 +666,7 @@ export function createNovelcraftHandlers(ctx: Context) {
   async writingDesk(payload: WritingDeskPayload): Promise<RpcResult<WritingDeskValue>> {
     const binding = await resolveRoot(novelcraft, payload);
     if (!binding || !novelcraft?.ui) {
-      return rpcOk({ bound: null, book: '', chapters: [], threads: [], arcs: [], signals: [], objects: [], reviews: [], proposals: null });
+      return rpcOk({ bound: null, book: '', chapters: [], threads: [], arcs: [], signals: [], objects: [], reviews: [], proposals: null, pending_chapters: [] });
     }
     try {
       const ui = novelcraft.ui;
@@ -623,12 +684,16 @@ export function createNovelcraftHandlers(ctx: Context) {
         signals: ui.read.inbox(binding.root).map(card),
         objects: index.objects.map((o) => ({ slug: o.slug, name: o.name, kind: o.kind, status: o.status })),
         reviews: ui.view.reviewSummaries(binding.root) as ReviewCard[],
+        pending_chapters: ui.view.pendingChapterRefs(binding.root),
         proposals: proposal
           ? {
               run_id: proposal.run_id,
               chapter_index: proposal.chapter_index,
               next_chapter: proposal.next_chapter,
               generated_at: proposal.generated_at,
+              source_count: proposal.source_manifest?.length ?? 0,
+              omitted_source_count: proposal.omitted_source_ids?.length ?? 0,
+              warning_count: proposal.warnings?.length ?? 0,
               proposals: proposal.proposals.map((item) => ({
                 ...(item.proposal_id ? { proposal_id: item.proposal_id } : {}),
                 title: item.title,
@@ -691,6 +756,9 @@ export function createNovelcraftHandlers(ctx: Context) {
               chapter_index: proposal.chapter_index,
               next_chapter: proposal.next_chapter,
               generated_at: proposal.generated_at,
+              source_count: proposal.source_manifest?.length ?? 0,
+              omitted_source_count: proposal.omitted_source_ids?.length ?? 0,
+              warning_count: proposal.warnings?.length ?? 0,
               proposals: proposal.proposals,
             }
           : null,
@@ -800,11 +868,14 @@ export function createNovelcraftHandlers(ctx: Context) {
     const binding = await novelcraft?.vaults.resolve(payload.sessionId);
     if (!binding) return rpcFail('当前会话未绑定 vault');
     if (!novelcraft?.ui) return rpcFail('宿主未提供 novelcraft UI 面');
+    const expectsExisting = payload.expected_content_hash !== undefined;
+    const expectsAbsent = payload.expected_absent === true;
+    if (expectsExisting === expectsAbsent) return rpcFail('章节保存必须且只能提供一种基线');
     try {
       const staged = novelcraft.ui.stage.stageChapterEditIntake(binding.root, payload.sessionId, {
         chapterIndex: payload.chapterIndex,
         text: payload.text,
-        expectedContentHash: payload.expected_content_hash,
+        ...(expectsExisting ? { expectedContentHash: payload.expected_content_hash } : { expectedAbsent: true }),
         ...(payload.title !== undefined ? { title: payload.title } : {}),
       });
       return rpcOk({
@@ -1098,15 +1169,22 @@ export function createNovelcraftHandlers(ctx: Context) {
         bound: { book: binding.book },
         runs: view.runs.map((run) => {
           const state = workflowAuthorState(run.status);
+          const availableActions = workflowAvailableActions(run, view.checkpoint);
           const message = run.corrupt
             ? '运行记录不可读，可放弃后重新开始。'
-            : state === 'completed'
+            : run.status === 'completed'
               ? '已完成，可查看结果或清理运行记录。'
-              : state === 'needs-attention'
-                ? '上次执行结果还不能确认，继续前需要你再次确认。'
-                : state === 'failed'
-                  ? '运行失败，可尝试继续或显式重开。'
-                  : '正在进行，离开后可返回此处刷新。';
+              : run.status === 'provider_outcome_unknown'
+                ? '上次模型执行结果未知，继续前需要重新确认成本。'
+                : run.status === 'waiting_approval'
+                  ? '正在等待确认，确认后才会继续。'
+                  : run.status === 'apply_probe_unknown'
+                    ? '写入结果无法安全确认，不可直接继续，请检查运行记录。'
+                    : run.status === 'failed'
+                      ? '运行失败，可尝试继续或显式重开。'
+                      : run.status === 'unreadable' || run.status === 'unknown'
+                        ? '运行状态未知，不可直接继续，可清理后重新开始。'
+                        : '正在进行，离开后可返回此处刷新。';
           return {
             workflow_id: run.workflow_id,
             kind: run.kind,
@@ -1115,8 +1193,13 @@ export function createNovelcraftHandlers(ctx: Context) {
             total_batches: run.batches.total,
             created_at: run.created_at ?? '',
             message,
-            can_resume: run.kind === 'deep-import' && state !== 'completed',
-            can_abandon: state !== 'running',
+            ...(run.cursor ? { current_phase: run.cursor.phase, current_ordinal: run.cursor.ordinal } : {}),
+            ...(run.kind === 'deep-import' && view.checkpoint && run.workflow_id.endsWith(`-${view.checkpoint.workflow_id}`)
+              ? { start_chapter: view.checkpoint.start_chapter, end_chapter: view.checkpoint.end_chapter }
+              : {}),
+            available_actions: availableActions,
+            can_resume: availableActions.includes('resume'),
+            can_abandon: availableActions.includes('abandon'),
           };
         }),
         restart_scope: view.checkpoint

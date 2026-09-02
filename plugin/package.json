@@ -1,6 +1,6 @@
 {
   "name": "novelcraft-dsh",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "NovelCraft autonomous writing assistant for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",

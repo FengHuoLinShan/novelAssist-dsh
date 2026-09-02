@@ -640,11 +640,14 @@ export class NovelCraftService extends Service {
     chapterIndex: number,
     signal?: AbortSignal,
     profile?: ExecutionProfile,
+    authorIntent?: string,
   ): Promise<writing.ProposeResult> {
     // 审查项 1: profile 参数 brand 校验(fail-closed, 见 runStep; 普通对象不得跳过 root 解析)。
     const resolved =
       profile !== undefined ? requireTrustedExecutionProfile(profile, root) : await this.resolveProfile(root);
-    return writing.proposeNextChapterAuditable(await this.contentProviderFor(root, signal, resolved), root, chapterIndex);
+    return writing.proposeNextChapterAuditable(
+      await this.contentProviderFor(root, signal, resolved), root, chapterIndex, new Date(), authorIntent,
+    );
   }
 
   /** 便捷: 续写提案第二阶段(选定方向 → writing_generate → chapters/pending 候选)。

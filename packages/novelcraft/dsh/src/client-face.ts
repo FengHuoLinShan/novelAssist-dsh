@@ -45,6 +45,14 @@ export type PresetLike = {
 /** 页内章节编辑收据输入(与 writing.stageChapterEditIntake 同形)。 */
 export type ChapterEditStageInput = Parameters<typeof writing.stageChapterEditIntake>[2];
 
+export interface TextIntakePreview {
+  chapter_count: number;
+  headings: string[];
+  preamble_chars: number;
+  warnings: string[];
+  blocked: boolean;
+}
+
 export interface NovelcraftUiFace {
   /** 复用冻结只读命名空间(收件箱/章节读面/地图册视图; N35 sanction 不变)。 */
   readonly read: NovelCraftCapabilities['read'];
@@ -89,7 +97,12 @@ export interface NovelcraftUiFace {
   };
   readonly stage: {
     /** 文本手稿收据(会话绑定; 零正史写)+ 摄入提示信号。 */
-    stageTextIntake(root: string, sessionId: string, fileName: string, bytes: Uint8Array): StagedFileIntake;
+    stageTextIntake(
+      root: string,
+      sessionId: string,
+      fileName: string,
+      bytes: Uint8Array,
+    ): StagedFileIntake & { preview: TextIntakePreview };
     /** 地图图片收据(节点锁定)+ 导入提示信号。 */
     stageAtlasImageIntake(
       root: string,
@@ -97,6 +110,7 @@ export interface NovelcraftUiFace {
       fileName: string,
       bytes: Uint8Array,
       nodeRef: string,
+      opts?: { pageRef?: string; expectedContentHash?: string },
     ): StagedFileIntake;
     /** 页内章节编辑收据(CAS 基线冻结)+ 保存提示信号。 */
     stageChapterEditIntake(root: string, sessionId: string, input: ChapterEditStageInput): StagedFileIntake;
@@ -231,24 +245,34 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
     stage: Object.freeze({
       stageTextIntake: (root, sessionId, fileName, bytes) => {
         const staged = writing.stageTextIntake(root, sessionId, fileName, bytes);
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        const split = writing.splitChapterText(text);
+        const preview: TextIntakePreview = {
+          chapter_count: split.chapters.length,
+          headings: split.chapters.map((chapter) => chapter.title).filter(Boolean).slice(0, 20),
+          preamble_chars: split.preambleChars,
+          warnings: split.warnings,
+          blocked: split.warnings.includes('no_headings') && text.length > 20_000,
+        };
         assistant.pushSignal(root, {
           radar: 'ingest',
           severity: 'hint',
           title: `手稿「${staged.fileName}」已准备好`,
           evidence: [`receipt:${staged.receiptId}`, `sha256:${staged.sha256}`],
-          proposed_action: "确认分章并导入这份手稿",
+          proposed_action: `调用 novelcraft_ingest_file(root, receipt_id=${staged.receiptId}) 导入该手稿`,
           reversibility: true,
         });
-        return staged;
+        return { ...staged, preview };
       },
-      stageAtlasImageIntake: (root, sessionId, fileName, bytes, nodeRef) => {
-        const staged = world.stageAtlasImageIntake(root, sessionId, fileName, bytes, nodeRef);
+      stageAtlasImageIntake: (root, sessionId, fileName, bytes, nodeRef, opts) => {
+        const staged = world.stageAtlasImageIntake(root, sessionId, fileName, bytes, nodeRef, opts);
         assistant.pushSignal(root, {
           radar: 'suggest',
           severity: 'hint',
           title: `地图图片「${staged.fileName}」已准备好`,
           evidence: [`receipt:${staged.receiptId}`, `node:${nodeRef}`, `sha256:${staged.sha256}`],
-          proposed_action: "将这张图片放入选中的地图页",
+          proposed_action: `调用 novelcraft_map_atlas_upload(root, receipt_id=${staged.receiptId})` +
+            ` 导入到${opts?.pageRef ? `地图页 ${opts.pageRef}` : `节点 ${nodeRef}`}`,
           reversibility: true,
         });
         return staged;
@@ -259,8 +283,9 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
           radar: 'writing',
           severity: 'hint',
           title: `第 ${input.chapterIndex} 章的修改已准备好`,
-          evidence: [`receipt:${staged.receiptId}`, `base:${input.expectedContentHash}`, `sha256:${staged.sha256}`],
-          proposed_action: `确认并保存第 ${input.chapterIndex} 章的修改`,
+          evidence: [`receipt:${staged.receiptId}`, `base:${input.expectedAbsent ? 'absent' : input.expectedContentHash}`, `sha256:${staged.sha256}`],
+          proposed_action: `调用 novelcraft_chapter_version(action=save, receipt_id=${staged.receiptId})` +
+            ` 保存第 ${input.chapterIndex} 章`,
           reversibility: true,
           target: { chapter_index: input.chapterIndex },
         });

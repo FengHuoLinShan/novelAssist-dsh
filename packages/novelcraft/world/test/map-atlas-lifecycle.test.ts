@@ -15,9 +15,11 @@ import {
   computeAtlasPageContentHash,
   deleteAtlasAnnotation,
   importAtlasImage,
+  importStagedAtlasImage,
   readAtlasTree,
   rejectAtlasPage,
   restoreAtlasPage,
+  stageAtlasImageIntake,
   updateAtlasAnnotation,
   updateAtlasNode,
   updateAtlasPrompt,
@@ -589,6 +591,49 @@ describe("importAtlasImage 本机导入(附录 A.3; N29)", () => {
     expect(tracked).not.toContain("images/");
   });
 
+  it("同节点多张 prompt_only 页必须精确选择并复核 hash", () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1", { node_ref: "n1" }));
+    writeAtlasPage(root, page("pg2", { node_ref: "n1" }));
+    const src = writeTmpImage(root, "src.png", pngBytes(64, 64));
+
+    expect(() => importAtlasImage(root, src, { nodeRef: "n1" })).toThrow(/多个待补图页面/);
+    expect(() => importAtlasImage(root, src, { nodeRef: "n1" }, {
+      pageRef: "pg2",
+      expectedContentHash: "stale",
+    })).toThrow(/已变化/);
+
+    const selected = readAtlasTree(root).pendingPages.find((candidate) => candidate.id === "pg2")!;
+    const result = importAtlasImage(root, src, { nodeRef: "n1" }, {
+      pageRef: "pg2",
+      expectedContentHash: selected.content_hash,
+    });
+    expect(result.page.id).toBe("pg2");
+    expect(readAtlasTree(root).pendingPages.find((candidate) => candidate.id === "pg1")?.generation_status).toBe("prompt_only");
+  });
+
+  it("会话收据冻结具体页面与 hash", () => {
+    const root = makeRoot();
+    writeAtlasNode(root, node("n1"));
+    writeAtlasPage(root, page("pg1", { node_ref: "n1" }));
+    writeAtlasPage(root, page("pg2", { node_ref: "n1" }));
+    const selected = readAtlasTree(root).pendingPages.find((candidate) => candidate.id === "pg2")!;
+
+    expect(() => stageAtlasImageIntake(root, "s1", "bad.png", pngBytes(64, 64), "n1", {
+      pageRef: "pg2",
+      expectedContentHash: "stale",
+    })).toThrow(/已变化/);
+
+    const receipt = stageAtlasImageIntake(root, "s1", "map.png", pngBytes(64, 64), "n1", {
+      pageRef: "pg2",
+      expectedContentHash: selected.content_hash,
+    });
+    const result = importStagedAtlasImage(root, "s1", receipt.receiptId);
+    expect(result.page.id).toBe("pg2");
+    expect(readAtlasTree(root).pendingPages.find((candidate) => candidate.id === "pg1")?.generation_status).toBe("prompt_only");
+  });
+
   it("无 prompt_only 候选 → 新建 upload run + 候选页(generation_choice=upload)", async () => {
     const root = makeRoot();
     writeAtlasNode(root, node("n1"));
@@ -627,12 +672,18 @@ describe("importAtlasImage 本机导入(附录 A.3; N29)", () => {
     unlinkSync(join(paths(root).world.atlas.dir, "images/pg1/v1.png"));
     writeAtlasPage(root, page("pg2", { node_ref: "n1" }));
     const src2 = writeTmpImage(root, "b.png", pngBytes(64, 64));
-    const r2 = importAtlasImage(root, src2, { nodeRef: "n1" }, { pageRef: "pg2" });
+    const r2 = importAtlasImage(root, src2, { nodeRef: "n1" }, {
+      pageRef: "pg2",
+      expectedContentHash: readAtlasTree(root).pendingPages.find((candidate) => candidate.id === "pg2")!.content_hash,
+    });
     expect(r2.page.image?.file).toBe("images/pg2/v1.png"); // 新页自目录, v1 起
     // 同页两次上传: pg2 已 review_ready 不再匹配; 用 pg3 连传两次走 upload run 路径验证目录内 max+1
     writeAtlasPage(root, page("pg3", { node_ref: "n1" }));
     const src3 = writeTmpImage(root, "c.png", pngBytes(64, 64));
-    const r3 = importAtlasImage(root, src3, { nodeRef: "n1" }, { pageRef: "pg3" });
+    const r3 = importAtlasImage(root, src3, { nodeRef: "n1" }, {
+      pageRef: "pg3",
+      expectedContentHash: readAtlasTree(root).pendingPages.find((candidate) => candidate.id === "pg3")!.content_hash,
+    });
     expect(r3.page.image?.file).toBe("images/pg3/v1.png");
     const src4 = writeTmpImage(root, "d.png", pngBytes(64, 64));
     const r4 = importAtlasImage(root, src4, { nodeRef: "n1" }); // pg3 已 review_ready → 新建页目录独立

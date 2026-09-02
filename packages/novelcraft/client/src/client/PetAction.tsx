@@ -1,36 +1,26 @@
-// 宠物(PetAction): 会话头动作, 四态 = 静默/微光/忙碌/待确认(§17)。
-// 数据源 = /novelcraft watch/state RPC(宿主读 .assistant/signals 与 jobs)。
+// 宠物(PetAction): 会话头动作；先呈现连接新鲜度，再呈现守望业务状态。
 import { useState, type KeyboardEvent } from 'react'
-import { Modal, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
+import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { NS, type NovelcraftKey } from './locales.ts'
-import { useWatch } from './useWatch.ts'
+import { handoffToAssistant } from './assistantHandoff.ts'
+import { NS } from './locales.ts'
+import { petState, useWatch } from './useWatch.ts'
 import { InboxPanel } from './InboxPanel.tsx'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import css from './novelcraft.module.css'
 
 export type PetActionProps =
   PropsRuntime<'conversation.session.header.actions'> &
   PropsLocale<typeof NS> & { connection: RpcCaller | undefined }
 
-interface PetState {
-  label: NovelcraftKey
-  dot: StateDotState
-}
-
-/** 四态判定: 待确认 > 忙碌 > 微光 > 静默(阈值 N3: notify_threshold)。 */
-function petState(open: number, threshold: number, radarRunning: boolean): PetState {
-  if (open >= threshold) return { label: 'pet.attention', dot: 'error' }
-  if (radarRunning) return { label: 'pet.busy', dot: 'warning' }
-  if (open > 0) return { label: 'pet.glow', dot: 'ongoing' }
-  return { label: 'pet.silent', dot: 'done' }
-}
-
 export function PetAction(props: PetActionProps): JSX.Element {
-  const { t, connection, sessionId } = props
+  const { t, connection, sessionId, inputActions, useInput } = props
+  const chatDraft = useInput((state: InputState) => state.draft)
   const [open, setOpen] = useState(false)
   const { snapshot } = useWatch(connection, sessionId)
-  const state = petState(snapshot.open, snapshot.threshold, snapshot.radarRunning)
+  const state = petState(snapshot)
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -58,7 +48,7 @@ export function PetAction(props: PetActionProps): JSX.Element {
         <span className={css.petLabel}>{t(state.label)}</span>
         {snapshot.open > 0 ? <span className={css.petBadge}>{snapshot.open}</span> : null}
       </button>
-      <Modal
+      <NovelcraftModal
         open={open}
         onClose={() => setOpen(false)}
         title={`${t('inbox.title')}${snapshot.bound && snapshot.book ? ` · ${snapshot.book}` : ''}`}
@@ -66,8 +56,8 @@ export function PetAction(props: PetActionProps): JSX.Element {
         className={css.dialog}
         contentClassName={css.modalContent}
       >
-        {/* 静默态默认答复(§9): 无待确认信号时, 先给剧情雷达的一句话摘要。 */}
-        {snapshot.open === 0 && snapshot.plotSummary ? (
+        {/* 仅在线静默态展示剧情摘要，断线时不把旧数据冒充当前状态。 */}
+        {snapshot.availability === 'live' && snapshot.open === 0 && snapshot.plotSummary ? (
           <p className={css.plotSummary} aria-label={t('pet.plot')}>
             {t('pet.plot')}: {snapshot.plotSummary}
           </p>
@@ -77,8 +67,15 @@ export function PetAction(props: PetActionProps): JSX.Element {
           sessionId={sessionId}
           t={t}
           onClose={() => setOpen(false)}
+          onContinue={(prompt) => handoffToAssistant({
+            draft: chatDraft,
+            prompt,
+            setDraft: inputActions.setDraft,
+            submit: inputActions.submit,
+            close: () => setOpen(false),
+          })}
         />
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Button, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ContentPresetCard } from '../wire.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { useModelPresets } from './useWatch.ts'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import css from './novelcraft.module.css'
 
 export type ModelPresetsActionProps =
@@ -81,7 +82,7 @@ export function ModelPresetsAction(props: ModelPresetsActionProps): JSX.Element 
         aria-label={t('preset.title')} onClick={() => setOpen(true)}>
         <span className={css.petLabel}>{t('preset.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('preset.title')}
+      <NovelcraftModal open={open} onClose={() => setOpen(false)} title={t('preset.title')}
         closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
         {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
         {error ? (
@@ -133,7 +134,7 @@ export function ModelPresetsAction(props: ModelPresetsActionProps): JSX.Element 
             {loading ? <div className={css.helperText}>{t('workflow.loading')}</div> : null}
           </div>
         ) : null}
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

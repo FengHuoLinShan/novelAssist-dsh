@@ -50,6 +50,8 @@ export interface ProposalRecord {
   source_manifest?: AuditableSourceRef[];
   omitted_source_ids?: string[];
   warnings?: WritingContextWarning[];
+  /** 作者本次明确填写的章目标；冻结进 P0，不自动成为正史。 */
+  author_intent?: string;
 }
 
 export interface FrozenChapterProposal extends ChapterProposal {
@@ -155,9 +157,15 @@ export function compileProposalContextBudgeted(
   return `${body}\n\n[${contextSummary(compiled)}]`;
 }
 
-function proposalTask(chapterIndex: number, selected?: Pick<ChapterProposal, "title" | "premise">): string {
+function proposalTask(
+  chapterIndex: number,
+  selected?: Pick<ChapterProposal, "title" | "premise">,
+  authorIntent?: string,
+): string {
+  const intent = authorIntent?.trim();
+  if (intent && intent.length > 1_000) throw new StoreError("VALIDATION_FAILED", "本章写作意图不得超过 1000 字");
   return selected === undefined
-    ? `为第 ${chapterIndex + 1} 章生成 2-3 个续写方向提案。`
+    ? `为第 ${chapterIndex + 1} 章生成 2-3 个续写方向提案。${intent ? `\n作者本章意图：${intent}` : ""}`
     : `按冻结方向“${selected.title}”：${selected.premise}，生成第 ${chapterIndex + 1} 章正文候选。`;
 }
 
@@ -265,11 +273,11 @@ function p4ChapterSources(
 export function buildAuditableProposalContext(
   root: string,
   chapterIndex: number,
-  opts: { selected?: Pick<ChapterProposal, "title" | "premise">; budget_tokens?: number } = {},
+  opts: { selected?: Pick<ChapterProposal, "title" | "premise">; budget_tokens?: number; author_intent?: string } = {},
 ): AuditableProposalContext {
   const { body } = chapterBody(root, chapterIndex);
   const baseHash = contentHashOf(body);
-  const task = proposalTask(chapterIndex, opts.selected);
+  const task = proposalTask(chapterIndex, opts.selected, opts.author_intent);
   const tail = body.trim().slice(-1500);
   const warnings: WritingContextWarning[] = [];
   const pov = resolvePovKnowledgeContext(root, chapterIndex + 1);
@@ -338,7 +346,7 @@ export function buildAuditableProposalContext(
 export async function compileProposalContextAuditable(
   root: string,
   chapterIndex: number,
-  opts: { selected?: Pick<ChapterProposal, "title" | "premise">; budget_tokens?: number } = {},
+  opts: { selected?: Pick<ChapterProposal, "title" | "premise">; budget_tokens?: number; author_intent?: string } = {},
 ): Promise<AuditableProposalContext> {
   return buildAuditableProposalContext(root, chapterIndex, opts);
 }
@@ -406,6 +414,7 @@ function assertFrozenRecord(record: ProposalRecord): asserts record is FrozenPro
   if (!/^p\d+$/.test(record.run_id) || !Number.isSafeInteger(record.chapter_index) || record.chapter_index < 1 ||
       record.next_chapter !== record.chapter_index + 1 || !Number.isFinite(Date.parse(record.generated_at)) ||
       !Array.isArray(record.proposals) || record.proposals.length === 0 || !/^[0-9a-f]{64}$/.test(record.base_content_hash ?? "") || !/^[0-9a-f]{64}$/.test(record.context_hash ?? "") ||
+      (record.author_intent !== undefined && (typeof record.author_intent !== "string" || record.author_intent.length > 1_000)) ||
       !Array.isArray(record.source_manifest) || !Array.isArray(record.omitted_source_ids) || !Array.isArray(record.warnings) ||
       !Number.isSafeInteger(record.context_budget_tokens) || record.context_budget_tokens! <= 0 ||
       !Number.isSafeInteger(record.context_total_tokens) || record.context_total_tokens! < 0 ||
@@ -453,7 +462,7 @@ export function frozenProposalById(record: FrozenProposalRecord, proposalId: str
 }
 
 export function assertFrozenProposalCurrent(root: string, record: FrozenProposalRecord): AuditableProposalContext {
-  const current = buildAuditableProposalContext(root, record.chapter_index);
+  const current = buildAuditableProposalContext(root, record.chapter_index, { author_intent: record.author_intent });
   if (!sameProposalContext(current, record)) {
     throw new StoreError("CONFLICT", `提案 ${record.run_id} 的正文或上下文来源已变化；请重新生成提案`);
   }
@@ -471,6 +480,13 @@ function sameProposalContext(
     JSON.stringify(current.source_manifest) === JSON.stringify(frozen.source_manifest) &&
     JSON.stringify(current.omitted_source_ids) === JSON.stringify(frozen.omitted_source_ids) &&
     JSON.stringify(current.warnings) === JSON.stringify(frozen.warnings);
+}
+
+function proposalSetError(proposals: readonly ChapterProposal[]): string | null {
+  if (proposals.length < 2) return "提案不足 2 条";
+  if (proposals.some((proposal) => !proposal.title.trim() || !proposal.premise.trim())) return "提案标题与前提不能为空";
+  const identities = proposals.map((proposal) => `${proposal.title.trim()}\u0000${proposal.premise.trim()}`);
+  return new Set(identities).size === identities.length ? null : "提案方向重复";
 }
 
 /**
@@ -494,9 +510,8 @@ export async function proposeNextChapter(
 
   const parsed = r.result as { proposals?: ChapterProposal[] };
   const proposals = (Array.isArray(parsed.proposals) ? parsed.proposals : []).slice(0, 3);
-  if (proposals.length === 0) {
-    return { ok: false, error: { kind: "schema_violation", message: "提案为空(无 proposals)" } };
-  }
+  const proposalError = proposalSetError(proposals);
+  if (proposalError) return { ok: false, error: { kind: "schema_violation", message: proposalError } };
 
   const record: ProposalRecord = {
     run_id: runId,
@@ -518,18 +533,19 @@ export async function proposeNextChapterAuditable(
   root: string,
   chapterIndex: number,
   now: Date = new Date(),
+  authorIntent?: string,
 ): Promise<FrozenProposeResult> {
   const runId = proposalRunId(now, chapterIndex);
   const file = assertProposalSlotAvailable(root, chapterIndex, runId);
-  const context = await compileProposalContextAuditable(root, chapterIndex);
+  const normalizedIntent = authorIntent?.trim() || undefined;
+  const context = await compileProposalContextAuditable(root, chapterIndex, { author_intent: normalizedIntent });
   const r = await runStep(provider, { specRef: "next_chapter_proposal", input: context.rendered_text });
   if (!r.ok) return { ok: false, error: r.error };
   const parsed = r.result as { proposals?: ChapterProposal[] };
   const rawProposals = (Array.isArray(parsed.proposals) ? parsed.proposals : []).slice(0, 3);
-  if (rawProposals.length === 0) {
-    return { ok: false, error: { kind: "schema_violation", message: "提案为空(无 proposals)" } };
-  }
-  const current = buildAuditableProposalContext(root, chapterIndex);
+  const proposalError = proposalSetError(rawProposals);
+  if (proposalError) return { ok: false, error: { kind: "schema_violation", message: proposalError } };
+  const current = buildAuditableProposalContext(root, chapterIndex, { author_intent: normalizedIntent });
   if (!sameProposalContext(current, {
     base_content_hash: context.base_content_hash,
     context_hash: context.context_hash,
@@ -558,6 +574,7 @@ export async function proposeNextChapterAuditable(
     source_manifest: context.source_manifest,
     omitted_source_ids: context.omitted_source_ids,
     warnings: context.warnings,
+    ...(normalizedIntent ? { author_intent: normalizedIntent } : {}),
   };
   writeProposalRecord(root, file, record);
   return { ok: true, proposal: record };

@@ -18,16 +18,19 @@ whenToUse: 作者同步章节、要审查/修订、采用候选、或问写作�
 ## 文本入库协议(Track 1, D9a)
 
 - 若对话中还没有文件收据, 请作者先在「写作台 → 导入」选文件; 不要询问或推测本机路径。
+- 文件选择后先展示确定性分章预览；作者点击「确认分章并交给助手」后再执行导入。
 - 收件箱出现「手稿已授权」信号后, 从 proposed_action 取得 receipt_id 并调
   `novelcraft_ingest_file {root, receipt_id, start_chapter?, force?}`。
 - 入库是确定性的: imports/<slug>.md 原文停靠 + chapters/NNN.md(默认接现有最大章之后;
   同号章内容冲突默认跳过, 作者确认后 force 覆盖)+ imports/import-log.jsonl
-  (同文件重复导入自动跳过)。
+  (同名且原文 hash 相同才幂等跳过；同名内容变化 fail-closed 并要求改名保留来源)。
 - 当前工具不提供 read/write/Shell, 也没有主机路径或粘贴临时文件旁路。
 - v1 收据链支持 `.txt/.md`; 乱码(非 UTF-8)会被拒绝并提示转码;
-  >50MB 请拆分。
+  >50MB 请拆分。Markdown `# 第X章` 可识别；超过 20,000 字却无法识别标题时禁止静默按单章写入。
 - 入库后用作者语言报告(章数/跳过/冲突), 并建议下一步跑深度导入(novelcraft_deep_import);
   摄入雷达会自动把「章待增量导入」对账进收件箱。
+- 作者在写作台填写了「这一章我想完成什么」时，调用
+  `novelcraft_propose_next_chapter` 必须原样传入 `intent`；它只冻结进本次 P0 任务，不自动成为正史。
 
 ## 当前可执行面
 

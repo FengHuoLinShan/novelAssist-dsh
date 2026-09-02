@@ -34,6 +34,7 @@ afterEach(() => {
 });
 
 const direction = { title: "冻结方向", premise: "沿 KEYSTONE 线索继续", basis: ["历史照应"] };
+const directions = [direction, { ...direction, title: "冻结方向二" }];
 
 function seedPovScene(root: string): void {
   const file = join(root, "scenes", "s002.md");
@@ -48,7 +49,7 @@ function seedPovScene(root: string): void {
 async function freezeProposal(root: string) {
   seedPovScene(root);
   const result = await proposeNextChapterAuditable(
-    new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] }),
+    new MockProvider({ responses: [{ text: JSON.stringify({ proposals: directions }) }] }),
     root,
     1,
     new Date("2026-09-01T00:00:00.000Z"),
@@ -149,10 +150,12 @@ describe("auditable writing context (P0-W1)", () => {
 
   it("安全提案保存 actual base、manifest 与确定性 proposal_id", async () => {
     const root = makeRoot();
-    const context = buildAuditableProposalContext(root, 1);
-    const provider = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] });
-    const result = await proposeNextChapterAuditable(provider, root, 1, new Date("2026-09-01T00:00:00.000Z"));
+    const intent = "这一章必须让主角发现北闸线索";
+    const context = buildAuditableProposalContext(root, 1, { author_intent: intent });
+    const provider = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: directions }) }] });
+    const result = await proposeNextChapterAuditable(provider, root, 1, new Date("2026-09-01T00:00:00.000Z"), intent);
     const record = result.proposal!;
+    expect(record.author_intent).toBe(intent);
     expect(record.base_content_hash).toBe(contentHashOf(chapterBody(root, 1).body));
     expect(record.context_hash).toBe(context.context_hash);
     expect(record.source_manifest.length).toBeGreaterThan(0);
@@ -163,7 +166,7 @@ describe("auditable writing context (P0-W1)", () => {
   it("同 run 重试 provider 前拒绝覆盖旧回执", async () => {
     const root = makeRoot();
     const now = new Date("2026-09-01T00:00:00.000Z");
-    const firstProvider = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] });
+    const firstProvider = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: directions }) }] });
     const first = await proposeNextChapterAuditable(firstProvider, root, 1, now);
     const file = join(root, ".assistant", "proposals", `next-001-${first.proposal!.run_id}.json`);
     const before = readFileSync(file, "utf8");
@@ -176,7 +179,7 @@ describe("auditable writing context (P0-W1)", () => {
   it("provider 期间仅 warnings 漂移也拒绝落盘(RV-11)", async () => {
     const root = makeRoot();
     rebuildRagIndex(root, [], new Date("2026-09-01T00:00:00.000Z"));
-    const base = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] });
+    const base = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: directions }) }] });
     const racing: Provider = {
       async complete(request) {
         const response = await base.complete(request);
@@ -208,7 +211,7 @@ describe("frozen proposal generation and adoption (P0-W1)", () => {
       }
     }
     const proposal = await proposeNextChapterAuditable(
-      new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [direction] }) }] }),
+      new MockProvider({ responses: [{ text: JSON.stringify({ proposals: directions }) }] }),
       root, 1, new Date("2026-09-01T00:02:00.000Z"),
     );
     const provider = new MockProvider({ responses: [] });

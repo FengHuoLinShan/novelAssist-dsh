@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Button, IconRefreshOutline16, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutline16, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcCaller } from './index.ts'
 import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import { BOOK_CHANGED_EVENT, matchesBookChangedSession, useWorldWorkspace, type BookChangedDetail } from './useWatch.ts'
 import css from './novelcraft.module.css'
 
@@ -39,7 +40,6 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
   const [task, setTask] = useState('')
   const [sources, setSources] = useState<string[]>([])
   const [includeDrafts, setIncludeDrafts] = useState(false)
-  const [newPage, setNewPage] = useState(true)
   const [notice, setNotice] = useState('')
   const { data, loading, error, refresh } = useWorldWorkspace(connection, sessionId)
 
@@ -52,7 +52,6 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
       setTask('')
       setSources([])
       setIncludeDrafts(false)
-      setNewPage(true)
       setNotice('')
     }
     reset()
@@ -78,19 +77,20 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
   const run = (): void => {
     const input = task.trim()
     if (!input || !data) return
-    const selectedObjects = data.objects.filter((object) => sources.includes(object.source_ref)).map((object) => object.name)
-    const selectedPages = data.pages.filter((page) => sources.includes(page.source_ref)).map((page) => page.title)
+    const selectedObjects = data.objects.filter((object) => sources.includes(object.source_ref)).map((object) =>
+      t('world.prompt.referenceItem', { title: object.name, reference: object.source_ref }))
+    const selectedPages = data.pages.filter((page) => sources.includes(page.source_ref)).map((page) =>
+      t('world.prompt.referenceItem', { title: page.title, reference: page.source_ref }))
     const selected = [...selectedObjects, ...selectedPages]
     const references = selected.length > 0 ? t('world.prompt.references', { references: selected.join('、') }) : ''
     const drafts = includeDrafts ? t('world.prompt.drafts') : ''
     const pageIntent = mode === 'bible_suggest'
-      ? newPage ? t('world.prompt.newPage') : t('world.prompt.existingPage')
+      ? t('world.prompt.newPage')
       : t('world.prompt.mode', { mode: t(MODE_LABEL[mode]) })
     send(t('world.prompt.request', { intent: pageIntent, input, references, drafts }))
   }
 
-  const selectedPageCount = data?.pages.filter((page) => sources.includes(page.source_ref)).length ?? 0
-  const canRun = Boolean(task.trim()) && (mode !== 'bible_suggest' || newPage || selectedPageCount > 0)
+  const canRun = Boolean(task.trim())
 
   return (
     <>
@@ -98,7 +98,7 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
         title={t('world.title')} aria-label={t('world.title')}>
         <span className={css.petLabel}>{t('world.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('world.title')}
+      <NovelcraftModal open={open} onClose={() => setOpen(false)} title={t('world.title')}
         closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
         {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
         {error ? (
@@ -159,14 +159,6 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
                     <span>{t('world.includeDrafts')}</span>
                   </label>
                 </details>
-                {mode === 'bible_suggest' ? (
-                  <fieldset className={css.choiceGroup}>
-                    <legend>{t('world.pageIntent')}</legend>
-                    <label><input type="radio" checked={newPage} onChange={() => setNewPage(true)} /> {t('world.newPage')}</label>
-                    <label><input type="radio" checked={!newPage} onChange={() => setNewPage(false)} /> {t('world.existingPage')}</label>
-                    {!newPage && selectedPageCount === 0 ? <span className={css.helperText}>{t('world.existingPageHint')}</span> : null}
-                  </fieldset>
-                ) : null}
                 <Button type="submit" variant="primary" disabled={!canRun}>{t(MODE_ACTION[mode])}</Button>
               </form>
             ) : (
@@ -197,7 +189,7 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
                       <div className={css.actionRow}>
                         {page.can_publish ? (
                           <Button variant="primary" onClick={() => send(
-                            t('world.prompt.publish', { title: page.title }),
+                            t('world.prompt.publish', { title: page.title, reference: page.source_ref }),
                           )}>{t('world.publish')}</Button>
                         ) : null}
                         <Button size="sm" variant="ghost" onClick={() => {
@@ -211,7 +203,7 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
             )}
           </div>
         ) : null}
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

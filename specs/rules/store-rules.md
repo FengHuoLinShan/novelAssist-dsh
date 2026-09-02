@@ -303,8 +303,8 @@
 
 - **规则**: (novel_id, file_name) 在 status='done' 时唯一(partial unique index)——同书同文件只允许一条 done 记录。
 - **来源**: `specs/assets/imports.md`「ImportRecord·完整性规则」; `models.py:64-74`。
-- **M4 落法**: store 写 import-log.jsonl 前按 (书, 文件名) 查 done; 命中则幂等返回不重导。
-- **断言**: 同书同文件重复导入 → 不产生第二条 done; 换文件 → 新记录。
+- **M4 落法**: store 写 import-log.jsonl 前按 (书, 文件名) 查 done；原文 `content_hash` 相同才幂等返回。hash 不同或旧记录无 hash 时 fail-closed，要求改名以保留两个来源，仍不产生第二条同名 done。
+- **断言**: 同书同文件同 hash 重复导入 → 不产生第二条 done；同名不同 hash → 拒绝静默跳过；换文件 → 新记录。
 
 ### R31 · 导入文件门禁(白名单/50MB/basename/不存正文)
 

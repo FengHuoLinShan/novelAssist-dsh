@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Button, IconRefreshOutline16, Input, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutline16, Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcCaller } from './index.ts'
 import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS } from './locales.ts'
 import { useBookLibrary } from './useWatch.ts'
+import { NovelcraftModal } from './NovelcraftModal.tsx'
 import css from './novelcraft.module.css'
 
 export type BookLibraryActionProps =
@@ -47,7 +48,7 @@ export function BookLibraryAction(props: BookLibraryActionProps): JSX.Element {
         title={t('book.title')} aria-label={t('book.title')}>
         <span className={css.petLabel}>{t('book.title')}</span>
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={t('book.title')}
+      <NovelcraftModal open={open} onClose={() => setOpen(false)} title={t('book.title')}
         closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
         <div className={css.workflowPanel}>
           <div className={css.panelToolbar}>
@@ -75,7 +76,10 @@ export function BookLibraryAction(props: BookLibraryActionProps): JSX.Element {
                 {book.current ? <Pill active>{t('book.current')}</Pill> : null}
               </header>
               {!book.current ? (
-                <Button size="sm" variant="outline" onClick={() => send(t('book.prompt.open', { book: book.title }))}>
+                <Button size="sm" variant="outline" onClick={() => send(t('book.prompt.open', {
+                  title: book.title,
+                  book: book.book,
+                }))}>
                   {t('book.open')}
                 </Button>
               ) : null}
@@ -96,7 +100,7 @@ export function BookLibraryAction(props: BookLibraryActionProps): JSX.Element {
             </form>
           ) : null}
         </div>
-      </Modal>
+      </NovelcraftModal>
     </>
   )
 }

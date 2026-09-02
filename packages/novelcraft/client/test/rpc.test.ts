@@ -1,6 +1,6 @@
 // @novelcraft/dsh-client 宿主半身 RPC 处理器行为契约。
 // 断言引设计文档 §9/§17 + wire 契约: watch/state 四态数据、inbox/list 卡片
-// (作者语言)、inbox/act 四动词回 assistant.act(adopt 指引给助手, UI 不写资产);
+// (作者语言)、inbox/act 只关闭真实完成的拒绝(UI 不写资产);
 // 未绑定 → capability 缺省, 不炸通道。
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -99,10 +99,13 @@ describe('novelcraft RPC 处理器', () => {
         ...base.view,
         workflowInspect: () => ({
           runs: [
-            { kind: 'deep-import' as const, workflow_id: 'run-a', status: 'running', batches: { total: 4, completed: 1, other: 3 } },
-            { kind: 'deep-import' as const, workflow_id: 'run-b', status: 'provider_outcome_unknown', batches: { total: 4, completed: 2, other: 2 } },
+            { kind: 'deep-import' as const, workflow_id: 'run-active-cp', status: 'running', batches: { total: 4, completed: 1, other: 3 } },
+            { kind: 'deep-import' as const, workflow_id: 'run-waiting-cp', status: 'provider_outcome_unknown', batches: { total: 4, completed: 2, other: 2 } },
             { kind: 'map-atlas' as const, workflow_id: 'run-c', status: 'completed', batches: { total: 2, completed: 2, other: 0 } },
             { kind: 'deep-import' as const, workflow_id: 'run-d', status: 'unreadable', batches: { total: 0, completed: 0, other: 0 }, corrupt: 'raw parser details' },
+            { kind: 'deep-import' as const, workflow_id: 'run-unknown-cp', status: 'unknown', batches: { total: 0, completed: 0, other: 0 } },
+            { kind: 'deep-import' as const, workflow_id: 'run-approval-cp', status: 'waiting_approval', batches: { total: 4, completed: 4, other: 0 } },
+            { kind: 'deep-import' as const, workflow_id: 'run-probe-cp', status: 'apply_probe_unknown', batches: { total: 4, completed: 4, other: 0 } },
           ],
           checkpoint: { workflow_id: 'cp', start_chapter: 2, end_chapter: 5 },
         }),
@@ -115,11 +118,15 @@ describe('novelcraft RPC 处理器', () => {
       expect(result.value.bound).toEqual({ book: '测试书' });
       expect(JSON.stringify(result.value)).not.toContain(env.root);
       expect(result.value.runs.map((run) => run.state)).toEqual([
-        'running', 'needs-attention', 'completed', 'failed',
+        'running', 'needs-attention', 'completed', 'failed', 'failed', 'needs-attention', 'needs-attention',
       ]);
-      expect(result.value.runs[0]).toMatchObject({ can_resume: true, can_abandon: false });
-      expect(result.value.runs[1]).toMatchObject({ can_resume: true, can_abandon: true });
-      expect(result.value.runs[2]).toMatchObject({ can_resume: false, can_abandon: true });
+      expect(result.value.runs[0]).toMatchObject({ available_actions: [], can_resume: false, can_abandon: false });
+      expect(result.value.runs[1]).toMatchObject({ available_actions: ['resume', 'abandon'], can_resume: true, can_abandon: true });
+      expect(result.value.runs[2]).toMatchObject({ available_actions: ['abandon'], can_resume: false, can_abandon: true });
+      expect(result.value.runs[3]).toMatchObject({ available_actions: ['abandon'], can_resume: false });
+      expect(result.value.runs[4]).toMatchObject({ available_actions: ['abandon'], can_resume: false });
+      expect(result.value.runs[5]).toMatchObject({ available_actions: ['resume'], can_resume: true, can_abandon: false });
+      expect(result.value.runs[6]).toMatchObject({ available_actions: [], can_resume: false, can_abandon: false });
       expect(result.value.runs[3].message).not.toContain('raw parser details');
       expect(result.value.restart_scope).toEqual({ start_chapter: 2, end_chapter: 5 });
     }
@@ -140,6 +147,13 @@ describe('novelcraft RPC 处理器', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toMatchObject({ file_name: '手稿.md', byte_length: text.byteLength });
+      expect(result.value.preview).toEqual({
+        chapter_count: 1,
+        headings: ['第一章 雨夜'],
+        preamble_chars: 0,
+        warnings: [],
+        blocked: false,
+      });
       expect(result.value.receipt_id).toMatch(/^[0-9a-f-]{36}$/);
       const sessionDirs = readdirSync(path.join(env.root, '.git', 'novelcraft-intake'));
       expect(sessionDirs).toHaveLength(1);
@@ -148,6 +162,11 @@ describe('novelcraft RPC 处理器', () => {
       ), 'utf8')) as { status: string };
       expect(receipt.status).toBe('ready');
       expect(listSignals(env.root).some((signal) => signal.proposed_action.includes(result.value.receipt_id))).toBe(true);
+      const inbox = await h.inboxList({ sessionId: 's1' });
+      if (inbox.ok) {
+        expect(inbox.value.signals[0].proposed_action).toBe('确认分章并导入这份手稿');
+        expect(JSON.stringify(inbox.value)).not.toContain(result.value.receipt_id);
+      }
     }
     expect(existsSync(path.join(env.root, 'chapters', '001.md'))).toBe(false);
     expect(existsSync(path.join(env.root, 'imports', 'import-log.jsonl'))).toBe(false);
@@ -269,7 +288,7 @@ describe('novelcraft RPC 处理器', () => {
     env.cleanup();
   });
 
-  it('inbox/act: accept → 记录决定 + adopt 指引(资产写入留给助手/approval)', async () => {
+  it('inbox/act: accept 只返回 adopt 指引，真实采用前事项保持可恢复', async () => {
     const env = setup();
     const sig = pushSignal(env.root, {
       radar: 'dedup',
@@ -284,11 +303,10 @@ describe('novelcraft RPC 处理器', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.kind).toBe('adopt');
-      expect(result.value.message).toContain('助手');
+      expect(result.value.message).toContain('保留');
     }
-    // 信号已处理: 列表不再包含
     const list = await h.inboxList({ sessionId: 's1' });
-    if (list.ok) expect(list.value.signals).toHaveLength(0);
+    if (list.ok) expect(list.value.signals).toHaveLength(1);
     env.cleanup();
   });
 
@@ -331,6 +349,8 @@ describe('novelcraft RPC 处理器', () => {
       expect(result.value.kind).toBe('microflow');
       expect(result.value.microflow).toBe('去重修复');
     }
+    const list = await h.inboxList({ sessionId: 's1' });
+    if (list.ok) expect(list.value.signals).toHaveLength(1);
     env.cleanup();
   });
 
@@ -1098,6 +1118,15 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
     expect(readFileSync(path.join(env.root, 'chapters', '001.md'), 'utf8')).toBe(chapterBefore);
     expect(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: env.root, encoding: 'utf8' }).trim()).toBe(commitCountBefore);
     expect(listSignals(env.root).some((signal) => signal.proposed_action.includes(stagedValue.receipt_id))).toBe(true);
+    const firstChapter = await env.dispatch(ENDPOINTS.chapterStageEdit, {
+      sessionId: 's1', chapterIndex: 2, expected_absent: true, title: '第二章', text: '新章正文',
+    });
+    expect(firstChapter.ok).toBe(true);
+    expect(existsSync(path.join(env.root, 'chapters', '002.md'))).toBe(false);
+    expect((await env.dispatch(ENDPOINTS.chapterStageEdit, {
+      sessionId: 's1', chapterIndex: 2, expected_absent: true,
+      expected_content_hash: value.chapter.content_hash, text: '冲突基线',
+    })).ok).toBe(false);
     expect((await env.dispatch(ENDPOINTS.chapterStageEdit, {
       sessionId: 'unknown', chapterIndex: 1, expected_content_hash: value.chapter.content_hash, text: 'x',
     })).ok).toBe(false);
@@ -1294,7 +1323,7 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
     env.cleanup();
   });
 
-  it('inbox/act modify 经通道分发: 修改文本(modified* wire 字段)落进信号记录', async () => {
+  it('inbox/act modify 经通道分发: 微工作流完成前不改写或关闭原事项', async () => {
     const env = setupDispatchApp();
     const sig = pushSignal(env.root, {
       radar: 'writing', severity: 'note', title: '节奏偏慢', evidence: ['第1章'],
@@ -1309,10 +1338,9 @@ describe('apply/connection 通道分发(真实 handler 走线)', () => {
     expect(res.ok).toBe(true);
     const { readFileSync } = await import('node:fs');
     const stored = JSON.parse(readFileSync(path.join(env.root, '.assistant', 'signals', `${sig.id}.json`), 'utf8'));
-    // 修改文本真实发到 wire 并落盘: title/proposed_action 按修改覆盖。
-    expect(stored.title).toBe('节奏偏慢, 建议合并段落');
-    expect(stored.proposed_action).toBe('合并 2–3 段并精简描写');
-    expect(stored.status).toBe('accepted');
+    expect(stored.title).toBe('节奏偏慢');
+    expect(stored.proposed_action).toBe('删冗余段');
+    expect(stored.status).toBe('open');
     env.cleanup();
   });
 });

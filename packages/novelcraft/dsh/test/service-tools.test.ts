@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it } from 'vitest';
-import { pushSignal } from '@novelcraft/assistant';
+import { listSignals, pushSignal } from '@novelcraft/assistant';
 import { gitAdd, gitCommit, readCurrentChapter, serializeFrontmatter } from '@novelcraft/store';
 import { ingestChapter, readChapterCandidate, stageChapterEditIntake } from '@novelcraft/writing';
 import { NovelCraftService } from '../src/index.js';
@@ -82,6 +82,31 @@ const tool = (env: TestEnv, name: string): ToolDefinition => {
 };
 
 describe('NovelCraftService 端到端', () => {
+  it('生产 client face 暂存文本后 agent 可从 inbox receipt 完成导入', async () => {
+    const env = await setup();
+    const staged = env.service.ui.stage.stageTextIntake(
+      env.root,
+      's1',
+      '手稿.md',
+      Buffer.from('第一章 雨夜\n雨下了一夜。'),
+    );
+    expect(listSignals(env.root).some((signal) => signal.proposed_action.includes(staged.receiptId))).toBe(true);
+    const view = tool(env, 'novelcraft_inbox_view');
+    const inbox = await view.execute(
+      { root: env.root },
+      { ...env.exec, name: 'novelcraft_inbox_view' },
+    ) as { signals: Array<{ proposed_action: string }> };
+    const receipt = inbox.signals[0].proposed_action.match(/receipt_id=([0-9a-f-]{36})/)?.[1];
+    expect(receipt).toBe(staged.receiptId);
+    const ingest = tool(env, 'novelcraft_ingest_file');
+    await ingest.execute(
+      { root: env.root, receipt_id: receipt },
+      { ...env.exec, name: 'novelcraft_ingest_file' },
+    );
+    expect(existsSync(path.join(env.root, 'chapters', '001.md'))).toBe(true);
+    env.cleanup();
+  });
+
   it('真实 alpha.4 ToolRuntime: scope/provider/approval 失败均 isError=true 且带稳定 code', async () => {
     const h = await makeContext({ approval: { outcome: 'rejected' } });
     h.ctx.provide('systemPrompt', {

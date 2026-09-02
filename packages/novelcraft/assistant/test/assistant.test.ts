@@ -203,7 +203,7 @@ describe("saveSignal/loadSignal symlink fail-closed(R9: 同目录内部 symlink 
     const s = createSignal({ radar: "dedup", severity: "risk", title: "合并 A/B", evidence: ["e"], proposed_action: "merge", reversibility: true, id: "sig-ok" });
     saveSignal(root, s);
     expect(loadSignal(root, "sig-ok")?.title).toBe("合并 A/B");
-    expect(act(root, { signalId: "sig-ok", action: "accept" }).signal.status).toBe("accepted");
+    expect(act(root, { signalId: "sig-ok", action: "accept" }).signal.status).toBe("open");
   });
 });
 
@@ -221,19 +221,20 @@ describe("inboxView / needsAttention(N3 阈值)", () => {
 });
 
 describe("act(§9 四动词)", () => {
-  it("accept → adopt 描述符, 状态 accepted, 重复动作拒绝", () => {
+  it("accept → adopt 描述符, 真正采用前事项保持 open", () => {
     const root = makeRoot();
     const s = pushSignal(root, { radar: "dedup", severity: "risk", title: "合并 A/B", evidence: ["e"], proposed_action: "merge", reversibility: true });
     const d = act(root, { signalId: s.id, action: "accept" });
     expect(d.kind).toBe("adopt");
-    expect(d.signal.status).toBe("accepted");
-    expect(() => act(root, { signalId: s.id, action: "accept" })).toThrow(/已处理/);
+    expect(d.signal.status).toBe("open");
+    expect(inboxView(root)).toHaveLength(1);
   });
   it("reject 必须带理由 → 校准可读回", () => {
     const root = makeRoot();
     const s = pushSignal(root, { radar: "dedup", severity: "risk", title: "合并 A/B", evidence: ["e"], proposed_action: "merge", reversibility: true });
     expect(() => act(root, { signalId: s.id, action: "reject" })).toThrow(/理由/);
     act(root, { signalId: s.id, action: "reject", reason: "这两个不是同一人" });
+    expect(inboxView(root)).toHaveLength(0);
     recordRejection(root, s.id, "这两个不是同一人");
     expect(readCalibration(root).some((c) => c.value === s.id)).toBe(true);
   });
@@ -243,13 +244,15 @@ describe("act(§9 四动词)", () => {
     const d = act(root, { signalId: s.id, action: "modify", reason: "改成合并 A/C", modified: { title: "合并 A/C" } });
     expect(d.kind).toBe("microflow");
     expect(d.microflow).toBe("去重修复");
+    expect(loadSignal(root, s.id)).toMatchObject({ status: "open", title: "合并 A/B", proposed_action: "merge" });
   });
-  it("defer → record, 状态 deferred", () => {
+  it("defer → record, 无恢复入口时事项保持 open", () => {
     const root = makeRoot();
     const s = pushSignal(root, { radar: "suggest", severity: "note", title: "t", evidence: ["e"], proposed_action: "a", reversibility: false });
     const d = act(root, { signalId: s.id, action: "defer" });
     expect(d.kind).toBe("record");
-    expect(d.signal.status).toBe("deferred");
+    expect(d.signal.status).toBe("open");
+    expect(inboxView(root)).toHaveLength(1);
   });
 });
 

@@ -26,6 +26,7 @@ const proposal = {
   cost: "约 3000 字",
   risk: "需先补「桥」的设定",
 };
+const proposals = [proposal, { ...proposal, title: "雾中追踪" }];
 
 // M12-c/N45: context 编译器接线行为锁定(review P0 修复后: 正文渲染 + 预算附注)。
 describe('compileProposalContextBudgeted(N45: Tier P0-P4 预算编译进写作链)', () => {
@@ -54,11 +55,11 @@ describe("proposeNextChapter(计划台续写提案)", () => {
   it("落 .assistant/proposals/, 字段完整(§17.5.3)", async () => {
     const root = makeRoot();
     const provider = new MockProvider({
-      responses: [{ text: JSON.stringify({ proposals: [proposal] }) }],
+      responses: [{ text: JSON.stringify({ proposals }) }],
     });
     const r = await proposeNextChapter(provider, root, 1);
     expect(r.ok).toBe(true);
-    expect(r.proposal!.proposals).toHaveLength(1);
+    expect(r.proposal!.proposals).toHaveLength(2);
     expect(r.proposal!.next_chapter).toBe(2);
     expect(r.proposal!.proposals[0].basis).toContain("推进主线");
     const file = join(
@@ -82,14 +83,19 @@ describe("proposeNextChapter(计划台续写提案)", () => {
     const r2 = await proposeNextChapter(empty, root, 1);
     expect(r2.ok).toBe(false);
     expect(latestProposal(root)).toBeUndefined();
+
+    const duplicate = new MockProvider({ responses: [{ text: JSON.stringify({ proposals: [proposal, proposal] }) }] });
+    const r3 = await proposeNextChapter(duplicate, root, 1);
+    expect(r3.ok).toBe(false);
+    expect(r3.error?.message).toContain("重复");
   });
 
   it("latestProposal 读回最新一条", async () => {
     const root = makeRoot();
     const provider = new MockProvider({
       responses: [
-        { text: JSON.stringify({ proposals: [proposal] }) },
-        { text: JSON.stringify({ proposals: [{ ...proposal, title: "第二条" }] }) },
+        { text: JSON.stringify({ proposals }) },
+        { text: JSON.stringify({ proposals: [{ ...proposal, title: "第二条" }, { ...proposal, title: "第三条" }] }) },
       ],
     });
     await proposeNextChapter(provider, root, 1);
