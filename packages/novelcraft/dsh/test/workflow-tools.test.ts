@@ -3,7 +3,7 @@
 // 铁律 3(abandon 审批 fail-closed)、铁律 2(不动 canonical, git 是回滚面)、
 // R12 目录容错(坏 manifest 仍列出)。
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { join } from 'node:path';
@@ -164,13 +164,13 @@ describe('workflow 工具组(M10-B1/N40)', () => {
 
       const rootLink = await exec(env, 'novelcraft_workflow_inspect', { root: env.root });
       expect(JSON.stringify(rootLink)).not.toContain(marker);
-      rmSync(runsRoot, { force: true });
+      unlinkSync(runsRoot);
       mkdirSync(runsRoot);
       symlinkSync(externalRun, path.join(runsRoot, 'outside-run'), 'dir');
       const runLink = await exec(env, 'novelcraft_workflow_inspect', { root: env.root });
       expect(JSON.stringify(runLink)).not.toContain(marker);
 
-      rmSync(path.join(runsRoot, 'outside-run'), { force: true });
+      unlinkSync(path.join(runsRoot, 'outside-run'));
       const localRun = path.join(runsRoot, 'local-run');
       mkdirSync(localRun);
       symlinkSync(path.join(externalRun, 'manifest.json'), path.join(localRun, 'manifest.json'));
