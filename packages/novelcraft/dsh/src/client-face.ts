@@ -234,9 +234,9 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
         assistant.pushSignal(root, {
           radar: 'ingest',
           severity: 'hint',
-          title: `手稿「${staged.fileName}」已授权, 等待导入`,
+          title: `手稿「${staged.fileName}」已准备好`,
           evidence: [`receipt:${staged.receiptId}`, `sha256:${staged.sha256}`],
-          proposed_action: `调用 novelcraft_ingest_file(root, receipt_id=${staged.receiptId}) 导入该手稿`,
+          proposed_action: "确认分章并导入这份手稿",
           reversibility: true,
         });
         return staged;
@@ -246,9 +246,9 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
         assistant.pushSignal(root, {
           radar: 'suggest',
           severity: 'hint',
-          title: `地图图片「${staged.fileName}」已授权, 等待导入`,
+          title: `地图图片「${staged.fileName}」已准备好`,
           evidence: [`receipt:${staged.receiptId}`, `node:${nodeRef}`, `sha256:${staged.sha256}`],
-          proposed_action: `调用 novelcraft_map_atlas_upload(root, receipt_id=${staged.receiptId}) 导入到节点 ${nodeRef}`,
+          proposed_action: "将这张图片放入选中的地图页",
           reversibility: true,
         });
         return staged;
@@ -258,9 +258,9 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
         assistant.pushSignal(root, {
           radar: 'writing',
           severity: 'hint',
-          title: `第 ${input.chapterIndex} 章编辑已暂存, 等待审批保存`,
+          title: `第 ${input.chapterIndex} 章的修改已准备好`,
           evidence: [`receipt:${staged.receiptId}`, `base:${input.expectedContentHash}`, `sha256:${staged.sha256}`],
-          proposed_action: `调用 novelcraft_chapter_version(action=save, receipt_id=${staged.receiptId}) 保存第 ${input.chapterIndex} 章`,
+          proposed_action: `确认并保存第 ${input.chapterIndex} 章的修改`,
           reversibility: true,
           target: { chapter_index: input.chapterIndex },
         });
@@ -284,9 +284,9 @@ export function createNovelcraftClientFace(ctx: Context, service: NovelCraftServ
         assistant.pushSignal(root, {
           radar: 'suggest',
           severity: 'hint',
-          title: `地图页「${pageRef}」有 ${ops.length} 个标签修改待应用`,
+          title: `地图页有 ${ops.length} 项标签修改待保存`,
           evidence: [file],
-          proposed_action: `调用 novelcraft_map_atlas_annotation(root, page_ref=${pageRef}) 应用标签修改(只消费队列, 不生成坐标)`,
+          proposed_action: "保存刚才提交的地图标签修改",
           reversibility: true,
           expires_when_draft_changes: false,
         });

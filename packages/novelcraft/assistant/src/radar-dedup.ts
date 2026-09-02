@@ -50,12 +50,10 @@ export function collectDedupRadarHits(
       radar: "dedup",
       severity: "risk",
       title: `『${n1}』『${n2}』疑似同一对象`,
-      evidence: sorted.map(
-        (m) =>
-          `slug=${m.slug} status=${m.status}` +
-          (m.aliases.length > 0 ? `(别名: ${m.aliases.join("/")})` : ""),
-      ),
-      proposed_action: `对 ${n1} ${n2} 执行去重修复(微工作流)`,
+      evidence: sorted.map((item) => item.aliases.length > 0
+        ? `『${item.name}』还使用了别名：${item.aliases.join("、")}`
+        : `『${item.name}』与另一条记录名称相同`),
+      proposed_action: `确认『${n1}』与『${n2}』是否需要合并`,
       reversibility: true,
     });
   }
@@ -81,10 +79,10 @@ export function collectDedupRadarHits(
       severity: "hint",
       title: `『${p.name}』可能是『${c.name}』的别名`,
       evidence: [
-        `canonical 对象 ${c.slug} 的 aliases 含「${p.name}」`,
-        `pending 候选 ${p.slug} 的 name 与之精确一致`,
+        `已采用的『${c.name}』把「${p.name}」记为别名`,
+        `待确认内容中又出现了同名记录`,
       ],
-      proposed_action: "确认后附着别名(attach_alias)",
+      proposed_action: "确认是否将它作为已有设定的别名",
       reversibility: true,
     });
   }

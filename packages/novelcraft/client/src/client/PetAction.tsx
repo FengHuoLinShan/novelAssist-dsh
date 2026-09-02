@@ -63,6 +63,7 @@ export function PetAction(props: PetActionProps): JSX.Element {
         onClose={() => setOpen(false)}
         title={`${t('inbox.title')}${snapshot.bound && snapshot.book ? ` · ${snapshot.book}` : ''}`}
         closeLabel={t('inbox.close')}
+        className={css.dialog}
         contentClassName={css.modalContent}
       >
         {/* 静默态默认答复(§9): 无待确认信号时, 先给剧情雷达的一句话摘要。 */}

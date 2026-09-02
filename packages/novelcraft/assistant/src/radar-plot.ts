@@ -40,7 +40,7 @@ export function plotSummaryFromStoryMap(map: StoryMap, openCount: number): strin
     `最新: ${latestText}`,
     `篇章: ${arcText}`,
     `未回收伏笔 ${uncollected} 条`,
-    `收件箱待确认 ${openCount} 件`,
+    `待处理 ${openCount} 件`,
   ].join(" · ");
 }
 

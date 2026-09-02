@@ -31,9 +31,9 @@ export function collectSuggestRadarHits(root: string, objects: SuggestRadarObjec
       logical_key: signalLogicalKey("suggest", "thin_object", o.entity_type, o.slug),
       radar: "suggest",
       severity: "note",
-      title: `『${o.name}』的设定只出现 ${n} 次, 建议补设定`,
-      evidence: n > 0 ? o.evidence : ["该对象暂无 evidence 记录"],
-      proposed_action: "补设定(微工作流)",
+      title: `『${o.name}』的设定还比较单薄`,
+      evidence: n > 0 ? o.evidence : ["目前还没有找到支撑这项设定的内容"],
+      proposed_action: "继续补充这项设定",
       reversibility: true,
     });
   }

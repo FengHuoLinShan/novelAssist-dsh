@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutline16, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcCaller } from './index.ts'
-import { NS } from './locales.ts'
+import { handoffToAssistant } from './assistantHandoff.ts'
+import { NS, type NovelcraftKey } from './locales.ts'
 import { BOOK_CHANGED_EVENT, matchesBookChangedSession, useWorldWorkspace, type BookChangedDetail } from './useWatch.ts'
 import css from './novelcraft.module.css'
 
@@ -13,30 +14,40 @@ export type WorldBibleActionProps =
 
 type Mode = 'chat' | 'converge' | 'explore' | 'inspect' | 'bible_suggest'
 
-const TOOL: Record<Mode, string> = {
-  chat: 'novelcraft_world_chat',
-  converge: 'novelcraft_world_converge',
-  explore: 'novelcraft_world_explore',
-  inspect: 'novelcraft_world_inspect',
-  bible_suggest: 'novelcraft_world_bible_suggest',
+const MODE_LABEL: Record<Mode, NovelcraftKey> = {
+  chat: 'world.mode.chat',
+  converge: 'world.mode.converge',
+  explore: 'world.mode.explore',
+  inspect: 'world.mode.inspect',
+  bible_suggest: 'world.mode.bible',
+}
+
+const MODE_ACTION: Record<Mode, NovelcraftKey> = {
+  chat: 'world.run.chat',
+  converge: 'world.run.converge',
+  explore: 'world.run.explore',
+  inspect: 'world.run.inspect',
+  bible_suggest: 'world.run.bible',
 }
 
 export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
   const { connection, inputActions, sessionId, t, useInput } = props
   const chatDraft = useInput((state: InputState) => state.draft)
   const [open, setOpen] = useState(false)
+  const [view, setView] = useState<'create' | 'content'>('create')
   const [mode, setMode] = useState<Mode>('chat')
   const [task, setTask] = useState('')
   const [sources, setSources] = useState<string[]>([])
   const [includeDrafts, setIncludeDrafts] = useState(false)
   const [newPage, setNewPage] = useState(true)
   const [notice, setNotice] = useState('')
-  const { data, loading, refresh } = useWorldWorkspace(connection, sessionId)
+  const { data, loading, error, refresh } = useWorldWorkspace(connection, sessionId)
 
   useEffect(() => {
     const reset = (event?: Event) => {
       if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
       setOpen(false)
+      setView('create')
       setMode('chat')
       setTask('')
       setSources([])
@@ -50,13 +61,14 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
   }, [sessionId])
 
   const send = (prompt: string): void => {
-    if (chatDraft.trim()) {
-      setNotice(t('world.chatBusy'))
-      return
-    }
-    inputActions.setDraft(prompt)
-    inputActions.submit()
-    setNotice(t('world.requested'))
+    const sent = handoffToAssistant({
+      draft: chatDraft,
+      prompt,
+      setDraft: inputActions.setDraft,
+      submit: inputActions.submit,
+      close: () => setOpen(false),
+    })
+    if (!sent) setNotice(t('world.chatBusy'))
   }
 
   const toggle = (ref: string, checked: boolean): void => {
@@ -65,10 +77,20 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
 
   const run = (): void => {
     const input = task.trim()
-    if (!input) return
-    const suffix = `input=${JSON.stringify(input)}，source_refs=${JSON.stringify(sources)}，include_working_drafts=${includeDrafts}`
-    send(`请调用 ${TOOL[mode]}，${suffix}${mode === 'bible_suggest' ? `，is_new_page=${newPage}` : ''}。`)
+    if (!input || !data) return
+    const selectedObjects = data.objects.filter((object) => sources.includes(object.source_ref)).map((object) => object.name)
+    const selectedPages = data.pages.filter((page) => sources.includes(page.source_ref)).map((page) => page.title)
+    const selected = [...selectedObjects, ...selectedPages]
+    const references = selected.length > 0 ? t('world.prompt.references', { references: selected.join('、') }) : ''
+    const drafts = includeDrafts ? t('world.prompt.drafts') : ''
+    const pageIntent = mode === 'bible_suggest'
+      ? newPage ? t('world.prompt.newPage') : t('world.prompt.existingPage')
+      : t('world.prompt.mode', { mode: t(MODE_LABEL[mode]) })
+    send(t('world.prompt.request', { intent: pageIntent, input, references, drafts }))
   }
+
+  const selectedPageCount = data?.pages.filter((page) => sources.includes(page.source_ref)).length ?? 0
+  const canRun = Boolean(task.trim()) && (mode !== 'bible_suggest' || newPage || selectedPageCount > 0)
 
   return (
     <>
@@ -77,77 +99,118 @@ export function WorldBibleAction(props: WorldBibleActionProps): JSX.Element {
         <span className={css.petLabel}>{t('world.title')}</span>
       </button>
       <Modal open={open} onClose={() => setOpen(false)} title={t('world.title')}
-        closeLabel={t('inbox.close')} contentClassName={css.modalContent}>
-        <div className={css.workflowPanel}>
-          <div className={css.panelToolbar}>
-            <span className={css.chapterWorkspaceMeta}>{data?.bound?.book ?? ''}</span>
-            <button type="button" className={css.actionButton} disabled={loading} onClick={() => void refresh()}>
-              {loading ? t('workflow.loading') : t('inbox.refresh')}
-            </button>
+        closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
+        {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
+        {error ? (
+          <div className={css.emptyState} role="alert">
+            <span>{t('common.loadFailed')}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>{t('common.retry')}</Button>
           </div>
-          {notice ? <div className={css.message} role="status">{notice}</div> : null}
-          {data?.bound == null ? <div className={css.empty}>{t('world.unbound')}</div> : (
-            <>
-              <label className={css.presetControl}>
-                <span>{t('world.mode')}</span>
-                <select value={mode} onChange={(event) => setMode(event.currentTarget.value as Mode)}>
-                  <option value="chat">{t('world.mode.chat')}</option>
-                  <option value="converge">{t('world.mode.converge')}</option>
-                  <option value="explore">{t('world.mode.explore')}</option>
-                  <option value="inspect">{t('world.mode.inspect')}</option>
-                  <option value="bible_suggest">{t('world.mode.bible')}</option>
-                </select>
-              </label>
-              <textarea className={css.outlineTask} aria-label={t('world.task')}
-                placeholder={t('world.task')} value={task}
-                onChange={(event) => setTask(event.currentTarget.value)} />
-              <div className={css.sectionTitle}>{t('world.objects')}</div>
-              {data.objects.length === 0 ? <div className={css.dossierEmpty}>{t('world.objects.empty')}</div> : null}
-              <div className={css.sourcePicker}>
-                {data.objects.map((object) => (
-                  <label key={object.source_ref} className={css.sourceOption}>
-                    <input type="checkbox" checked={sources.includes(object.source_ref)}
-                      onChange={(event) => toggle(object.source_ref, event.currentTarget.checked)} />
-                    <span>{object.name} · {object.entity_type} · {object.status}{object.tags.length ? ` · ${object.tags.join(' / ')}` : ''}</span>
-                  </label>
-                ))}
+        ) : null}
+        {data && data.bound == null ? <div className={css.empty}>{t('world.unbound')}</div> : null}
+        {data?.bound ? (
+          <div className={css.workflowPanel}>
+            <div className={css.panelToolbar}>
+              <div className={css.tabRow} role="tablist" aria-label={t('world.title')}>
+                <Pill role="tab" aria-selected={view === 'create'} active={view === 'create'} onClick={() => setView('create')}>{t('world.tab.create')}</Pill>
+                <Pill role="tab" aria-selected={view === 'content'} active={view === 'content'} onClick={() => setView('content')}>{t('world.tab.content')}</Pill>
               </div>
-              <div className={css.sectionTitle}>{t('world.pages')}</div>
-              {data.pages.length === 0 ? <div className={css.dossierEmpty}>{t('world.pages.empty')}</div> : null}
-              {data.pages.map((page) => (
-                <article key={page.source_ref} className={css.workflowCard}>
-                  <label className={css.sourceOption}>
-                    <input type="checkbox" checked={sources.includes(page.source_ref)}
-                      onChange={(event) => toggle(page.source_ref, event.currentTarget.checked)} />
-                    <span className={css.cardTitle}>{page.title}</span>
-                    <span className={css.cardMeta}>{page.status} · v{page.version_number}</span>
-                  </label>
-                  <p className={css.previewSummary}>{page.summary || t('world.page.noSummary')}</p>
-                  {page.can_publish ? (
-                    <button type="button" className={css.actionButton} onClick={() => send(
-                      `请调用 novelcraft_store_adopt，kind=bible_page，ref=${JSON.stringify(page.source_ref)}。`,
-                    )}>{t('world.publish')}</button>
-                  ) : null}
-                </article>
-              ))}
-              <label className={css.sourceOption}>
-                <input type="checkbox" checked={includeDrafts}
-                  onChange={(event) => setIncludeDrafts(event.currentTarget.checked)} />
-                <span>{t('world.includeDrafts')}</span>
-              </label>
-              {mode === 'bible_suggest' ? (
-                <label className={css.sourceOption}>
-                  <input type="checkbox" checked={newPage}
-                    onChange={(event) => setNewPage(event.currentTarget.checked)} />
-                  <span>{t('world.newPage')}</span>
+              <Button size="sm" variant="toolbar" icon={<IconRefreshOutline16 />}
+                disabled={loading} onClick={() => void refresh()}>{t('inbox.refresh')}</Button>
+            </div>
+            {notice ? <div className={css.message} role="status">{notice}</div> : null}
+            {view === 'create' ? (
+              <form className={css.workflowPanel} onSubmit={(event) => { event.preventDefault(); run() }}>
+                <label className={css.presetControl}>
+                  <span>{t('world.mode')}</span>
+                  <select value={mode} onChange={(event) => setMode(event.currentTarget.value as Mode)}>
+                    {(Object.keys(MODE_LABEL) as Mode[]).map((key) => (
+                      <option key={key} value={key}>{t(MODE_LABEL[key])}</option>
+                    ))}
+                  </select>
                 </label>
-              ) : null}
-              <button type="button" className={css.actionButton} disabled={!task.trim()} onClick={run}>
-                {t('world.run')}
-              </button>
-            </>
-          )}
-        </div>
+                <label className={css.presetControl}>
+                  <span>{t('world.taskLabel')}</span>
+                  <textarea className={css.outlineTask} placeholder={t('world.task')}
+                    value={task} onChange={(event) => setTask(event.currentTarget.value)} />
+                </label>
+                <details className={css.disclosure}>
+                  <summary>{t('world.references')} ({sources.length})</summary>
+                  <div className={css.sourcePicker}>
+                    {data.objects.map((object, index) => (
+                      <label key={`object:${object.source_ref}:${index}`} className={css.sourceOption}>
+                        <input type="checkbox" checked={sources.includes(object.source_ref)}
+                          onChange={(event) => toggle(object.source_ref, event.currentTarget.checked)} />
+                        <span>{object.name}{object.tags.length ? ` · ${object.tags.join(' / ')}` : ''}</span>
+                      </label>
+                    ))}
+                    {data.pages.map((page, index) => (
+                      <label key={`page:${page.source_ref}:${index}`} className={css.sourceOption}>
+                        <input type="checkbox" checked={sources.includes(page.source_ref)}
+                          onChange={(event) => toggle(page.source_ref, event.currentTarget.checked)} />
+                        <span>{page.title}</span>
+                      </label>
+                    ))}
+                    {data.objects.length + data.pages.length === 0 ? <div className={css.dossierEmpty}>{t('world.references.empty')}</div> : null}
+                  </div>
+                  <label className={css.sourceOption}>
+                    <input type="checkbox" checked={includeDrafts}
+                      onChange={(event) => setIncludeDrafts(event.currentTarget.checked)} />
+                    <span>{t('world.includeDrafts')}</span>
+                  </label>
+                </details>
+                {mode === 'bible_suggest' ? (
+                  <fieldset className={css.choiceGroup}>
+                    <legend>{t('world.pageIntent')}</legend>
+                    <label><input type="radio" checked={newPage} onChange={() => setNewPage(true)} /> {t('world.newPage')}</label>
+                    <label><input type="radio" checked={!newPage} onChange={() => setNewPage(false)} /> {t('world.existingPage')}</label>
+                    {!newPage && selectedPageCount === 0 ? <span className={css.helperText}>{t('world.existingPageHint')}</span> : null}
+                  </fieldset>
+                ) : null}
+                <Button type="submit" variant="primary" disabled={!canRun}>{t(MODE_ACTION[mode])}</Button>
+              </form>
+            ) : (
+              <div className={css.workflowPanel}>
+                <section className={css.contentSection}>
+                  <h3 className={css.sectionTitle}>{t('world.objects')}</h3>
+                  {data.objects.length === 0 ? <div className={css.empty}>{t('world.objects.empty')}</div> : null}
+                  {data.objects.map((object, index) => (
+                    <article key={`object:${object.source_ref}:${index}`} className={css.workflowCard}>
+                      <span className={css.cardTitle}>{object.name}</span>
+                      {object.tags.length ? <span className={css.helperText}>{object.tags.join(' / ')}</span> : null}
+                      <Button size="sm" variant="ghost" onClick={() => {
+                        setSources([object.source_ref]); setMode('chat'); setView('create')
+                      }}>{t('world.improve')}</Button>
+                    </article>
+                  ))}
+                </section>
+                <section className={css.contentSection}>
+                  <h3 className={css.sectionTitle}>{t('world.pages')}</h3>
+                  {data.pages.length === 0 ? <div className={css.empty}>{t('world.pages.empty')}</div> : null}
+                  {data.pages.map((page, index) => (
+                    <article key={`page:${page.source_ref}:${index}`} className={css.workflowCard}>
+                      <header className={css.cardHeader}>
+                        <span className={css.cardTitle}>{page.title}</span>
+                        <Pill active={page.can_publish}>{page.can_publish ? t('world.page.draft') : t('world.page.published')}</Pill>
+                      </header>
+                      <p className={css.previewSummary}>{page.summary || t('world.page.noSummary')}</p>
+                      <div className={css.actionRow}>
+                        {page.can_publish ? (
+                          <Button variant="primary" onClick={() => send(
+                            t('world.prompt.publish', { title: page.title }),
+                          )}>{t('world.publish')}</Button>
+                        ) : null}
+                        <Button size="sm" variant="ghost" onClick={() => {
+                          setSources([page.source_ref]); setMode('chat'); setView('create')
+                        }}>{t('world.improve')}</Button>
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              </div>
+            )}
+          </div>
+        ) : null}
       </Modal>
     </>
   )

@@ -39,7 +39,7 @@ const KIND_LABEL: Record<string, string> = {
 
 /** 整理类 reason 码 → 作者语言(outline.md §547)。 */
 const REASON_LABEL: Record<string, string> = {
-  duplicate_chapter: "Scene 内章节重复",
+  duplicate_chapter: "场景中出现重复章节",
   chunk_chapter_mismatch: "章节与正文分段不一致",
 };
 
@@ -61,12 +61,12 @@ const TITLE: Record<string, (name: string) => string> = {
 };
 
 const ACTION: Record<string, string> = {
-  scene_unreviewed: "复核该 Scene 并标记 reviewed_at",
-  scene_unassigned_chapter: "为该 Scene 指定 chapter_ids，或标 planning_state=planned",
+  scene_unreviewed: "检查并确认这个场景",
+  scene_unassigned_chapter: "为这个场景指定所属章节",
   scene_missing_setup: "补齐目标/核心冲突/必发生项/禁止发生项",
-  scene_needs_organize: "按证据整理该 Scene 的章节映射",
-  structure_needs_review: "复核该结构资产",
-  structure_unassigned: "为该结构资产关联剧情线",
+  scene_needs_organize: "整理这个场景与章节的对应关系",
+  structure_needs_review: "检查并确认这项剧情结构",
+  structure_unassigned: "为这项剧情结构关联剧情线",
 };
 
 /** Scene 命中 → 信号输入(作者语言命题 + 证据)。 */
@@ -82,9 +82,9 @@ function sceneSignal(
   } else if (detail.key === "scene_needs_organize") {
     evidence = (detail.reasons ?? []).map((r) => REASON_LABEL[r] ?? r);
   } else if (detail.key === "scene_unassigned_chapter") {
-    evidence = ["该 Scene 未关联任何章节(chapter_ids 为空)"];
+    evidence = ["这个场景还没有关联任何章节"];
   } else {
-    evidence = ["该 Scene 尚未标记 reviewed_at"];
+    evidence = ["这个场景还没有完成作者确认"];
   }
   return {
     id: `health-${detail.key}-scene-${slug}`,
@@ -93,7 +93,7 @@ function sceneSignal(
     severity: SEVERITY[detail.key] ?? "note",
     title: (TITLE[detail.key] ?? ((n) => `「${n}」有结构问题`))(name),
     evidence,
-    proposed_action: ACTION[detail.key] ?? "复核并修正该 Scene",
+    proposed_action: ACTION[detail.key] ?? "检查并修正这个场景",
     reversibility: true,
   };
 }
@@ -108,8 +108,8 @@ function structureSignal(
   const label = KIND_LABEL[kind] ?? kind;
   const name = title || slug;
   const evidence = key === "structure_needs_review"
-    ? [`该${label}资产未标记复核`]
-    : [`该${label}资产未关联剧情线`];
+    ? [`这项${label}还没有完成作者确认`]
+    : [`这项${label}还没有关联剧情线`];
   return {
     id: `health-${key}-${kind}-${slug}`,
     logical_key: signalLogicalKey("health", key, kind, slug),
@@ -117,7 +117,7 @@ function structureSignal(
     severity: SEVERITY[key] ?? "note",
     title: (TITLE[key] ?? ((n) => `${label}「${n}」有结构问题`))(name),
     evidence,
-    proposed_action: ACTION[key] ?? "复核并修正该结构资产",
+    proposed_action: ACTION[key] ?? "检查并修正这项剧情结构",
     reversibility: true,
   };
 }

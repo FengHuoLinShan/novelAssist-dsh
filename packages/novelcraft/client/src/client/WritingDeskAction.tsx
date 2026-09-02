@@ -1,10 +1,9 @@
-// 写作台(WritingDeskAction): 会话头动作, 打开写作台 Modal。
-// 数据源 = /novelcraft writing/desk(宿主读 assistant 信号 + store.storyMap/rebuildIndex
-// + .assistant/reviews)。纯读, 无动作; 四模式切换为本地 tab。
 import { useState } from 'react'
-import { Modal, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { MAX_TEXT_INTAKE_BYTES } from '../wire.ts'
 import { readFileBase64, stageTextIntakeFile, useWritingDesk } from './useWatch.ts'
@@ -15,209 +14,177 @@ export type WritingDeskActionProps =
   PropsRuntime<'conversation.session.header.actions'> &
   PropsLocale<typeof NS> & { connection: RpcCaller | undefined }
 
-type Mode = 'watch' | 'plan' | 'review' | 'reference' | 'import'
-
-const SEVERITY_DOT: Record<string, StateDotState> = {
-  conflict: 'error', risk: 'warning', note: 'ongoing', hint: 'done',
-}
-
-function ModeTab(props: { label: string; active: boolean; onClick: () => void }): JSX.Element {
-  return (
-    <button
-      type="button"
-      className={props.active ? css.tab + ' ' + css.tabActive : css.tab}
-      onClick={props.onClick}
-    >
-      {props.label}
-    </button>
-  )
-}
+type Mode = 'chapters' | 'proposals' | 'reviews' | 'import'
 
 export function WritingDeskAction(props: WritingDeskActionProps): JSX.Element {
-  const { t, connection, sessionId } = props
+  const { t, connection, sessionId, inputActions, useInput } = props
+  const chatDraft = useInput((state: InputState) => state.draft)
   const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<Mode>('watch')
+  const [mode, setMode] = useState<Mode>('chapters')
   const [intakeBusy, setIntakeBusy] = useState(false)
-  const [intakeMessage, setIntakeMessage] = useState('')
-  /** 钻取中章节(章节档案 §17.5.1); null = tab 视图。 */
+  const [message, setMessage] = useState('')
   const [dossierChapter, setDossierChapter] = useState<number | null>(null)
-  const { data } = useWritingDesk(connection, sessionId)
+  const { data, loading, error, refresh } = useWritingDesk(connection, sessionId)
 
-  const bound = data?.bound != null
-  const signals = data?.signals ?? []
   const chapters = data?.chapters ?? []
-  const threads = data?.threads ?? []
-  const arcs = data?.arcs ?? []
-  const objects = data?.objects ?? []
   const reviews = data?.reviews ?? []
   const proposals = data?.proposals ?? null
+  const lastChapter = chapters.reduce((max, chapter) => Math.max(max, chapter.index), 0)
 
-  const tab = (m: Mode, key: NovelcraftKey): JSX.Element => (
-    <ModeTab label={t(key)} active={mode === m} onClick={() => setMode(m)} />
-  )
+  const send = (prompt: string): boolean => {
+    const sent = handoffToAssistant({
+      draft: chatDraft,
+      prompt,
+      setDraft: inputActions.setDraft,
+      submit: inputActions.submit,
+      close: () => setOpen(false),
+    })
+    if (!sent) setMessage(t('desk.chatBusy'))
+    return sent
+  }
 
   const chooseFile = async (file: File | undefined): Promise<void> => {
     if (!file) return
+    if (chatDraft.trim()) {
+      setMessage(t('desk.chatBusy'))
+      return
+    }
     if (file.size > MAX_TEXT_INTAKE_BYTES) {
-      setIntakeMessage(t('intake.tooLarge'))
+      setMessage(t('intake.tooLarge'))
       return
     }
     setIntakeBusy(true)
-    setIntakeMessage('')
+    setMessage('')
     try {
       const value = await stageTextIntakeFile(connection, sessionId, file.name, await readFileBase64(file))
-      setIntakeMessage(value?.message ?? t('intake.fail'))
-      if (value) window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
+      if (value === null) {
+        setMessage(t('intake.fail'))
+        return
+      }
+      window.dispatchEvent(new CustomEvent('novelcraft:signals-changed'))
+      send(t('desk.prompt.import', { file: value.file_name }))
     } catch {
-      setIntakeMessage(t('intake.fail'))
+      setMessage(t('intake.fail'))
     } finally {
       setIntakeBusy(false)
     }
   }
 
+  const tabs: Array<{ mode: Mode; key: NovelcraftKey }> = [
+    { mode: 'chapters', key: 'desk.mode.chapters' },
+    { mode: 'proposals', key: 'desk.mode.proposals' },
+    { mode: 'reviews', key: 'desk.mode.reviews' },
+    { mode: 'import', key: 'desk.mode.import' },
+  ]
+
   return (
     <>
-      <button
-        type="button"
-        className={css.petTrigger}
-        title={t('desk.title')}
-        aria-label={t('desk.title')}
-        onClick={() => setOpen((v) => !v)}
-      >
+      <button type="button" className={css.petTrigger} title={t('desk.title')}
+        aria-label={t('desk.title')} onClick={() => setOpen(true)}>
         <span className={css.petLabel}>{t('desk.title')}</span>
       </button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={t('desk.title')}
-        closeLabel={t('inbox.close')}
-        contentClassName={css.modalContent}
-      >
-        {!bound ? (
-          <div className={css.empty}>{t('desk.unbound')}</div>
-        ) : dossierChapter != null ? (
-          <ChapterDossier
-            connection={connection}
-            sessionId={sessionId}
-            t={t}
-            chapterIndex={dossierChapter}
-            onBack={() => setDossierChapter(null)}
-          />
-        ) : (
-          <div>
-            <div className={css.tabRow}>
-              {tab('watch', 'desk.mode.watch')}
-              {tab('plan', 'desk.mode.plan')}
-              {tab('review', 'desk.mode.review')}
-              {tab('reference', 'desk.mode.reference')}
-              {tab('import', 'desk.mode.import')}
-            </div>
-
-            {mode === 'watch' ? (
-              signals.length === 0 ? (
-                <div className={css.empty}>{t('inbox.empty')}</div>
-              ) : (
-                signals.map((s) => (
-                  <article key={s.id} className={css.card}>
-                    <header className={css.cardHeader}>
-                      <StateDot state={SEVERITY_DOT[s.severity] ?? 'done'} />
-                      <span className={css.cardTitle}>{s.title}</span>
-                      <span className={css.cardMeta}>{s.radar}</span>
-                    </header>
-                    <p className={css.proposed}>{t('inbox.action')}: {s.proposed_action}</p>
-                  </article>
-                ))
-              )
-            ) : mode === 'plan' ? (
-              <div>
-                <div className={css.sectionTitle}>{t('desk.chapters')}</div>
-                {chapters.length === 0 ? (
-                  <div className={css.empty}>{t('desk.empty')}</div>
-                ) : (
-                  chapters.map((c) => (
-                    <button
-                      key={c.index}
-                      type="button"
-                      className={css.chapterRow}
-                      onClick={() => setDossierChapter(c.index)}
-                    >
-                      <span className={css.chapterRowIndex}>ch{c.index}</span>
-                      <span>{c.title ?? ''}</span>
-                    </button>
-                  ))
-                )}
-                <div className={css.sectionTitle}>{t('story.threads')}</div>
-                {threads.map((x) => <div key={x.slug} className={css.itemLine}>{x.name}{x.thread_type ? ' · ' + x.thread_type : ''}</div>)}
-                <div className={css.sectionTitle}>{t('story.arcs')}</div>
-                {arcs.map((x) => <div key={x.slug} className={css.itemLine}>{x.name}</div>)}
-                <div className={css.sectionTitle}>{t('desk.proposals')}</div>
-                {proposals == null || proposals.proposals.length === 0 ? (
-                  <div className={css.empty}>{t('desk.proposals.empty')}</div>
-                ) : (
-                  <div>
-                    <div className={css.itemLine}>{t('desk.chapters')} {proposals.next_chapter}</div>
-                    {proposals.proposals.map((prop) => (
-                      <article key={prop.title} className={css.card}>
-                        <header className={css.cardHeader}>
-                          <span className={css.cardTitle}>{prop.title}</span>
-                        </header>
-                        <p className={css.proposed}>{prop.premise}</p>
-                        {prop.basis != null && prop.basis.length > 0 ? <p className={css.proposed}>{t('desk.proposals.basis')}: {prop.basis.join(' / ')}</p> : null}
-                        {prop.cost ? <p className={css.proposed}>{t('desk.proposals.cost')}: {prop.cost}</p> : null}
-                        {prop.risk ? <p className={css.proposed}>{t('desk.proposals.risk')}: {prop.risk}</p> : null}
-                      </article>
-                    ))}
-                  </div>
-                )}
+      <Modal open={open} onClose={() => setOpen(false)} title={t('desk.title')}
+        closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
+        {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
+        {error ? (
+          <div className={css.emptyState} role="alert">
+            <span>{t('common.loadFailed')}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>{t('common.retry')}</Button>
+          </div>
+        ) : null}
+        {data && data.bound == null ? <div className={css.empty}>{t('desk.unbound')}</div> : null}
+        {data?.bound && dossierChapter != null ? (
+          <ChapterDossier connection={connection} sessionId={sessionId} t={t}
+            chapterIndex={dossierChapter} onBack={() => setDossierChapter(null)} />
+        ) : data?.bound ? (
+          <div className={css.workflowPanel}>
+            <div className={css.panelToolbar}>
+              <div className={css.tabRow} role="tablist" aria-label={t('desk.title')}>
+                {tabs.map((tab) => (
+                  <Pill key={tab.mode} role="tab" aria-selected={mode === tab.mode}
+                    active={mode === tab.mode} onClick={() => setMode(tab.mode)}>{t(tab.key)}</Pill>
+                ))}
               </div>
-            ) : mode === 'review' ? (
-              reviews.length === 0 ? (
-                <div className={css.empty}>{t('desk.reviews.empty')}</div>
-              ) : (
-                reviews.map((x) => (
-                  <article key={x.review_id} className={css.card}>
-                    <header className={css.cardHeader}>
-                      <span className={css.cardTitle}>{t('desk.chapters')} {x.chapter_index}</span>
-                      <span className={css.cardMeta}>{x.verdict} · {x.finding_count} 条</span>
-                    </header>
-                  </article>
-                ))
+              <Button size="sm" variant="toolbar" disabled={loading} onClick={() => void refresh()}>{t('inbox.refresh')}</Button>
+            </div>
+            {message ? <div className={css.message} role="status">{message}</div> : null}
+            {mode === 'chapters' ? (
+              chapters.length === 0 ? <div className={css.empty}>{t('desk.chapters.empty')}</div> : (
+                <div className={css.workflowPanel}>
+                  {chapters.map((chapter) => (
+                    <button key={chapter.index} type="button" className={css.chapterRow}
+                      onClick={() => setDossierChapter(chapter.index)}>
+                      <span className={css.chapterRowIndex}>{t('story.chapterNumber', { index: chapter.index })}</span>
+                      <span>{chapter.title ?? t('common.untitled')}</span>
+                    </button>
+                  ))}
+                </div>
               )
-            ) : mode === 'reference' ? (
-              objects.length === 0 ? (
-                <div className={css.empty}>{t('desk.empty')}</div>
+            ) : null}
+            {mode === 'proposals' ? (
+              proposals == null || proposals.proposals.length === 0 ? (
+                <div className={css.emptyState}>
+                  <span>{t('desk.proposals.empty')}</span>
+                  <Button variant="primary" disabled={lastChapter < 1} onClick={() => send(
+                    t('desk.prompt.propose', { chapter: lastChapter }),
+                  )}>{t('desk.proposals.create')}</Button>
+                </div>
               ) : (
-                objects.map((o) => (
-                  <article key={o.slug} className={css.card}>
-                    <header className={css.cardHeader}>
-                      <span className={css.cardTitle}>{o.name}</span>
-                      <span className={css.cardMeta}>{o.kind} · {o.status}</span>
-                    </header>
-                  </article>
-                ))
+                <div className={css.workflowPanel}>
+                  <div className={css.sectionTitle}>{t('story.chapterNumber', { index: proposals.next_chapter })}</div>
+                  {proposals.proposals.map((proposal) => (
+                    <article key={proposal.proposal_id ?? proposal.title} className={css.workflowCard}>
+                      <header className={css.cardHeader}><span className={css.cardTitle}>{proposal.title}</span></header>
+                      <p className={css.proposed}>{proposal.premise}</p>
+                      {proposal.basis?.length ? <p className={css.proposed}>{t('desk.proposals.basis')}：{proposal.basis.join(' / ')}</p> : null}
+                      {proposal.cost ? <p className={css.proposed}>{t('desk.proposals.cost')}：{proposal.cost}</p> : null}
+                      {proposal.risk ? <p className={css.proposed}>{t('desk.proposals.risk')}：{proposal.risk}</p> : null}
+                      {proposal.proposal_id ? (
+                        <Button variant="primary" onClick={() => send(
+                          t('desk.prompt.continue', {
+                            title: proposal.title,
+                            chapter: proposals.next_chapter,
+                            run: proposals.run_id,
+                            proposal: proposal.proposal_id,
+                          }),
+                        )}>{t('desk.proposals.use')}</Button>
+                      ) : <p className={css.helperText}>{t('desk.proposals.readOnly')}</p>}
+                    </article>
+                  ))}
+                </div>
               )
-            ) : (
+            ) : null}
+            {mode === 'reviews' ? (
+              reviews.length === 0 ? <div className={css.empty}>{t('desk.reviews.empty')}</div> : (
+                <div className={css.workflowPanel}>
+                  {reviews.map((review) => (
+                    <button key={review.review_id} type="button" className={css.chapterRow}
+                      onClick={() => setDossierChapter(review.chapter_index)}>
+                      <span className={css.cardTitle}>{t('story.chapterNumber', { index: review.chapter_index })}</span>
+                      <span className={css.cardMeta}>{t('desk.reviews.findings')}：{review.finding_count}</span>
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : null}
+            {mode === 'import' ? (
               <div className={css.intakePanel}>
                 <p className={css.proposed}>{t('intake.hint')}</p>
-                <label className={css.fileLabel}>
+                {chatDraft.trim() ? <div className={css.message} role="alert">{t('desk.chatBusy')}</div> : null}
+                <label className={`${css.fileLabel} ${chatDraft.trim() ? css.fileLabelDisabled : ''}`}>
                   <span>{intakeBusy ? t('intake.staging') : t('intake.choose')}</span>
-                  <input
-                    className={css.fileInput}
-                    type="file"
-                    accept=".txt,.md,text/plain,text/markdown"
-                    disabled={intakeBusy}
+                  <input className={css.fileInput} type="file" accept=".txt,.md,text/plain,text/markdown"
+                    disabled={intakeBusy || Boolean(chatDraft.trim())}
                     onChange={(event) => {
                       const file = event.currentTarget.files?.[0]
                       event.currentTarget.value = ''
                       void chooseFile(file)
-                    }}
-                  />
+                    }} />
                 </label>
-                {intakeMessage ? <div className={css.message}>{intakeMessage}</div> : null}
               </div>
-            )}
+            ) : null}
           </div>
-        )}
+        ) : null}
       </Modal>
     </>
   )

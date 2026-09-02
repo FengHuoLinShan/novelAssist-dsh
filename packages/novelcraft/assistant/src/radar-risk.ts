@@ -37,7 +37,7 @@ export function collectRiskRadarHits(
       radar: "risk",
       severity: "risk",
       title: `『${f.name}』伏笔计划第 ${p} 章回收, 目前已写到第 ${maxChapter} 章`,
-      evidence: [`planned_payoff_chapter=${p}, 当前最大章=${maxChapter}`],
+      evidence: [`原计划在第 ${p} 章回收，当前已写到第 ${maxChapter} 章`],
       proposed_action: "安排回收或调整计划回收点",
       reversibility: true,
     });
@@ -53,7 +53,7 @@ export function collectRiskRadarHits(
       radar: "risk",
       severity: "note",
       title: `第 ${n} 章缺失(章序号断档)`,
-      evidence: [`chapters/ 目录中不存在 ${String(n).padStart(3, "0")}.md`],
+      evidence: [`章节列表中找不到第 ${n} 章`],
       proposed_action: "确认是否漏导入或刻意跳号",
       reversibility: true,
     });
@@ -73,9 +73,9 @@ export function collectRiskRadarHits(
       logical_key: logicalKey,
       radar: "risk",
       severity: "risk",
-      title: `关系边悬空: ${e.source} → ${e.target}`,
-      evidence: [`relations 边 source=${e.source} target=${e.target} type=${e.type || "?"}`],
-      proposed_action: "修正或删除该关系",
+      title: "有一条剧情关系找不到对应内容",
+      evidence: ["关系两端至少有一项已被删除或改名"],
+      proposed_action: "检查并修正这条关系",
       reversibility: true,
     });
   }

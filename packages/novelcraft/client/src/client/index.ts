@@ -1,4 +1,4 @@
-// @novelcraft/dsh-client · 浏览器半身: 宠物(会话头动作)+ 收件箱面板。
+// @novelcraft/dsh-client · 浏览器半身: 空白会话/会话头作者动作 + 工作区面板。
 // 数据 = /novelcraft 认证 Connection RPC(宿主读 .assistant/signals + jobs);
 // 四动词回宿主 assistant.act。UI 只呈现作者语言, 不暴露 raw JSON/内部枚举。
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -27,6 +27,7 @@ import { BookLibraryAction } from './BookLibraryAction.tsx'
 import type { BookLibraryActionProps } from './BookLibraryAction.tsx'
 import { WorldBibleAction } from './WorldBibleAction.tsx'
 import type { WorldBibleActionProps } from './WorldBibleAction.tsx'
+import { ActionDock } from './ActionDock.tsx'
 import { en, NS, zh, type NovelcraftKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -60,7 +61,7 @@ export interface RpcCaller {
 export const inject = ['slots', 'locale', 'connection']
 
 /**
- * 客户端插件体: 注册文案字典 + 会话头宠物动作。
+ * 客户端插件体: 注册文案字典 + 空白会话/会话头作者动作。
  * @param ctx - 客户端 Cordis 根。
  */
 export function apply(ctx: ClientContext): void {
@@ -68,6 +69,16 @@ export function apply(ctx: ClientContext): void {
   const connection = ctx.get('connection') as RpcCaller | undefined
   const t = ctx.locale.bind(NS)
   const actionSlot = () => ({ connection })
+  ctx.slots.inject(
+    'conversation.input.dock',
+    () => ctx.slots.register({
+      name: 'conversation.input.dock',
+      id: 'novelcraft-actions',
+      order: -10,
+      locale: NS,
+      inject: (): { connection: RpcCaller | undefined } => actionSlot(),
+    }, ActionDock),
+  )
   ctx.slots.inject(
     'conversation.session.header.actions',
     () => ctx.slots.register({

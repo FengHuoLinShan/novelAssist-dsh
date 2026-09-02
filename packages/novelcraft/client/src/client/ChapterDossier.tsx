@@ -3,6 +3,7 @@
 // 合并: 本章最新审查 / 本章 open 信号 / next_chapter==N 最新提案)。纯读, 无动作;
 // 半宽纵向排布(D10), 全部作者语言, 不暴露 raw JSON/内部枚举。
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
 import type { ChapterDossierAsset, DossierSceneCard, SignalCard } from '../wire.ts'
 import { NS } from './locales.ts'
@@ -49,7 +50,6 @@ function SceneCard(props: { scene: DossierSceneCard; t: T }): JSX.Element {
     <article className={css.card}>
       <header className={css.cardHeader}>
         <span className={css.cardTitle}>{scene.title || scene.slug}</span>
-        <span className={css.cardMeta}>{scene.status}</span>
       </header>
       {rows.map(([label, value]) => (
         <p key={label} className={css.proposed}>
@@ -79,7 +79,6 @@ function SignalMiniCard(props: { signal: SignalCard; t: T }): JSX.Element {
     <article className={css.card}>
       <header className={css.cardHeader}>
         <span className={css.cardTitle}>{signal.title}</span>
-        <span className={css.cardMeta}>{signal.severity}</span>
       </header>
       <p className={css.proposed}>{t('inbox.action')}: {signal.proposed_action}</p>
     </article>
@@ -88,7 +87,7 @@ function SignalMiniCard(props: { signal: SignalCard; t: T }): JSX.Element {
 
 export function ChapterDossier(props: ChapterDossierProps): JSX.Element {
   const { t, connection, sessionId, chapterIndex, onBack } = props
-  const { data } = useChapterDossier(connection, sessionId, chapterIndex)
+  const { data, loading, error, refresh } = useChapterDossier(connection, sessionId, chapterIndex)
 
   const bound = data?.bound != null
   const dossier: ChapterDossierAsset | null = data?.dossier ?? null
@@ -96,23 +95,30 @@ export function ChapterDossier(props: ChapterDossierProps): JSX.Element {
   return (
     <div className={css.dossier}>
       <div className={css.dossierHeader}>
-        <button type="button" className={css.dossierBack} onClick={onBack} aria-label={t('dossier.back')}>
+        <Button size="sm" variant="outline" onClick={onBack} aria-label={t('dossier.back')}>
           ← {t('dossier.back')}
-        </button>
+        </Button>
         <span className={css.dossierHeaderTitle}>{t('dossier.title')}</span>
       </div>
 
-      {!bound || dossier == null ? (
+      {loading && data == null ? <div className={css.empty}>{t('common.loading')}</div> : null}
+      {error ? (
+        <div className={css.emptyState} role="alert">
+          <span>{t('common.loadFailed')}</span>
+          <Button size="sm" variant="outline" onClick={() => void refresh()}>{t('common.retry')}</Button>
+        </div>
+      ) : null}
+
+      {!loading && !error && (!bound || dossier == null) ? (
         <div className={css.empty}>{t('dossier.unbound')}</div>
-      ) : (
+      ) : !loading && !error && data != null && dossier != null ? (
         <>
           {dossier.chapter == null ? (
             <div className={css.empty}>{t('dossier.missing')}</div>
           ) : (
             <div className={css.dossierMeta}>
-              ch{dossier.chapter.index}
+              {t('story.chapterNumber', { index: dossier.chapter.index })}
               {dossier.chapter.title ? ` · ${dossier.chapter.title}` : ''}
-              {dossier.chapter.status ? ` · ${t('dossier.status')}: ${dossier.chapter.status}` : ''}
               {' · '}{dossier.chapter.wordCount} {t('dossier.words')}
             </div>
           )}
@@ -189,7 +195,7 @@ export function ChapterDossier(props: ChapterDossierProps): JSX.Element {
             )}
           </section>
         </>
-      )}
+      ) : null}
     </div>
   )
 }

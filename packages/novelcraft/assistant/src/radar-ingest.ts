@@ -62,7 +62,7 @@ export function collectIngestRadarHits(root: string, index: VaultIndex = rebuild
       logical_key: logicalKey,
       radar: "ingest",
       severity: "risk",
-      title: `导入失败: ${file_name}`,
+      title: `手稿「${file_name}」导入失败`,
       evidence,
       proposed_action: "检查文件后重新导入",
       reversibility: true,
@@ -84,9 +84,9 @@ export function collectIngestRadarHits(root: string, index: VaultIndex = rebuild
       logical_key: signalLogicalKey("ingest", "uncovered_chapter", ch.index),
       radar: "ingest",
       severity: "note",
-      title: `第 ${ch.index} 章已入库, 待增量导入/Scene 关联`,
-      evidence: [`章节 ${ch.index} 尚无 Scene 通过 chapter_ids 关联`],
-      proposed_action: "对该章跑深度导入或手动关联 Scene",
+      title: `第 ${ch.index} 章还没有完成结构整理`,
+      evidence: ["这一章还没有关联到任何场景"],
+      proposed_action: "整理这一章的场景和结构",
       reversibility: true,
     });
   }

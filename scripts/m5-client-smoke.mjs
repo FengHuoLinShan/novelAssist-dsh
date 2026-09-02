@@ -1,6 +1,6 @@
 // M5 client UI 模块级冒烟(无浏览器): 执行 dist/client.js 的 closure-factory,
-// 桩 platform 模块(primitives), 真实 react/react-dom/server 渲染 PetAction,
-// 断言: locale 注册、会话头插槽注入(id=novelcraft-pet)、宠物按钮渲染(aria-label)。
+// 桩 platform 模块(primitives), 真实 react/react-dom/server 渲染客户端入口,
+// 断言: locale 注册、会话头/空白会话插槽注入与文字按钮渲染。
 // 运行: node scripts/m5-client-smoke.mjs
 import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
@@ -15,9 +15,12 @@ const source = readFileSync(bundlePath, 'utf8')
 // ---- 桩 platform 模块(primitives; react/jsx-runtime 走真实包) ----
 const primitivesStub = {
   StateDot: ({ state }) => createElement('span', { 'data-dot': state }),
-  Button: ({ children, ...rest }) => createElement('button', rest, children),
-  Modal: ({ open, title, children, contentClassName }) =>
-    open ? createElement('div', { className: contentClassName, 'data-modal-title': title }, children) : null,
+  Button: ({ children, icon, ...rest }) => createElement('button', rest, icon, children),
+  Pill: ({ children, onClick, ...rest }) => createElement(onClick ? 'button' : 'span', { ...rest, onClick }, children),
+  Input: (props) => createElement('input', props),
+  IconRefreshOutline16: () => createElement('span', { 'data-icon': 'refresh' }),
+  Modal: ({ open, title, children, className, contentClassName }) =>
+    open ? createElement('div', { className: `${className ?? ''} ${contentClassName ?? ''}`, 'data-modal-title': title }, children) : null,
 }
 
 let captured = { load: null }
@@ -63,9 +66,13 @@ apply(ctx)
 if (!calls.locale.some((l) => l.ns === 'novelcraft')) {
   throw new Error('FAIL: locale 未注册 novelcraft 字典')
 }
-const slot = calls.slots.find((s) => s.slotName === 'conversation.session.header.actions')
+const slot = calls.slots.find((s) => s.register.id === 'novelcraft-pet')
 if (!slot || slot.register.id !== 'novelcraft-pet') {
   throw new Error(`FAIL: 会话头插槽注入缺失或 id 错误: ${JSON.stringify(calls.slots)}`)
+}
+const actionDockSlot = calls.slots.find((s) => s.register.id === 'novelcraft-actions')
+if (!actionDockSlot || actionDockSlot.slotName !== 'conversation.input.dock') {
+  throw new Error(`FAIL: 空白会话功能栏缺失或插槽错误: ${JSON.stringify(calls.slots)}`)
 }
 const chapterSlot = calls.slots.find((s) => s.slotName === 'conversation.view')
 if (!chapterSlot || chapterSlot.register.id !== 'novelcraft-chapters' || chapterSlot.register.order !== 20) {
@@ -83,6 +90,36 @@ const html = renderToStaticMarkup(
 if (!html.includes('NovelCraft 守望') || !html.includes('静默')) {
   throw new Error(`FAIL: 宠物按钮渲染缺 aria/title 或静默态: ${html.slice(0, 300)}`)
 }
+
+const dockHtml = renderToStaticMarkup(
+  createElement(actionDockSlot.register.Component, {
+    sessionId: 's1',
+    session: { blank: true },
+    input: {},
+    t: (key) => ({
+      'actions.title': 'NovelCraft 功能',
+      'book.title': '书库',
+      'pet.title': 'NovelCraft 守望',
+      'pet.silent': '静默',
+      'workflow.title': '长任务',
+      'story.title': '剧情地图',
+      'desk.title': '写作台',
+      'preset.title': '模型预设',
+      'atlas.title': '地图册',
+      'world.title': '世界书',
+    }[key] ?? key),
+    connection: undefined,
+    useInput: (select) => select({ draft: '' }),
+    inputActions: { setDraft: () => {}, submit: () => {} },
+  }),
+)
+if (!dockHtml.includes('NovelCraft 功能') || !dockHtml.includes('地图册') || dockHtml.includes('🗺')) {
+  throw new Error(`FAIL: 空白会话功能栏或地图文字入口渲染错误: ${dockHtml.slice(0, 500)}`)
+}
+const activeDockHtml = renderToStaticMarkup(
+  createElement(actionDockSlot.register.Component, { session: { blank: false } }),
+)
+if (activeDockHtml !== '') throw new Error(`FAIL: 已开始会话重复渲染功能栏: ${activeDockHtml}`)
 
 const chapterHtml = renderToStaticMarkup(
   createElement(ChapterWorkspaceView, {
@@ -102,4 +139,5 @@ console.log(`  module id = ${captured.load.id}`)
 console.log(`  inject = [${inject.join(', ')}]`)
 console.log(`  slots = [${calls.slots.map((s) => s.slotName).join(', ')}]`)
 console.log(`  pet render = ${html.slice(0, 220)}...`)
+console.log(`  blank-session actions = ${dockHtml.slice(0, 260)}...`)
 console.log(`  chapter view = ${chapterHtml.slice(0, 220)}...`)

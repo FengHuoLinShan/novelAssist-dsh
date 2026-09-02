@@ -541,9 +541,9 @@ export function createNovelcraftHandlers(ctx: Context) {
       );
       const guide =
         descriptor.kind === 'adopt'
-          ? '已记录采纳决定。资产采用请让助手执行(必经审批, §9)。'
+          ? '已记录你的选择。需要写入书稿时，助手会继续请求你确认。'
           : descriptor.kind === 'microflow'
-            ? `已路由微工作流「${descriptor.microflow ?? ''}」(由助手执行)。`
+            ? '已记录你的修改要求，助手会按此继续处理。'
             : '已记录决定。';
       return rpcOk({
         ok: true,
@@ -574,7 +574,10 @@ export function createNovelcraftHandlers(ctx: Context) {
           kind: item.kind === 'outline' ? 'outline' as const : 'structure' as const,
         })),
         ...index.scenes.map((item) => ({
-          ref: item.file, label: `Scene · ${item.slug}`, status: item.status, kind: 'scene' as const,
+          ref: item.file,
+          label: `场景 · ${m.scenes.find((scene) => scene.slug === item.slug)?.title ?? item.slug}`,
+          status: item.status,
+          kind: 'scene' as const,
         })),
         ...index.objects.filter((item) => item.file.startsWith('world/objects/')).map((item) => ({
           ref: item.file, label: `世界 · ${item.name || item.slug}`, status: item.status, kind: 'world' as const,
@@ -626,7 +629,14 @@ export function createNovelcraftHandlers(ctx: Context) {
               chapter_index: proposal.chapter_index,
               next_chapter: proposal.next_chapter,
               generated_at: proposal.generated_at,
-              proposals: proposal.proposals,
+              proposals: proposal.proposals.map((item) => ({
+                ...(item.proposal_id ? { proposal_id: item.proposal_id } : {}),
+                title: item.title,
+                premise: item.premise,
+                ...(item.basis !== undefined ? { basis: item.basis } : {}),
+                ...(item.cost !== undefined ? { cost: item.cost } : {}),
+                ...(item.risk !== undefined ? { risk: item.risk } : {}),
+              })),
             }
           : null,
       });
@@ -822,7 +832,7 @@ export function createNovelcraftHandlers(ctx: Context) {
       if (!novelcraft?.ui?.config.reasoningOptions) {
         reasoning = {
           status: 'unavailable', provider: route.provider, model: route.model,
-          selected: null, adapter_default: null, options: [], message: '宿主未提供思考等级能力查询',
+          selected: null, adapter_default: null, options: [], message: '当前环境暂不支持调整思考强度。',
         };
       } else {
         try {
@@ -834,14 +844,14 @@ export function createNovelcraftHandlers(ctx: Context) {
             selected: live.selected,
             adapter_default: live.adapterDefault,
             options: live.efforts,
-            message: live.efforts.length > 0 ? '' : '当前模型未公开可选思考等级',
+            message: live.efforts.length > 0 ? '' : '当前模型没有可调整的思考强度。',
           };
         } catch (err) {
           void err;
           reasoning = {
             status: 'unavailable', provider: route.provider, model: route.model,
             selected: null, adapter_default: null, options: [],
-            message: '思考等级暂时无法读取，请稍后刷新。',
+            message: '思考强度暂时无法读取，请稍后刷新。',
           };
         }
       }
@@ -889,7 +899,7 @@ export function createNovelcraftHandlers(ctx: Context) {
       return rpcOk({
         ok: true,
         active: ui.view.vaultPolicy(binding.root).llm.preset ?? null,
-        message: `内容手已应用预设「${label}」；书级直接配置仍按优先级覆盖预设`,
+        message: `这本书已使用“${label}”预设。`,
       });
     }
     // name === null: 恢复默认(移除 llm.yml 的 preset 键, 其余键原样保留)。
@@ -905,7 +915,7 @@ export function createNovelcraftHandlers(ctx: Context) {
     return rpcOk({
       ok: true,
       active: ui.view.vaultPolicy(binding.root).llm.preset ?? null,
-      message: '已恢复默认(内容手继承助手配置)',
+      message: '这本书现在跟随当前助手的模型设置。',
     });
   },
 
@@ -921,8 +931,8 @@ export function createNovelcraftHandlers(ctx: Context) {
         ok: true,
         selected: payload.effort,
         message: payload.effort === null
-          ? '已清除书级思考等级覆盖，当前继承预设/助手配置'
-          : `思考等级已设为「${payload.effort}」`,
+          ? '思考强度现在跟随预设或当前助手。'
+          : `思考强度已设为“${payload.effort}”。`,
       });
     } catch (err) {
       return rpcFail(err instanceof Error ? err.message : String(err));
@@ -1070,7 +1080,7 @@ export function createNovelcraftHandlers(ctx: Context) {
         ok: true,
         queued: payload.ops.length,
         file,
-        message: `已入队 ${payload.ops.length} 个标签修改; 助手将按队列应用(坐标级, 不经自然语言)。`,
+        message: `已提交 ${payload.ops.length} 项标签修改，等待助手保存。`,
       });
     } catch (err) {
       return rpcFail(err instanceof Error ? err.message : String(err));
@@ -1093,7 +1103,7 @@ export function createNovelcraftHandlers(ctx: Context) {
             : state === 'completed'
               ? '已完成，可查看结果或清理运行记录。'
               : state === 'needs-attention'
-                ? '模型结果未确定，继续前需再次确认。'
+                ? '上次执行结果还不能确认，继续前需要你再次确认。'
                 : state === 'failed'
                   ? '运行失败，可尝试继续或显式重开。'
                   : '正在进行，离开后可返回此处刷新。';

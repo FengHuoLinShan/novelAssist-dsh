@@ -2,7 +2,8 @@
 
 宠物(四态)/ 收件箱(卡片 + 四动词 + 键盘流)/ 剧情地图 / 写作台 / 章节正文工作区的 DSH web
 客户端插件(设计文档 §9/§17)。双面包: node 半身 = `/novelcraft` 认证 Connection RPC 通道;
-浏览器半身 = 会话头宠物动作 + 收件箱面板 + 剧情地图 + 写作台。
+浏览器半身 = 空白会话功能栏 + 会话头宠物动作 + 收件箱面板 + 剧情地图 + 写作台；
+同一组作者入口在发送首条消息前显示于输入区上方，之后显示于会话标题栏。
 
 ## 数据与动作路径(安全边界)
 
@@ -18,6 +19,15 @@
   finding 选择；`chapter/stage-edit` 只冻结当前会话编辑 bytes。save/restore/review/revise/adopt
   均提交到当前对话的领域工具，canonical 写仍只有 approval + transaction 一条通路。
 
+## 作者交互约定
+
+- 全部 NovelCraft 弹窗复用 DSH `Modal`/`Button`/`Input`/`Pill` 与 `--dsw-*` 主题；普通弹窗最大
+  560px，地图册最大 960px，宽高始终受动态视口约束。
+- 每个弹窗只突出当前任务的一个主操作；参考内容、历史、模型详情与其它操作按需展开。
+- 交给助手的操作使用作者可读语句，成功提交后回到对话；对话输入框已有草稿时一律拒绝覆盖。
+- 写作台只保留章节、续写建议、审查记录、导入手稿；待处理与世界设定分别归收件箱和世界书。
+- 收件箱主界面隐藏 receipt/hash/内部枚举；这些机器证据仍保留在信号文件中供助手安全执行。
+
 ## 端点契约(src/wire.ts 为唯一 wire 权威)
 
 | 端点 | 载荷 → 值 |
@@ -26,7 +36,7 @@
 | `inbox/list` | 同上 → {bound, signals[], threshold}(卡片 = 作者语言字段) |
 | `inbox/act` | + {signalId, action, reason?, ...} → {ok, kind: adopt/microflow/record, microflow?, message} |
 | `story/map` | {sessionId?, workspacePath?} → {bound, book, chapters, scenes, threads, arcs, foreshadowing, reveals}(剧情地图) |
-| `writing/desk` | 同上 → {bound, book, chapters, threads, arcs, signals, objects, reviews}(写作台四模式) |
+| `writing/desk` | 同上 → {bound, book, chapters, threads, arcs, signals, objects, reviews, proposals}(写作台读模型) |
 | `intake/stage-text` | {sessionId, file_name, bytes_base64} → {receipt_id, file_name, byte_length, sha256, message} |
 | `intake/stage-atlas-image` | + {node_ref} → 锁定当前 session/节点的图片 receipt |
 | `chapter/workspace` | {sessionId, chapterIndex, diffFromCommit?} → strict current + history/diff + fresh review/candidate |
@@ -59,7 +69,9 @@
 - [x] /novelcraft 认证 Connection RPC 通道(宿主处理器 + 浏览器 hooks)
 - [x] 构建链(vendor 预设)+ E2E 挂载验证
 - [x] 剧情地图(story/map 端点 + StoryMapAction 面板)
-- [x] 写作台五面(writing/desk + intake/stage-text, 守望/计划/评审/参照/导入 tab)
+- [x] 写作台四面(writing/desk + intake/stage-text, 章节/续写建议/审查记录/导入手稿 tab)
+- [x] 全弹窗 DSH 原语统一 + 动态视口自适应 + 自然语言助手交接
+- [x] 空白会话复用完整作者入口；已开始会话仍使用标题栏入口
 - [x] `conversation.view` 章节工作区(编辑收据、Git history/diff/restore、finding→返修→候选复审→审批采用/拒绝释放 pending)
 - [x] 事件触发短轮询 + 退避(ADR-0018 §2: 固定 5s 轮询退役; 挂载/聚焦/可见/动作后立即刷新并重置退避)
 - [x] 事件触发刷新 + 非零退避轮询；不修改 DSH 运行时包(N50)

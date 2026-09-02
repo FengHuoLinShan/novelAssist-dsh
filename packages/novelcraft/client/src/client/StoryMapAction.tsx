@@ -1,10 +1,9 @@
-// 剧情地图(StoryMapAction): 会话头动作, 打开剧情地图 Modal(结构资产 + Scene/章节覆盖)。
-// 数据源 = /novelcraft story/map(宿主读 store.storyMap, 文件真相)。纯读, 无动作。
 import { useEffect, useState } from 'react'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutline16, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RpcCaller } from './index.ts'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { handoffToAssistant } from './assistantHandoff.ts'
 import { NS, type NovelcraftKey } from './locales.ts'
 import { BOOK_CHANGED_EVENT, matchesBookChangedSession, useStoryMap, type BookChangedDetail } from './useWatch.ts'
 import { ChapterDossier } from './ChapterDossier.tsx'
@@ -14,10 +13,8 @@ export type StoryMapActionProps =
   PropsRuntime<'conversation.session.header.actions'> &
   PropsLocale<typeof NS> & { connection: RpcCaller | undefined }
 
-/** 跨类关系边(ADR-0019: wire.storyMap.edges 投影; 显式 relations + related_*_ids 并集去重)。 */
 type StoryEdge = { source: string; target: string; type: string; status: string; sourceKind?: string }
 
-/** 关系边 type 的确定性分组顺序 + 显示名键(键名约定 story.edge.<type>)+ 每 type 一个徽章配色类。 */
 const EDGE_TYPES: Array<{ type: string; key: NovelcraftKey; className: string }> = [
   { type: 'serves_thread', key: 'story.edge.serves_thread', className: css.edgeServesThread },
   { type: 'belongs_to_arc', key: 'story.edge.belongs_to_arc', className: css.edgeBelongsToArc },
@@ -28,31 +25,23 @@ const EDGE_TYPES: Array<{ type: string; key: NovelcraftKey; className: string }>
   { type: 'references_memory', key: 'story.edge.references_memory', className: css.edgeReferencesMemory },
 ]
 
-/** 按确定性顺序分组; 未识别 type 归入「其他」组(徽章显示名回退原 type 字符串)。 */
 function groupEdges(edges: StoryEdge[]): Array<{ type: string; edges: StoryEdge[] }> {
-  const groups: Array<{ type: string; edges: StoryEdge[] }> = []
-  for (const spec of EDGE_TYPES) {
-    const matches = edges.filter((e) => e.type === spec.type)
-    if (matches.length > 0) groups.push({ type: spec.type, edges: matches })
-  }
-  const known = new Set(EDGE_TYPES.map((s) => s.type))
-  const others = edges.filter((e) => !known.has(e.type))
-  if (others.length > 0) groups.push({ type: 'other', edges: others })
-  return groups
+  const groups = EDGE_TYPES.flatMap((spec) => {
+    const matches = edges.filter((edge) => edge.type === spec.type)
+    return matches.length > 0 ? [{ type: spec.type, edges: matches }] : []
+  })
+  const known = new Set(EDGE_TYPES.map((spec) => spec.type))
+  const others = edges.filter((edge) => !known.has(edge.type))
+  return others.length > 0 ? [...groups, { type: 'other', edges: others }] : groups
 }
 
-/** 徽章配色类: 已知 type 用专属配色, 未识别 type 用「其他」灰。 */
-function edgeBadgeClass(type: string): string {
-  return EDGE_TYPES.find((s) => s.type === type)?.className ?? css.edgeOther
-}
-
-function Section(props: { title: string; lines: string[] }): JSX.Element {
-  if (props.lines.length === 0) return <></>
+function Section(props: { title: string; lines: string[] }): JSX.Element | null {
+  if (props.lines.length === 0) return null
   return (
-    <>
-      <div className={css.sectionTitle}>{props.title}</div>
-      {props.lines.map((line, i) => <div key={i} className={css.itemLine}>{line}</div>)}
-    </>
+    <section className={css.contentSection}>
+      <h3 className={css.sectionTitle}>{props.title}</h3>
+      {props.lines.map((line, index) => <div key={index} className={css.itemLine}>{line}</div>)}
+    </section>
   )
 }
 
@@ -60,19 +49,20 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const { t, connection, inputActions, sessionId, useInput } = props
   const chatDraft = useInput((state: InputState) => state.draft)
   const [open, setOpen] = useState(false)
-  /** 钻取中章节(章节档案 §17.5.1); null = 列表视图。 */
+  const [mode, setMode] = useState<'view' | 'plan'>('view')
   const [chapter, setChapter] = useState<number | null>(null)
   const [outlineTask, setOutlineTask] = useState('')
   const [outlineTarget, setOutlineTarget] = useState<'story_outline' | 'plot_thread' | 'outline_arc'>('story_outline')
   const [selectedSources, setSelectedSources] = useState<string[]>([])
   const [includeWorkingDrafts, setIncludeWorkingDrafts] = useState(false)
   const [notice, setNotice] = useState('')
-  const { data, loading, refresh } = useStoryMap(connection, sessionId)
+  const { data, loading, error, refresh } = useStoryMap(connection, sessionId)
 
   useEffect(() => {
     const reset = (event?: Event) => {
       if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
       setOpen(false)
+      setMode('view')
       setChapter(null)
       setOutlineTask('')
       setOutlineTarget('story_outline')
@@ -85,7 +75,6 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
     return () => window.removeEventListener(BOOK_CHANGED_EVENT, reset)
   }, [sessionId])
 
-  const bound = data?.bound != null
   const chapters = data?.chapters ?? []
   const scenes = data?.scenes ?? []
   const threads = data?.threads ?? []
@@ -93,181 +82,188 @@ export function StoryMapAction(props: StoryMapActionProps): JSX.Element {
   const foreshadowing = data?.foreshadowing ?? []
   const reveals = data?.reveals ?? []
   const edges = data?.edges ?? []
-  const edgeGroups = groupEdges(edges)
   const empty = chapters.length + scenes.length + threads.length + arcs.length + foreshadowing.length + reveals.length + edges.length === 0
+  const activeMode = empty ? 'plan' : mode
+
+  const labels = new Map<string, string>()
+  for (const item of [...threads, ...arcs, ...foreshadowing, ...reveals]) labels.set(item.slug, item.name)
+  for (const scene of scenes) labels.set(scene.slug, scene.title ?? t('common.unknownItem'))
 
   const send = (prompt: string): void => {
-    if (chatDraft.trim()) {
-      setNotice(t('outline.chatBusy'))
-      return
-    }
-    inputActions.setDraft(prompt)
-    inputActions.submit()
-    setNotice(t('outline.requested'))
+    const sent = handoffToAssistant({
+      draft: chatDraft,
+      prompt,
+      setDraft: inputActions.setDraft,
+      submit: inputActions.submit,
+      close: () => setOpen(false),
+    })
+    if (!sent) setNotice(t('outline.chatBusy'))
   }
 
   const requestPreview = (): void => {
     const input = outlineTask.trim()
     if (!input) return
-    const context = `input=${JSON.stringify(input)}，source_refs=${JSON.stringify(selectedSources)}，include_working_drafts=${includeWorkingDrafts}`
-    send(outlineTarget === 'story_outline'
-      ? `请调用 novelcraft_outline_preview，${context}。`
-      : `请调用 novelcraft_outline_item_preview，target=${outlineTarget}，${context}。`)
+    const target = t(outlineTarget === 'story_outline'
+      ? 'outline.target.story'
+      : outlineTarget === 'plot_thread' ? 'outline.target.thread' : 'outline.target.arc')
+    const selected = (data?.source_options ?? []).filter((source) => selectedSources.includes(source.ref))
+    const sources = selected.length > 0
+      ? t('outline.prompt.sources', { sources: selected.map((source) => source.label).join('、') })
+      : ''
+    const drafts = includeWorkingDrafts ? t('outline.prompt.drafts') : ''
+    send(t('outline.prompt.preview', { target, input, sources, drafts }))
   }
 
   const applyPreview = (preview: NonNullable<typeof data>['outline_previews'][number]): void => {
-    const tool = preview.kind === 'story_outline' ? 'novelcraft_outline_apply' : 'novelcraft_outline_item_apply'
-    send(`请调用 ${tool}，run_id=${JSON.stringify(preview.run_id)}。`)
+    send(t('outline.prompt.apply', { title: preview.title, id: preview.run_id }))
   }
+
+  const edgeGroups = groupEdges(edges)
 
   return (
     <>
-      <button
-        type="button"
-        className={css.petTrigger}
-        title={t('story.title')}
-        aria-label={t('story.title')}
-        onClick={() => setOpen((v) => !v)}
-      >
+      <button type="button" className={css.petTrigger} title={t('story.title')}
+        aria-label={t('story.title')} onClick={() => setOpen(true)}>
         <span className={css.petLabel}>{t('story.title')}</span>
       </button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={t('story.title')}
-        closeLabel={t('inbox.close')}
-        contentClassName={css.modalContent}
-      >
-        {!bound ? (
-          <div className={css.empty}>{t('story.unbound')}</div>
-        ) : chapter != null ? (
-          <ChapterDossier
-            connection={connection}
-            sessionId={sessionId}
-            t={t}
-            chapterIndex={chapter}
-            onBack={() => setChapter(null)}
-          />
-        ) : (
-          <div>
-            {empty ? <div className={css.empty}>{t('story.empty')}</div> : null}
-            <div className={css.sectionTitle}>{t('story.chapters')}</div>
-            {chapters.map((c) => (
-              <button
-                key={c.index}
-                type="button"
-                className={css.chapterRow}
-                onClick={() => setChapter(c.index)}
-              >
-                <span className={css.chapterRowIndex}>ch{c.index}</span>
-                <span>{c.title ?? ''}</span>
-              </button>
-            ))}
-            <section className={css.outlineWorkbench}>
-              <div className={css.panelToolbar}>
-                <div className={css.sectionTitle}>{t('outline.workbench')}</div>
-                <button type="button" className={css.actionButton} disabled={loading} onClick={() => void refresh()}>
-                  {loading ? t('workflow.loading') : t('inbox.refresh')}
-                </button>
+      <Modal open={open} onClose={() => setOpen(false)} title={t('story.title')}
+        closeLabel={t('inbox.close')} className={css.dialog} contentClassName={css.modalContent}>
+        {data === null && !error ? <div className={css.empty}>{t('common.loading')}</div> : null}
+        {error ? (
+          <div className={css.emptyState} role="alert">
+            <span>{t('common.loadFailed')}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>{t('common.retry')}</Button>
+          </div>
+        ) : null}
+        {data && data.bound == null ? <div className={css.empty}>{t('story.unbound')}</div> : null}
+        {data?.bound && chapter != null ? (
+          <ChapterDossier connection={connection} sessionId={sessionId} t={t}
+            chapterIndex={chapter} onBack={() => setChapter(null)} />
+        ) : data?.bound ? (
+          <div className={css.workflowPanel}>
+            <div className={css.panelToolbar}>
+              <div className={css.tabRow} role="tablist" aria-label={t('story.title')}>
+                <Pill role="tab" aria-selected={activeMode === 'view'} active={activeMode === 'view'} disabled={empty} onClick={() => setMode('view')}>
+                  {t('story.mode.view')}
+                </Pill>
+                <Pill role="tab" aria-selected={activeMode === 'plan'} active={activeMode === 'plan'} onClick={() => setMode('plan')}>
+                  {t('story.mode.plan')}
+                </Pill>
               </div>
-              {notice ? <div className={css.message} role="status">{notice}</div> : null}
-              <label className={css.presetControl}>
-                <span>{t('outline.target')}</span>
-                <select value={outlineTarget} onChange={(event) => setOutlineTarget(event.currentTarget.value as typeof outlineTarget)}>
-                  <option value="story_outline">{t('outline.target.story')}</option>
-                  <option value="plot_thread">{t('outline.target.thread')}</option>
-                  <option value="outline_arc">{t('outline.target.arc')}</option>
-                </select>
-              </label>
-              <textarea className={css.outlineTask} aria-label={t('outline.task')}
-                placeholder={t('outline.task')} value={outlineTask}
-                onChange={(event) => setOutlineTask(event.currentTarget.value)} />
-              <details>
-                <summary className={css.sectionTitle}>{t('outline.sources')} ({selectedSources.length})</summary>
-                <div className={css.sourcePicker}>
-                  {data?.source_options.length === 0 ? <div className={css.dossierEmpty}>{t('outline.sources.empty')}</div> : null}
-                  {data?.source_options.map((source) => (
-                    <label key={source.ref} className={css.sourceOption}>
-                      <input type="checkbox" checked={selectedSources.includes(source.ref)}
-                        onChange={(event) => setSelectedSources((current) => event.currentTarget.checked
-                          ? [...current, source.ref]
-                          : current.filter((ref) => ref !== source.ref))} />
-                      <span>{source.label} · {source.status}</span>
-                    </label>
-                  ))}
-                </div>
-              </details>
-              <label className={css.sourceOption}>
-                <input type="checkbox" checked={includeWorkingDrafts}
-                  onChange={(event) => setIncludeWorkingDrafts(event.currentTarget.checked)} />
-                <span>{t('outline.includeDrafts')}</span>
-              </label>
-              <button type="button" className={css.actionButton} disabled={!outlineTask.trim()} onClick={requestPreview}>
-                {t('outline.preview')}
-              </button>
-              <div className={css.sectionTitle}>{t('outline.previews')}</div>
-              {data?.outline_previews.length === 0 ? <div className={css.dossierEmpty}>{t('outline.previews.empty')}</div> : null}
-              {data?.outline_previews.map((preview) => (
-                <article key={preview.run_id} className={css.workflowCard}>
-                  <header className={css.cardHeader}>
-                    <span className={css.cardTitle}>{preview.title}</span>
-                    <span className={css.cardMeta}>{preview.kind === 'story_outline' ? t('outline.target.story') : preview.target === 'plot_thread' ? t('outline.target.thread') : t('outline.target.arc')}</span>
-                  </header>
-                  <p className={css.previewSummary}>{preview.summary}</p>
-                  <div className={css.chapterWorkspaceMeta}>
-                    {t('outline.receipt')}: {preview.source_count} · {t('outline.warnings')}: {preview.warning_count}
+              <Button size="sm" variant="toolbar" icon={<IconRefreshOutline16 />}
+                disabled={loading} onClick={() => void refresh()}>{t('inbox.refresh')}</Button>
+            </div>
+            {notice ? <div className={css.message} role="status">{notice}</div> : null}
+            {activeMode === 'plan' ? (
+              <form className={css.outlineWorkbench} onSubmit={(event) => { event.preventDefault(); requestPreview() }}>
+                {empty ? <p className={css.empty}>{t('story.empty')}</p> : null}
+                <label className={css.presetControl}>
+                  <span>{t('outline.target')}</span>
+                  <select value={outlineTarget} onChange={(event) => setOutlineTarget(event.currentTarget.value as typeof outlineTarget)}>
+                    <option value="story_outline">{t('outline.target.story')}</option>
+                    <option value="plot_thread">{t('outline.target.thread')}</option>
+                    <option value="outline_arc">{t('outline.target.arc')}</option>
+                  </select>
+                </label>
+                <label className={css.presetControl}>
+                  <span>{t('outline.taskLabel')}</span>
+                  <textarea className={css.outlineTask} placeholder={t('outline.task')}
+                    value={outlineTask} onChange={(event) => setOutlineTask(event.currentTarget.value)} />
+                </label>
+                <details className={css.disclosure}>
+                  <summary>{t('outline.sources')} ({selectedSources.length})</summary>
+                  <div className={css.sourcePicker}>
+                    {data.source_options.length === 0 ? <div className={css.dossierEmpty}>{t('outline.sources.empty')}</div> : null}
+                    {data.source_options.map((source) => (
+                      <label key={source.ref} className={css.sourceOption}>
+                        <input type="checkbox" checked={selectedSources.includes(source.ref)}
+                          onChange={(event) => setSelectedSources((current) => event.currentTarget.checked
+                            ? [...current, source.ref]
+                            : current.filter((ref) => ref !== source.ref))} />
+                        <span>{source.label}</span>
+                      </label>
+                    ))}
                   </div>
-                  <button type="button" className={css.actionButton} onClick={() => applyPreview(preview)}>
-                    {t('outline.apply')}
+                  <label className={css.sourceOption}>
+                    <input type="checkbox" checked={includeWorkingDrafts}
+                      onChange={(event) => setIncludeWorkingDrafts(event.currentTarget.checked)} />
+                    <span>{t('outline.includeDrafts')}</span>
+                  </label>
+                </details>
+                <Button type="submit" variant="primary" disabled={!outlineTask.trim()}>
+                  {t(outlineTarget === 'story_outline'
+                    ? 'outline.preview.story'
+                    : outlineTarget === 'plot_thread' ? 'outline.preview.thread' : 'outline.preview.arc')}
+                </Button>
+                {data.outline_previews.length > 0 ? (
+                  <details className={css.disclosure}>
+                    <summary>{t('outline.previews')} ({data.outline_previews.length})</summary>
+                    <div className={css.workflowPanel}>
+                      {data.outline_previews.map((preview) => (
+                        <article key={preview.run_id} className={css.workflowCard}>
+                          <header className={css.cardHeader}><span className={css.cardTitle}>{preview.title}</span></header>
+                          <p className={css.previewSummary}>{preview.summary}</p>
+                          <div className={css.chapterWorkspaceMeta}>
+                            {t('outline.receipt')}：{preview.source_count} · {t('outline.warnings')}：{preview.warning_count}
+                          </div>
+                          <Button variant="primary" onClick={() => applyPreview(preview)}>{t('outline.apply')}</Button>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+              </form>
+            ) : (
+              <div className={css.workflowPanel}>
+                <h3 className={css.sectionTitle}>{t('story.chapters')}</h3>
+                {chapters.map((item) => (
+                  <button key={item.index} type="button" className={css.chapterRow} onClick={() => setChapter(item.index)}>
+                    <span className={css.chapterRowIndex}>{t('story.chapterNumber', { index: item.index })}</span>
+                    <span>{item.title ?? t('common.untitled')}</span>
                   </button>
-                </article>
-              ))}
-            </section>
-            <Section title={t('story.threads')} lines={threads.map((x) => {
-              const range = x.start_chapter != null ? `ch${x.start_chapter}${x.end_chapter != null ? '-' + x.end_chapter : ''}` : ''
-              return `${x.name}${x.thread_type ? ' · ' + x.thread_type : ''}${range ? ' · ' + range : ''}`
-            })} />
-            <Section title={t('story.arcs')} lines={arcs.map((x) => {
-              const range = x.chapter_range?.length ? `ch${x.chapter_range[0]}-${x.chapter_range[x.chapter_range.length - 1]}` : ''
-              return `${x.name}${range ? ' · ' + range : ''}`
-            })} />
-            <Section title={t('story.foreshadowing')} lines={foreshadowing.map((x) => x.name)} />
-            <Section title={t('story.reveals')} lines={reveals.map((x) => {
-              const target = x.target_id ? ' → ' + x.target_id : ''
-              const secret = x.secret_summary ? ' · ' + x.secret_summary : ''
-              return `${x.name}${target}${secret}`
-            })} />
-            <Section title={t('story.scenes')} lines={scenes.map((x) => {
-              const ch = x.chapters?.length ? ' · ch' + x.chapters.join(',') : ''
-              return `${x.title ?? x.slug}${ch}`
-            })} />
-            {edgeGroups.length > 0 && (
-              <>
-                <div className={css.sectionTitle}>{t('story.edges')}</div>
-                {edgeGroups.map((group) => (
-                  <div key={group.type}>
-                    <div className={css.edgeGroupTitle}>{t(('story.edge.' + group.type) as NovelcraftKey)}</div>
-                    {group.edges.map((edge, i) => {
-                      const deprecated = edge.status === 'deprecated'
-                      const meta = EDGE_TYPES.find((s) => s.type === edge.type)
-                      const badgeText = meta ? t(meta.key) : edge.type
-                      return (
-                        <div key={i} className={css.edgeRow}>
-                          <span className={deprecated ? css.edgeLinkDeprecated : css.edgeLink}>
-                            {edge.source} → {edge.target}
-                          </span>
-                          <span className={css.edgeBadge + ' ' + (deprecated ? css.edgeBadgeDeprecated : edgeBadgeClass(edge.type))}>
-                            {badgeText}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
                 ))}
-              </>
+                <Section title={t('story.threads')} lines={threads.map((item) => {
+                  const range = item.start_chapter != null
+                    ? ` · ${t('story.chapterNumber', { index: `${item.start_chapter}${item.end_chapter != null ? `–${item.end_chapter}` : ''}` })}`
+                    : ''
+                  return `${item.name}${range}`
+                })} />
+                <Section title={t('story.arcs')} lines={arcs.map((item) => {
+                  const range = item.chapter_range?.length
+                    ? ` · ${t('story.chapterNumber', { index: `${item.chapter_range[0]}–${item.chapter_range[item.chapter_range.length - 1]}` })}`
+                    : ''
+                  return `${item.name}${range}`
+                })} />
+                <Section title={t('story.foreshadowing')} lines={foreshadowing.map((item) => item.name)} />
+                <Section title={t('story.reveals')} lines={reveals.map((item) => item.name)} />
+                <Section title={t('story.scenes')} lines={scenes.map((item) => {
+                  const range = item.chapters?.length ? ` · ${t('story.chapterNumber', { index: item.chapters.join('、') })}` : ''
+                  return `${item.title ?? t('common.untitled')}${range}`
+                })} />
+                {edgeGroups.length > 0 ? (
+                  <section className={css.contentSection}>
+                    <h3 className={css.sectionTitle}>{t('story.edges')}</h3>
+                    {edgeGroups.map((group) => (
+                      <div key={group.type}>
+                        <div className={css.edgeGroupTitle}>
+                          {t((`story.edge.${group.type}`) as NovelcraftKey)}
+                        </div>
+                        {group.edges.map((edge, index) => (
+                          <div key={index} className={css.edgeRow}>
+                            <span>{labels.get(edge.source) ?? t('common.unknownItem')} → {labels.get(edge.target) ?? t('common.unknownItem')}</span>
+                            <span className={`${css.edgeBadge} ${EDGE_TYPES.find((spec) => spec.type === edge.type)?.className ?? css.edgeOther}`}>
+                              {t(EDGE_TYPES.find((spec) => spec.type === edge.type)?.key ?? 'story.edge.other')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
+              </div>
             )}
           </div>
-        )}
+        ) : null}
       </Modal>
     </>
   )

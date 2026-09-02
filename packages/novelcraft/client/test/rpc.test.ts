@@ -548,11 +548,11 @@ describe('novelcraft RPC 处理器', () => {
     }), 'utf8');
     writeFileSync(path.join(root, '.assistant', 'proposals', 'next-001-p2.json'), JSON.stringify({
       run_id: 'p2-new', chapter_index: 1, next_chapter: 2, generated_at: '2026-08-14T01:00:00Z',
-      proposals: [{ title: '新方向', premise: '新', basis: ['b2'], cost: '中', risk: '低' }],
+      proposals: [{ proposal_id: 'choice-new', title: '新方向', premise: '新', basis: ['b2'], cost: '中', risk: '低' }],
     }), 'utf8');
     writeFileSync(path.join(root, '.assistant', 'proposals', 'next-002-p3.json'), JSON.stringify({
       run_id: 'p3-other', chapter_index: 2, next_chapter: 3, generated_at: '2026-08-14T02:00:00Z',
-      proposals: [{ title: '第三章方向', premise: '…' }],
+      proposals: [{ proposal_id: 'choice-third', title: '第三章方向', premise: '…' }],
     }), 'utf8');
 
     return { signalCh2 };
@@ -608,6 +608,9 @@ describe('novelcraft RPC 处理器', () => {
       // 读面: 提案取 next_chapter==2 的最新一条(p2-new, 排除 next_chapter==3)
       expect(result.value.proposal).toMatchObject({ run_id: 'p2-new', next_chapter: 2 });
       expect(result.value.proposal!.proposals[0]).toMatchObject({ title: '新方向', premise: '新' });
+      const desk = await h.writingDesk({ sessionId: 's1' });
+      expect(desk.ok).toBe(true);
+      if (desk.ok) expect(desk.value.proposals?.proposals[0]?.proposal_id).toBe('choice-third');
     }
     env.cleanup();
   });
@@ -742,7 +745,7 @@ describe('novelcraft RPC 处理器', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.reasoning?.status).toBe('unavailable');
-      expect(result.value.reasoning?.message).toBe('思考等级暂时无法读取，请稍后刷新。');
+      expect(result.value.reasoning?.message).toBe('思考强度暂时无法读取，请稍后刷新。');
       expect(JSON.stringify(result.value)).not.toContain('adapter secret internal detail');
     }
     env.cleanup();
@@ -759,9 +762,8 @@ describe('novelcraft RPC 处理器', () => {
     if (result.ok) {
       expect(result.value.ok).toBe(true);
       expect(result.value.active).toBe('writing-day');
-      expect(result.value.message).toContain('内容手已应用预设');
+      expect(result.value.message).toContain('这本书已使用');
       expect(result.value.message).toContain('写作日');
-      expect(result.value.message).toContain('书级直接配置');
     }
     const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
     expect(content).toContain('model: gpt-x'); // N19: 其余键原样保留
@@ -821,7 +823,7 @@ describe('novelcraft RPC 处理器', () => {
     expect(readFileSync(file, 'utf8')).toBe('model: stable\nreasoning_effort: max\n');
     const cleared = await h.presetsEffortSelect({ sessionId: 's1', effort: null });
     expect(cleared.ok).toBe(true);
-    if (cleared.ok) expect(cleared.value.message).toContain('清除书级');
+    if (cleared.ok) expect(cleared.value.message).toContain('跟随预设');
     expect(readFileSync(file, 'utf8')).toBe('model: stable\n');
     env.cleanup();
   });
@@ -837,7 +839,7 @@ describe('novelcraft RPC 处理器', () => {
     if (result.ok) {
       expect(result.value.ok).toBe(true);
       expect(result.value.active).toBeNull();
-      expect(result.value.message).toContain('默认');
+      expect(result.value.message).toContain('跟随当前助手');
     }
     const content = readFileSync(path.join(env.root, '.assistant', 'llm.yml'), 'utf8');
     expect(content).not.toContain('preset:');

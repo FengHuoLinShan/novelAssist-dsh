@@ -114,7 +114,7 @@ describe("scanIngestRadar(§7 摄入雷达)", () => {
     const id = signalIdFromKey("ingest-failed-", signalLogicalKey("ingest", "failed", "i1", "第一章.txt"));
     const sig = loadSignal(root, id);
     expect(sig?.severity).toBe("risk");
-    expect(sig?.title).toBe("导入失败: 第一章.txt");
+    expect(sig?.title).toBe("手稿「第一章.txt」导入失败");
     expect(sig?.evidence).toContain("解析失败"); // evidence 带 error_message。
     expect(sig?.proposed_action).toBe("检查文件后重新导入");
   });
@@ -130,7 +130,7 @@ describe("scanIngestRadar(§7 摄入雷达)", () => {
     const r1 = scanIngestRadar(root);
     expect(r1.created).toBe(2); // failed + uncovered-ch1。
     expect(loadSignal(root, "ingest-uncovered-ch1")?.severity).toBe("note"); // §11: note 静默堆积。
-    expect(loadSignal(root, "ingest-uncovered-ch1")?.proposed_action).toBe("对该章跑深度导入或手动关联 Scene");
+    expect(loadSignal(root, "ingest-uncovered-ch1")?.proposed_action).toBe("整理这一章的场景和结构");
 
     const r2 = scanIngestRadar(root);
     expect(r2.created).toBe(0);
@@ -156,7 +156,7 @@ describe("scanDedupRadar(§7 去重雷达)", () => {
     const sig = loadSignal(root, id);
     expect(sig?.severity).toBe("risk"); // §11: risk 进角标。
     expect(sig?.title).toBe("『苏 婉』『苏  婉』疑似同一对象"); // 名称按 slug 排序。
-    expect(sig?.proposed_action).toContain("去重修复");
+    expect(sig?.proposed_action).toContain("是否需要合并");
 
     // 作者打回(直接改信号文件, 同 health.test.ts 手法)。
     writeFileSync(
@@ -179,7 +179,7 @@ describe("scanDedupRadar(§7 去重雷达)", () => {
     const hint = loadSignal(root, "dedup-alias-red");
     expect(hint?.severity).toBe("hint"); // §11: hint 静默堆积, 不打断。
     expect(hint?.title).toBe("『红衣女子』可能是『苏婉』的别名");
-    expect(hint?.proposed_action).toBe("确认后附着别名(attach_alias)");
+    expect(hint?.proposed_action).toBe("确认是否将它作为已有设定的别名");
   });
 });
 
@@ -192,8 +192,8 @@ describe("scanSuggestRadar(§7 建议雷达)", () => {
     seedObject(root, "drafty", { name: "草稿", entity_type: "character", status: "draft", evidence: [] });
     const r = scanSuggestRadar(root);
     expect(r.created).toBe(2);
-    expect(loadSignal(root, "suggest-thin-empty")?.title).toBe("『林晚』的设定只出现 0 次, 建议补设定");
-    expect(loadSignal(root, "suggest-thin-thin")?.title).toBe("『林父』的设定只出现 1 次, 建议补设定");
+    expect(loadSignal(root, "suggest-thin-empty")?.title).toBe("『林晚』的设定还比较单薄");
+    expect(loadSignal(root, "suggest-thin-thin")?.title).toBe("『林父』的设定还比较单薄");
     expect(loadSignal(root, "suggest-thin-rich")).toBeUndefined();
     expect(loadSignal(root, "suggest-thin-drafty")).toBeUndefined();
     expect(loadSignal(root, "suggest-thin-empty")?.severity).toBe("note"); // §11: note 静默堆积。
@@ -272,8 +272,8 @@ describe("scanRiskRadar(§7 风险雷达)", () => {
     const id = signalIdFromKey("risk-dangling-", signalLogicalKey("risk", "dangling_relation", "a", "ghost", "references"));
     const sig = loadSignal(root, id);
     expect(sig?.severity).toBe("risk");
-    expect(sig?.title).toBe("关系边悬空: a → ghost");
-    expect(sig?.proposed_action).toBe("修正或删除该关系");
+    expect(sig?.title).toBe("有一条剧情关系找不到对应内容");
+    expect(sig?.proposed_action).toBe("检查并修正这条关系");
   });
 
   it("长引用不因公共前缀碰撞；同名跨 kind 各有独立 logical key", () => {
@@ -345,7 +345,7 @@ describe("plotSummaryLine / scanPlotRadar(§7 剧情雷达)", () => {
     expect(line).toContain("最新: 第 3 章《第三章》");
     expect(line).toContain("篇章: 第一卷"); // 当前章 3 落入 arc chapter_range。
     expect(line).toContain("未回收伏笔 1 条");
-    expect(line).toContain("收件箱待确认 1 件");
+    expect(line).toContain("待处理 1 件");
 
     // §7 剧情面 = 摘要数据源: v1 不产卡片(空命中对账)。
     const r = scanPlotRadar(root);

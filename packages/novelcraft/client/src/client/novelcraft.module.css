@@ -4,6 +4,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-inline: 4px;
   min-height: 28px;
   padding: 3px 4px;
   border: 0;
@@ -29,16 +30,37 @@
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--dsw-alias-danger);
-  color: var(--dsw-alias-label-inverse, #fff);
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-label-primary-inverted);
   font-size: 11px;
   line-height: 16px;
   text-align: center;
 }
 
+.actionDock {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-inline: 16px;
+}
+
+.dialog.dialog {
+  width: min(560px, calc(100dvw - 32px));
+  max-height: calc(100dvh - 32px);
+}
+
+.dialogWide.dialogWide {
+  width: min(960px, calc(100dvw - 32px));
+  max-height: calc(100dvh - 32px);
+}
+
 .modalContent {
-  max-height: 70vh;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   max-width: 100%;
 }
 
@@ -60,12 +82,18 @@
   gap: 8px;
 }
 
+.panelToolbar {
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+
 .workflowCard,
 .workflowRestart {
   min-width: 0;
   padding: 12px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .statePill {
@@ -86,28 +114,38 @@
   margin: 8px 0;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--dsw-alias-fill-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .progressTrack > span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--dsw-alias-accent, var(--dsw-alias-primary));
+  background: var(--dsw-alias-state-business-primary);
 }
 
 .actionButton {
   min-height: 44px;
   padding: 8px 12px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: 8px;
-  background: transparent;
+  background: var(--dsw-specific-tip);
   color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-weight: 500;
   cursor: pointer;
 }
 
+.actionButton:hover:not(:disabled) {
+  background: var(--dsw-alias-button-ghost-active-fill);
+}
+
+.actionButton:active:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
 .actionButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
@@ -124,16 +162,16 @@
 .bookNameInput {
   flex: 1;
   min-width: 0;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-border);
-  border-radius: 8px;
-  background: var(--dsw-alias-fill);
-  color: var(--dsw-alias-label-primary);
+}
+
+.bookNameInput::placeholder,
+.outlineTask::placeholder,
+.reasonInput::placeholder {
+  color: var(--dsw-alias-label-caption);
 }
 
 .bookNameInput:focus-visible {
-  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
@@ -143,23 +181,24 @@
   gap: 8px;
   margin: 12px 0;
   padding: 12px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .outlineTask {
   min-height: 96px;
   resize: vertical;
   padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: 8px;
-  background: var(--dsw-alias-fill);
+  background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
   font: inherit;
 }
 
 .outlineTask:focus-visible {
-  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
@@ -210,10 +249,11 @@
 }
 
 .message {
-  padding: 6px 8px;
+  padding: 8px 10px;
+  border-inline-start: 2px solid var(--dsw-alias-state-business-primary);
   border-radius: 6px;
-  background: var(--dsw-alias-fill-secondary);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-state-business-tertiary);
+  color: var(--dsw-alias-label-primary-bluish);
   font-size: 12px;
 }
 
@@ -223,19 +263,107 @@
   font-size: 13px;
 }
 
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.helperText {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.disclosure {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.disclosure > summary,
+.presetDetails > summary {
+  padding: 6px 0;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .card {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
   cursor: pointer;
 }
 
+.cardSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cardSummary:focus-visible,
+.presetCardButton:focus-visible,
+.atlasTreeRow:focus-visible,
+.atlasLabel:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.cardDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
 .cardSelected {
-  border-color: var(--dsw-alias-accent, var(--dsw-alias-primary));
-  background: var(--dsw-alias-fill-secondary);
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-tertiary);
 }
 
 .cardHeader {
@@ -275,7 +403,7 @@
   margin: 0 0 10px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: var(--dsw-alias-background-secondary, rgba(128, 128, 128, 0.08));
+  background: var(--dsw-specific-tip);
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-secondary);
@@ -301,13 +429,13 @@
 .reasonInput {
   flex: 1;
   min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--dsw-alias-border);
-  border-radius: 6px;
-  background: var(--dsw-alias-fill);
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
+}
+
+.reasonInput:focus-visible,
+.chapterTitleInput:focus-visible,
+.chapterTextarea:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
 }
 
 .keyboardHints {
@@ -339,7 +467,7 @@
 
 .tab {
   padding: 4px 10px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
@@ -348,8 +476,8 @@
 }
 
 .tabActive {
-  border-color: var(--dsw-alias-accent, var(--dsw-alias-primary));
-  background: var(--dsw-alias-fill-secondary);
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-tertiary);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -367,14 +495,19 @@
   align-self: flex-start;
   min-height: 32px;
   padding: 4px 12px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: 6px;
+  background: var(--dsw-specific-tip);
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
 
 .fileLabel:focus-within {
-  border-color: var(--dsw-alias-accent, var(--dsw-alias-primary));
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.fileLabel:hover {
+  background: var(--dsw-alias-button-ghost-active-fill);
 }
 
 .fileInput {
@@ -427,11 +560,11 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.edgeServesThread { color: var(--dsw-alias-accent, var(--dsw-alias-primary)); }
+.edgeServesThread { color: var(--dsw-alias-state-business-primary); }
 .edgeBelongsToArc { color: var(--dsw-alias-state-success-primary); }
 .edgeRevealsForeshadowing { color: var(--dsw-alias-state-warn-primary); }
 .edgePaysOffInScene { color: var(--dsw-alias-state-business-primary); }
-.edgeReferencesCharacter { color: var(--dsw-alias-danger); }
+.edgeReferencesCharacter { color: var(--dsw-alias-state-error-primary); }
 .edgeReferencesEntity { color: var(--dsw-alias-state-error-primary); }
 .edgeReferencesMemory { color: var(--dsw-alias-state-success-secondary); }
 .edgeOther { color: var(--dsw-alias-label-secondary); }
@@ -454,9 +587,9 @@
 
 .dossierBack {
   padding: 4px 10px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: 6px;
-  background: transparent;
+  background: var(--dsw-specific-tip);
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   cursor: pointer;
@@ -464,7 +597,8 @@
 
 .dossierBack:hover,
 .dossierBack:focus-visible {
-  border-color: var(--dsw-alias-accent, var(--dsw-alias-primary));
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-button-ghost-active-fill);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -522,9 +656,9 @@
   gap: 8px;
   width: 100%;
   padding: 5px 8px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
-  background: transparent;
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
   text-align: left;
@@ -533,8 +667,8 @@
 
 .chapterRow:hover,
 .chapterRow:focus-visible {
-  border-color: var(--dsw-alias-accent, var(--dsw-alias-primary));
-  background: var(--dsw-alias-fill-secondary);
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .chapterRowIndex {
@@ -556,6 +690,232 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.presetCard {
+  min-width: 0;
+  overflow: hidden;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.presetCardButton {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  min-height: 72px;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.presetCardButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.presetCardButton:disabled { cursor: default; }
+
+.presetPurpose {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.presetDetails {
+  padding: 0 12px 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.choiceGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.choiceGroup > legend {
+  padding-inline: 4px;
+  font-weight: 600;
+}
+
+.statusLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.warning {
+  padding: 8px 10px;
+  border-inline-start: 2px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 6px;
+  background: var(--dsw-specific-tip);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.fileLabelDisabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.atlasPanel,
+.atlasPage,
+.atlasDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.atlasLayout {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+  gap: 16px;
+  min-width: 0;
+}
+
+.atlasSidebar {
+  min-width: 0;
+  padding-inline-end: 12px;
+  border-inline-end: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.atlasTree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.atlasTreeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px 4px calc(8px + var(--atlas-indent, 0px));
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.atlasTreeRow > :first-child {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.atlasTreeRow:hover,
+.atlasTreeRowSelected {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.atlasPage {
+  padding: 12px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.atlasImageStage {
+  position: relative;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  user-select: none;
+}
+
+.atlasImage {
+  display: block;
+  max-width: 100%;
+  max-height: min(520px, 60dvh);
+  object-fit: contain;
+}
+
+.atlasPlaceholder {
+  width: 100%;
+  padding: 24px;
+  border: 1px dashed var(--dsw-alias-border-l3);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.atlasLabel {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  max-width: min(180px, 80%);
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-mask-1);
+  color: var(--dsw-alias-label-primary-inverted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: move;
+  touch-action: none;
+}
+
+.promptBlock {
+  margin-bottom: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--dsw-specific-tip);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.annotationList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.annotationRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.annotationRow > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 
 /* 预设卡: 复用 .card 基态(边框/圆角/点击), 加名称→模型→状态行三段式。 */
@@ -583,9 +943,9 @@
 .presetBadge {
   display: inline-block;
   padding: 0 6px;
-  border: 1px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  border: 1px solid var(--dsw-alias-state-business-primary);
   border-radius: 8px;
-  color: var(--dsw-alias-accent, var(--dsw-alias-primary));
+  color: var(--dsw-alias-state-business-primary);
   font-size: 11px;
   line-height: 16px;
   white-space: nowrap;
@@ -616,14 +976,14 @@
   width: 100%;
   min-height: 44px;
   padding: 6px 8px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: 6px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-fill-secondary);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .presetControl select:focus-visible {
-  outline: 2px solid var(--dsw-alias-accent, var(--dsw-alias-primary));
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
@@ -685,9 +1045,9 @@
   flex: 1;
   min-width: 180px;
   padding: 6px 8px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: 6px;
-  background: var(--dsw-alias-fill);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -697,19 +1057,19 @@
   width: 100%;
   resize: none;
   padding: 14px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: 8px;
-  background: var(--dsw-alias-fill);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font: 15px/1.8 ui-serif, Georgia, serif;
 }
 
-.chapterTextarea:read-only { background: var(--dsw-alias-background-secondary); }
+.chapterTextarea:read-only { background: var(--dsw-alias-bg-layer-2); }
 
 .chapterDiff {
   max-height: 40%;
   overflow: auto;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   padding: 8px;
 }
@@ -740,8 +1100,9 @@
 
 .chapterCandidate {
   padding: 8px;
-  border: 1px solid var(--dsw-alias-border);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .chapterCandidate pre {
@@ -756,4 +1117,17 @@
   .chapterWorkspaceGrid { grid-template-columns: 1fr; overflow: auto; }
   .chapterEditorPane { min-height: 70vh; }
   .chapterHistoryPane { overflow: visible; }
+  .atlasLayout { grid-template-columns: 1fr; }
+  .atlasSidebar {
+    padding-inline-end: 0;
+    padding-bottom: 12px;
+    border-inline-end: 0;
+    border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  }
+}
+
+@media (max-width: 520px) {
+  .presetsGrid { grid-template-columns: 1fr; }
+  .panelToolbar { align-items: flex-start; }
+  .annotationRow { align-items: stretch; flex-direction: column; }
 }

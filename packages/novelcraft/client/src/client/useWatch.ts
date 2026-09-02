@@ -347,7 +347,7 @@ export function useWatch(connection: RpcCaller | undefined, sessionId: string | 
 
 /** 收件箱视图(卡片列表 + 阈值)。 */
 export function useInbox(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const { data, refresh } = useSessionView<InboxListValue>(connection, sessionId, ENDPOINTS.inboxList)
+  const { data, loading, error, refresh } = useSessionView<InboxListValue>(connection, sessionId, ENDPOINTS.inboxList)
   const [busy, setBusy] = useState(false)
 
   /** 四动词: 回宿主执行 assistant.act; 返回作者语言消息。 */
@@ -369,6 +369,8 @@ export function useInbox(connection: RpcCaller | undefined, sessionId: string | 
     cards: data?.signals ?? [],
     bound: data?.bound ?? null,
     threshold: data?.threshold ?? 5,
+    loading,
+    error,
     busy,
     refresh,
     actOn,
@@ -383,20 +385,28 @@ function useSessionView<T>(
 ) {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
   const request = useRef(0)
   const refresh = useCallback(async () => {
     const seq = ++request.current
     setLoading(true)
+    setError(false)
     const value = await call<T>(connection, endpoint, { sessionId })
     if (seq !== request.current) return
     setLoading(false)
-    if (value !== null) setData(value)
+    if (value === null) {
+      setData(null)
+      setError(true)
+      return
+    }
+    setData(value)
   }, [connection, endpoint, sessionId])
   useEffect(() => {
     const reload = (event?: Event) => {
       if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
       request.current += 1
       setData(null)
+      setError(false)
       void refresh()
     }
     reload()
@@ -406,7 +416,7 @@ function useSessionView<T>(
       window.removeEventListener(BOOK_CHANGED_EVENT, reload)
     }
   }, [refresh, sessionId])
-  return { data, loading, refresh }
+  return { data, loading, error, refresh }
 }
 
 /** 地图册数据源(atlas/view; Phase 6: 规划 run + adopted/pending 树 + 标注队列)。 */
@@ -442,7 +452,7 @@ export function useWritingDesk(connection: RpcCaller | undefined, sessionId: str
 
 /** 模型预设数据源(presets/list + presets/select; N20/D13)。写入成功即刷新。 */
 export function useModelPresets(connection: RpcCaller | undefined, sessionId: string | undefined) {
-  const { data, refresh } = useSessionView<PresetsListValue>(connection, sessionId, ENDPOINTS.presetsList)
+  const { data, loading, error, refresh } = useSessionView<PresetsListValue>(connection, sessionId, ENDPOINTS.presetsList)
   const [busy, setBusy] = useState(false)
 
   /** 选择/清除预设: 回宿主 selectPresetInLlmYml(N19 只动 llm.yml preset 键); 成功即刷新。 */
@@ -485,7 +495,7 @@ export function useModelPresets(connection: RpcCaller | undefined, sessionId: st
     [connection, sessionId, refresh],
   )
 
-  return { data, busy, refresh, select, selectEffort }
+  return { data, loading, error, busy, refresh, select, selectEffort }
 }
 
 /** 书库发现读面; 未绑定也可列出。 */
@@ -504,6 +514,8 @@ export function useChapterDossier(
   chapterIndex: number | null,
 ) {
   const [data, setData] = useState<ChapterDossierValue | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
   // 章节序号护栏: 章切换后旧章的慢响应必须作废, 不得覆盖新章数据
   // (chapterIndex 每次变化递增 seq; 清空(null)也作废在途)。
   const chapterSeqRef = useRef(0)
@@ -511,15 +523,24 @@ export function useChapterDossier(
     if (chapterIndex == null) {
       chapterSeqRef.current += 1
       setData(null)
+      setLoading(false)
+      setError(false)
       return
     }
     const seq = chapterSeqRef.current + 1
     chapterSeqRef.current = seq
+    setLoading(true)
+    setError(false)
     const value = await call<ChapterDossierValue>(connection, ENDPOINTS.chapterDossier, {
       sessionId,
       chapterIndex,
     })
-    if (value === null || seq !== chapterSeqRef.current) return
+    if (seq !== chapterSeqRef.current) return
+    setLoading(false)
+    if (value === null) {
+      setError(true)
+      return
+    }
     setData(value)
   }, [connection, sessionId, chapterIndex])
   useEffect(() => {
@@ -527,6 +548,7 @@ export function useChapterDossier(
       if (event && !matchesBookChangedSession((event as CustomEvent<BookChangedDetail>).detail, sessionId)) return
       chapterSeqRef.current += 1
       setData(null)
+      setError(false)
       void refresh()
     }
     reload()
@@ -537,7 +559,7 @@ export function useChapterDossier(
       window.removeEventListener(BOOK_CHANGED_EVENT, reload)
     }
   }, [refresh, sessionId])
-  return { data, refresh }
+  return { data, loading, error, refresh }
 }
 
 /** Durable workflow 只读视图；session 切换/卸载后旧响应不得回填。 */

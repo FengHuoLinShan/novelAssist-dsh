@@ -195,6 +195,8 @@ export interface ProposalCard {
   next_chapter: number;
   generated_at: string;
   proposals: Array<{
+    /** Stable frozen choice id; old proposal files may not contain one. */
+    proposal_id?: string;
     title: string;
     premise: string;
     basis?: string[];

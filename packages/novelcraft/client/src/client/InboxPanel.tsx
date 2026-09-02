@@ -1,12 +1,9 @@
-// 收件箱面板(InboxPanel): 卡片列表 + 四动词 + 键盘流(j/k 选择, 1/2/3/4 动作,
-// u 刷新, Escape 关闭)。四动词回宿主 assistant.act(确定性记录);
-// adopt 由助手经 DSH approval 执行(§9 fail-closed)。
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Button, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, Pill, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RpcCaller } from './index.ts'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SignalCard } from '../wire.ts'
-import { NS } from './locales.ts'
+import { NS, type NovelcraftKey } from './locales.ts'
 import { useInbox } from './useWatch.ts'
 import { buildActPayload, type ActModifyFields, type InboxAction } from './actPayload.ts'
 import css from './novelcraft.module.css'
@@ -21,20 +18,22 @@ export interface InboxPanelProps {
 }
 
 const SEVERITY_DOT: Record<string, StateDotState> = {
-  conflict: 'error',
-  risk: 'warning',
-  note: 'ongoing',
-  hint: 'done',
+  conflict: 'error', risk: 'warning', note: 'ongoing', hint: 'done',
 }
 
-const VERB_KEYS: Record<string, InboxAction> = {
-  '1': 'accept',
-  '2': 'reject',
-  '3': 'modify',
-  '4': 'defer',
+const RADAR_LABEL: Record<string, NovelcraftKey> = {
+  ingest: 'inbox.category.ingest',
+  dedup: 'inbox.category.dedup',
+  suggest: 'inbox.category.suggest',
+  plot: 'inbox.category.plot',
+  risk: 'inbox.category.risk',
+  writing: 'inbox.category.writing',
 }
 
-/** 四动词按钮(含打回/改一改的内联理由行)。 */
+const visibleEvidence = (lines: string[]): string[] => lines.filter((line) =>
+  !/^(receipt|sha256|base|node):/i.test(line) && !line.includes('chapter_ids'),
+)
+
 function VerbRow(props: {
   t: TranslateNS<typeof NS>
   busy: boolean
@@ -43,18 +42,13 @@ function VerbRow(props: {
   const { t, busy, onAct } = props
   const [pending, setPending] = useState<'reject' | 'modify' | null>(null)
   const [reason, setReason] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
-
   useEffect(() => {
-    if (pending) inputRef.current?.focus()
+    if (pending) document.getElementById('novelcraft-inbox-reason')?.focus()
   }, [pending])
 
   const confirm = (): void => {
-    if (pending === 'reject') {
-      onAct('reject', reason)
-    } else if (pending === 'modify') {
-      onAct('modify', reason, { proposed_action: reason })
-    }
+    if (pending === 'reject') onAct('reject', reason)
+    if (pending === 'modify') onAct('modify', reason, { proposed_action: reason })
     setPending(null)
     setReason('')
   }
@@ -62,26 +56,21 @@ function VerbRow(props: {
   return (
     <div className={css.verbRow}>
       <div className={css.verbButtons}>
-        <Button disabled={busy} onClick={() => onAct('accept')}>{t('inbox.verb.accept')}</Button>
-        <Button disabled={busy} onClick={() => setPending('reject')}>{t('inbox.verb.reject')}</Button>
-        <Button disabled={busy} onClick={() => setPending('modify')}>{t('inbox.verb.modify')}</Button>
-        <Button disabled={busy} onClick={() => onAct('defer')}>{t('inbox.verb.defer')}</Button>
+        <Button variant="primary" disabled={busy} onClick={() => onAct('accept')}>{t('inbox.verb.accept')}</Button>
+        <Button variant="outline" disabled={busy} onClick={() => setPending('modify')}>{t('inbox.verb.modify')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setPending('reject')}>{t('inbox.verb.reject')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => onAct('defer')}>{t('inbox.verb.defer')}</Button>
       </div>
       {pending ? (
-        <div className={css.reasonRow}>
-          <input
-            ref={inputRef}
-            className={css.reasonInput}
-            value={reason}
-            placeholder={t('inbox.reason.placeholder')}
-            onChange={(e) => setReason(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') confirm()
-              if (e.key === 'Escape') { setPending(null); setReason('') }
-            }}
-          />
-          <Button disabled={!reason.trim() || busy} onClick={confirm}>{t('inbox.reason.confirm')}</Button>
-        </div>
+        <form className={css.reasonRow} onSubmit={(event) => { event.preventDefault(); confirm() }}>
+          <label className={css.visuallyHidden} htmlFor="novelcraft-inbox-reason">
+            {t(pending === 'reject' ? 'inbox.reason.reject' : 'inbox.reason.modify')}
+          </label>
+          <Input id="novelcraft-inbox-reason" className={css.reasonInput}
+            value={reason} placeholder={t(pending === 'reject' ? 'inbox.reason.reject' : 'inbox.reason.modify')}
+            onChange={(event) => setReason(event.currentTarget.value)} />
+          <Button type="submit" variant="primary" disabled={!reason.trim() || busy}>{t('inbox.reason.confirm')}</Button>
+        </form>
       ) : null}
     </div>
   )
@@ -89,79 +78,88 @@ function VerbRow(props: {
 
 export function InboxPanel(props: InboxPanelProps): JSX.Element {
   const { connection, sessionId, t, onClose } = props
-  const { cards, bound, threshold, busy, refresh, actOn } = useInbox(connection, sessionId)
-  const [selected, setSelected] = useState(0)
+  const { cards, bound, busy, loading, error, refresh, actOn } = useInbox(connection, sessionId)
+  const [selected, setSelected] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
+  useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
-    void refresh()
-  }, [refresh])
-
-  useEffect(() => {
-    if (selected >= cards.length && cards.length > 0) setSelected(0)
+    if (selected !== null && selected >= cards.length) setSelected(null)
   }, [cards.length, selected])
 
-  const handleAct = async (action: InboxAction, reason?: string, modified?: ActModifyFields): Promise<void> => {
-    const card = cards[selected]
-    if (!card) return
-    // modified.title/proposed_action → wire modifiedTitle/modifiedProposedAction(buildActPayload)。
+  const handleAct = async (
+    card: SignalCard,
+    action: InboxAction,
+    reason?: string,
+    modified?: ActModifyFields,
+  ): Promise<void> => {
     const text = await actOn(buildActPayload(card, sessionId, action, reason, modified))
     setMessage(text ?? t('inbox.act.fail'))
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const key = event.key
-    if (key === 'j') { event.preventDefault(); setSelected((s) => Math.min(s + 1, cards.length - 1)); return }
-    if (key === 'k') { event.preventDefault(); setSelected((s) => Math.max(s - 1, 0)); return }
-    if (key === 'u') { event.preventDefault(); void refresh(); return }
-    if (key === 'Escape') { event.preventDefault(); onClose(); return }
-    const verb = VERB_KEYS[key]
-    if (verb && !busy) {
+    if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+    if (event.key === 'u') { event.preventDefault(); void refresh(); return }
+    if (event.key === 'j') {
       event.preventDefault()
-      if (verb === 'accept' || verb === 'defer') void handleAct(verb)
-      else setMessage(null)
+      setSelected((current) => Math.min((current ?? -1) + 1, cards.length - 1))
+      return
+    }
+    if (event.key === 'k') {
+      event.preventDefault()
+      setSelected((current) => Math.max((current ?? 1) - 1, 0))
     }
   }
 
-  if (!bound) {
-    return <div className={css.empty}>{t('inbox.unbound')}</div>
+  if (loading && cards.length === 0) return <div className={css.empty}>{t('common.loading')}</div>
+  if (error) {
+    return (
+      <div className={css.emptyState} role="alert">
+        <span>{t('common.loadFailed')}</span>
+        <Button size="sm" variant="outline" onClick={() => void refresh()}>{t('common.retry')}</Button>
+      </div>
+    )
   }
-  if (cards.length === 0) {
-    return <div className={css.empty}>{t('inbox.empty')}</div>
-  }
+  if (!bound) return <div className={css.empty}>{t('inbox.unbound')}</div>
+  if (cards.length === 0) return <div className={css.empty}>{t('inbox.empty')}</div>
 
   return (
     <div ref={rootRef} tabIndex={0} className={css.inbox} onKeyDown={onKeyDown}>
       <div className={css.inboxMeta}>
-        <span>{t('inbox.threshold')}: {threshold}</span>
-        <Button onClick={() => void refresh()}>{t('inbox.refresh')}</Button>
+        <span>{t('inbox.count')}：{cards.length}</span>
+        <Button size="sm" variant="toolbar" onClick={() => void refresh()}>{t('inbox.refresh')}</Button>
       </div>
-      {message ? <div className={css.message}>{message}</div> : null}
-      {cards.map((card, index) => (
-        <article
-          key={card.id}
-          className={`${css.card} ${index === selected ? css.cardSelected : ''}`}
-          onClick={() => setSelected(index)}
-          data-selected={index === selected}
-        >
-          <header className={css.cardHeader}>
-            <StateDot state={SEVERITY_DOT[card.severity] ?? 'done'} />
-            <span className={css.cardTitle}>{card.title}</span>
-            <span className={css.cardMeta}>{card.radar} · {t(`inbox.status.${card.status}` as never)}</span>
-          </header>
-          {card.evidence.length > 0 ? (
-            <ul className={css.evidence}>
-              {card.evidence.slice(0, 3).map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          ) : null}
-          <p className={css.proposed}>{t('inbox.action')}: {card.proposed_action}</p>
-          <VerbRow t={t} busy={busy} onAct={(a, r, m) => void handleAct(a, r, m)} />
-        </article>
-      ))}
-      <footer className={css.keyboardHints}>j/k · 1-4 · u · Esc</footer>
+      {message ? <div className={css.message} role="status">{message}</div> : null}
+      {cards.map((card, index) => {
+        const expanded = index === selected
+        const evidence = visibleEvidence(card.evidence)
+        return (
+          <article key={card.id} className={`${css.card} ${expanded ? css.cardSelected : ''}`}>
+            <button type="button" className={css.cardSummary} aria-expanded={expanded}
+              onClick={() => setSelected(expanded ? null : index)}>
+              <StateDot state={SEVERITY_DOT[card.severity] ?? 'done'} />
+              <span className={css.cardTitle}>{card.title}</span>
+              <Pill>{t(RADAR_LABEL[card.radar] ?? 'inbox.category.other')}</Pill>
+            </button>
+            {expanded ? (
+              <div className={css.cardDetails}>
+                {evidence.length > 0 ? (
+                  <details className={css.disclosure}>
+                    <summary>{t('inbox.evidence')}</summary>
+                    <ul className={css.evidence}>{evidence.map((line, i) => <li key={i}>{line}</li>)}</ul>
+                  </details>
+                ) : null}
+                <p className={css.proposed}>{t('inbox.action')}：{card.proposed_action}</p>
+                <VerbRow t={t} busy={busy} onAct={(action, reason, modified) => {
+                  void handleAct(card, action, reason, modified)
+                }} />
+              </div>
+            ) : null}
+          </article>
+        )
+      })}
+      <footer className={css.keyboardHints}>{t('inbox.keyboard')}</footer>
     </div>
   )
 }
