@@ -8,7 +8,7 @@ import ts from 'typescript'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packagesRoot = join(root, 'packages', 'novelcraft')
 const expectedEngine = '>=24.11.0'
-const expectedDshVersion = '0.1.2-alpha.4'
+const expectedDshVersion = '0.1.2-rc.1'
 const failures = []
 const workspaceNames = []
 const corePackageNames = [

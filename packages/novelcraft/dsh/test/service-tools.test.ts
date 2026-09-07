@@ -107,7 +107,7 @@ describe('NovelCraftService 端到端', () => {
     env.cleanup();
   });
 
-  it('真实 alpha.4 ToolRuntime: scope/provider/approval 失败均 isError=true 且带稳定 code', async () => {
+  it('真实 rc.1 ToolRuntime: scope/provider/approval 失败均 isError=true 且带稳定 code', async () => {
     const h = await makeContext({ approval: { outcome: 'rejected' } });
     h.ctx.provide('systemPrompt', {
       tools: () => () => {},
@@ -164,7 +164,7 @@ describe('NovelCraftService 端到端', () => {
     rmSync(vaultsDir, { recursive: true, force: true });
   });
 
-  it('真实 alpha.4 Code Mode bridge: 嵌套 adopt 被拒后 run_code 整体失败且零写', async () => {
+  it('真实 rc.1 Code Mode bridge: 嵌套 adopt 被拒后 run_code 整体失败且零写', async () => {
     const h = await makeContext({ approval: { outcome: 'rejected' } });
     h.ctx.provide('systemPrompt', {
       tools: () => () => {},

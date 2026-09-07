@@ -1,8 +1,10 @@
 # M4 重构开发状态(novelAssist-dsh / main)
 
-> 2026-09-02 当前基线: DSH `0.1.2-alpha.4` / deepseek-harness `4e84901`。
+> 2026-09-04 当前基线: DSH `0.1.2-rc.1` / deepseek-harness `76fda729`。
 > 客户端走认证 Connection RPC，已无 method-level `authority`; 已删除自定义
-> `client/push` 与修改 `node_modules` 的 postinstall。下文 rc.8/loopback/push 描述仅为历史验收快照，当前实现以 N50 为准。
+> `client/push` 与修改 `node_modules` 的 postinstall。下文 rc.8/loopback/push 描述仅为历史验收快照，当前实现以 N50/N51 为准。
+
+rc.1 适配、vendor 同步与隔离插件烟测记录见 `docs/agent/reviews/2026-09-04-dsh-rc1-compatibility.md`。
 
 ## 位置
 
@@ -12,8 +14,8 @@
 - 治理文档: docs/adr/0016-m4-dsh-plugin-rewrite.md(Accepted)、
   docs/adr/0017-m4-repo-form-and-mounting.md(Accepted: fork 仓库形态 + 挂载授权)、
   docs/agent/dsh-rebuild/自主智能式作家助手设计.md(决策 D1–D25)
-- DSH 参考 checkout: /Users/tywww/Desktop/项目/deepseek-harness(浅克隆, head `4e84901`,
-  只读参考; 构建链以 npm `0.1.2-alpha.4` 官方包为准)
+- DSH 参考 checkout: /Users/tywww/Desktop/项目/deepseek-harness(head `76fda729`,
+  只读参考; 构建链以 npm `0.1.2-rc.1` 官方包为准)
 - 旧 dsh-rebuild worktree: 仅保留为历史/参考; 其残留改动不动(用户指示); 侧车 ADR 已标 Superseded
 
 ## 进度

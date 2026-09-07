@@ -13,6 +13,9 @@ jobs:
         with:
           node-version: 24.11.0
           cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
       - name: Install default profile without optional dependencies
         run: npm ci --omit=optional
       - name: Restore only CI toolchain native bindings
@@ -76,6 +79,19 @@ jobs:
             test "$p" = client && name=@novelcraft/dsh-client
             npm run typecheck -w "$name"
           done
+      - name: Build and pack public DSH plugin
+        run: |
+          node scripts/build-plugin-package.mjs
+          npm run check:plugin
+          npm pack ./plugin --pack-destination "$RUNNER_TEMP"
+      - name: Install DSH compatibility runtime
+        run: npm install --prefix "$RUNNER_TEMP/dsh-runtime" --no-audit --no-fund @deepseek-ai/dsh@0.1.2-rc.1
+      - name: Smoke public plugin in a clean DSH profile
+        env:
+          DSH_BIN: ${{ runner.temp }}/dsh-runtime/node_modules/.bin/dsh
+          DSH_HOME: ${{ runner.temp }}/dsh-home
+          PLUGIN_TARBALL: ${{ runner.temp }}/novelcraft-dsh-0.1.3.tgz
+        run: npm run smoke:plugin
       - name: Self-test audit gate fail-closed semantics
         run: npm run check:audit-gate
       - name: Enforce default audit baseline

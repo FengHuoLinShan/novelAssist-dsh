@@ -2,7 +2,9 @@
 
 NovelCraft 的 DSH 官方 bundle 形态：单个包同时安装宿主插件、39 个领域工具、认证 Connection RPC 和 Web 写作界面。
 
-当前版本针对 DSH `0.1.2-alpha.4`，不修改 DSH 安装包。
+当前版本针对 DSH `0.1.2-rc.1`，不修改 DSH 安装包。
+
+DSH 安装请显式选择 `@deepseek-ai/dsh@0.1.2-rc.1`；不要使用仍指向旧版本的 npm `latest` 标签。
 
 ## 安装
 
@@ -35,5 +37,11 @@ dsh --profile web
 ```sh
 dsh plugin --profile web remove novelcraft-dsh
 ```
+
+## 源码验收
+
+`npm run pack:plugin` 构建并检查 tarball。`npm run smoke:plugin` 接收 `DSH_BIN`、
+`PLUGIN_TARBALL` 和全新或空的 `DSH_HOME`，经官方 CLI 安装并验证 Web/client/RPC；CI 使用
+独立的 DSH rc.1 runtime，不访问真实 Vault 或模型密钥。
 
 源码、安全边界和完整文档：<https://github.com/FengHuoLinShan/novelAssist-dsh>

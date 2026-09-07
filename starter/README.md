@@ -5,7 +5,7 @@ M4 重构(ADR-0016)的一键安装入口: **装完 DSH, 装好 profile, 开始�
 ## 前置
 
 - Node ≥ 24.11
-- DSH `@deepseek-ai/dsh` **0.1.2-alpha.4**(首发实际安装/启动验证版本)
+- DSH `@deepseek-ai/dsh` **0.1.2-rc.1**(npm bundle 安装/启动验证版本)
 - 作者在 DSH 侧保存模型连接(编排脑默认 deepseek-v4-flash + high, D13)
 
 ## 安装并启动
@@ -41,9 +41,9 @@ dsh --profile web
 
 | 依赖面 | 版本 | 备注 |
 |---|---|---|
-| DSH | 0.1.2-alpha.4 | npm bundle 安装、profile 合成、Web boot 与客户端清单已验证 |
-| seam: llm / approval / storage-domain / jobs / credentials / tools | 0.1.2-alpha.4 运行时 | 无 peer 重复安装，宿主能力由 DSH 安装树提供 |
-| seam: client-modules / schedule / Skill | 0.1.2-alpha.4 运行时 | client 进入 `__DSH_BOOT__`；9 册 Skill 仍由源码 preset 面管理 |
+| DSH | 0.1.2-rc.1 | npm bundle 安装、profile 合成、Web boot 与客户端清单已验证 |
+| seam: llm / approval / storage-domain / jobs / credentials / tools | 0.1.2-rc.1 运行时 | 无 peer 重复安装，宿主能力由 DSH 安装树提供 |
+| seam: client-modules / schedule / Skill | 0.1.2-rc.1 运行时 | client 进入 `__DSH_BOOT__`；9 册 Skill 仍由源码 preset 面管理 |
 | Node | ≥ 24.11 | |
 | git | 任意现代版本 | 每书一个 git 仓库(版本真相) |
 

@@ -11,7 +11,7 @@
   `@novelcraft/assistant` 确定性函数(读 `.assistant/signals/*.json`, 文件真相)。
 - **四动词**: `inbox/act` 只执行 `assistant.act`(记录决定); **adopt 类资产写入
   不在此通道** —— 采纳决定后由助手 agent 经 DSH approval 执行(§9 fail-closed)。
-- DSH `0.1.2-alpha.4` 在 handler 前执行 Host/Origin 围栏和浏览器会话认证;
+- DSH `0.1.2-rc.1` 在 handler 前执行 Host/Origin 围栏和浏览器会话认证;
   官方默认部署是 loopback，已无 method-level authority 参数。载荷校验仍在处理器内。
 - **文件输入**: `intake/stage-text` 只接浏览器选定的 UTF-8 bytes, 产生当前
   session 绑定收据与导入意图; 零章节资产写入。资产入库由 agent 工具消费收据完成。
@@ -45,23 +45,24 @@
 四态判定: 待确认(open ≥ threshold, N3=5)> 忙碌(novelcraft-radar job 运行中)>
 微光(0 < open < threshold)> 静默。键盘流: j/k 选择、1/2/3/4 四动词、u 刷新、Esc 关闭。
 
-## 构建(DSH `0.1.2-alpha.4`)
+## 构建(DSH `0.1.2-rc.1`)
 
 - 宿主半身: `npm run build:host`(tsc → dist/index.js, 供 Loader 装载);
 - 浏览器半身: `npm run build:client`(tsdown + vendor 的 DSH 共享预设
-  `build/tsdown.client.ts` → dist/client.js, closure-factory + 纯度门禁;
-  externals = platform 模块表: react / ui-primitives / ui-slots / …);
+  `build-tools/tsdown.client.ts` → dist/client.js, closure-factory + 纯度门禁;
+  externals = platform 模块表 + `dsh.client.external` 显式请求);
+- vendor 来源为 deepseek-harness `76fda729799fe9b3848dbe2c211d4b231032b81e`，保留
+  动态 bundle、CSS Modules/普通 CSS/`?inline`、`DSH_CLIENT_*` 静态替换；不复制上游
+  monorepo 的多 build-face/static-linked/根构建记录代码。
 - 装载: profile patch 加一行 `{ name: "@novelcraft/dsh-client" }`; client-modules
   扫描要求 package.json 带 `dsh.client` 声明 **且 exports 暴露 `./package.json`**
   (否则 `require.resolve('<pkg>/package.json')` 失败 → 不进 boot 清单, 实现期实测发现)。
 
 ## 验证
 
-- 宿主半身: `npm test`(8 条 RPC 处理器行为契约: 未绑定缺省 / 阈值触发 /
-  workspacePath 回退 / 四动词 / 微工作流路由 / 作者语言错误)。
-- E2E(已验): `--profile web --patch` 注入两行(dsh + client)→ dump-config 合成 →
-  全树 boot 零错误 → 真实 web 服务 boot 清单含 `@novelcraft/dsh-client`(inject 边齐全)
-  → `/plugins/@novelcraft/dsh-client/client.js` 200 → headless Chrome 渲染无控制台错误。
+- `npm test` 覆盖 RPC、会话隔离、作者交接、轮询和 vendor 构建行为。
+- 根目录 `npm run smoke:plugin` 在全新 `DSH_HOME` 中安装 tarball，验证 profile 合成、
+  Web boot、组合 client factory 与认证 `/novelcraft/watch/state` RPC；不调用真实 LLM。
 
 ## 阶段状态
 
@@ -81,5 +82,5 @@
 - 现状: 宠物四态经 useWatch 事件触发短轮询 + 退避(挂载/聚焦/可见性恢复立即刷新, 快照
   无变化退避延长、有变化回到短间隔, 保留非零基线轮询捕获雷达产出); 收件箱在挂载/手动/
   u 键/动作后即时刷新(不轮询)。四动词后 inbox/act 已即时刷新收件箱。
-- DSH `0.1.2-alpha.4` 的 typed remote allowlist 不包含自定义 `client/push`。公开包因此只使用本包已有的
+- DSH `0.1.2-rc.1` 的 typed remote allowlist 不包含自定义 `client/push`。公开包因此只使用本包已有的
   动作后即时刷新、页面聚焦/可见性刷新和非零退避轮询；不打补丁、不写 `node_modules`。

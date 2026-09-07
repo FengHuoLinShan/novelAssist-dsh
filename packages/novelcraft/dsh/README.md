@@ -1,6 +1,6 @@
 # @novelcraft/dsh — 挂载阶段适配包
 
-把 13 个纯 TS 核心包接入 DSH `0.1.2-alpha.4` 插件 seam 的 **Cordis 服务插件**(ADR-0017 §2)。
+把 13 个纯 TS 核心包接入 DSH `0.1.2-rc.1` 插件 seam 的 **Cordis 服务插件**(ADR-0017 §2)。
 核心包保持零 DSH 运行时依赖不变; 本包是唯一的 DSH 接触面。
 
 ## 组装(profile patch 形式)
@@ -48,7 +48,7 @@ plugins:
 
 ## 依赖策略
 
-- `@deepseek-ai/*` 全部锁定 **0.1.2-alpha.4 peerDependencies**(cordis ^4.0.2), 由宿主
+- `@deepseek-ai/*` 全部锁定 **0.1.2-rc.1 peerDependencies**(cordis ^4.0.2), 由宿主
   profile 提供单实例(避免多份 cordis 破坏 Context 增强); 本包 devDependencies
   自备同版本用于测试。
 - `@novelcraft/*` 为 workspace 依赖; zod ^4(schemastery 由 dsh 包带入)。
