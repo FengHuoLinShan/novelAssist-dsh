@@ -52,6 +52,7 @@ npm run typecheck   # 零错误
 npm run check:distribution
 npm run check:audit-gate && npm run audit:default
 npm run pack:plugin # 构建并检查可安装 tarball
+npm run bench:continuity # 结构维护连续性基准(错误注入→检测器捕获率矩阵, 仅报告不设门禁; --json 可选)
 ```
 
 仅在需要本地 BGE 嵌入时显式安装 optional profile，并单独验证：

@@ -1,0 +1,453 @@
+{
+  "version": "1.0.0",
+  "name": "novelcraft-continuity-benchmark",
+  "description": "结构维护连续性基准的错误注入目录(N54, M13-B)。单一事实源: scripts/continuity-benchmark.mjs 消费, vitest 不消费(避免 dist 解析与跨包依赖门禁问题)。class 三分类诚实呈现: covered=现状检测器已捕获; gap=批 2 目标(确定性可补, 现状预期 MISS); llm-only=本质需 LLM 语义判断, 只标注不断言。门禁纪律(N54 ②): 捕获率仅报告, MISS 不红。 gap 条目的 id_prefix 是批 2 检测器的信号 id 契约(入册时一次定死, 批 2 实现后即转 PASS, 脚本零改动)。",
+  "base_seed": {
+    "chapters": [
+      1,
+      2,
+      3
+    ],
+    "clean_scene": "s000",
+    "notes": "基础种子必须零信号(五面雷达 + 健康六键全静默)——保证 PASS/MISS 语义 crisp。脚本拥有 seedBase 实现, 本目录只声明其形状。"
+  },
+  "entries": [
+    {
+      "id": "ingest-failed-import",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "imports/import-log.jsonl": "{\"id\":\"imp-1\",\"file_name\":\"旧稿.txt\",\"status\":\"failed\",\"error_message\":\"编码错误\",\"total_chapters\":12}\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "ingest",
+        "kind": "failed",
+        "id_prefix": "ingest-failed-"
+      }
+    },
+    {
+      "id": "ingest-uncovered-chapter",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "chapters/004.md": "---\nchapter_index: 4\nstatus: published\ncontent_hash: \"hash-4\"\ntitle: 第四章\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "ingest",
+        "kind": "uncovered_chapter",
+        "id_prefix": "ingest-uncovered-ch"
+      }
+    },
+    {
+      "id": "dedup-l0-same-name",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "world/objects/obj-a.md": "---\nid: obj-a\nname: 苏婉\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章]\n---\n",
+          "world/objects/obj-b.md": "---\nid: obj-b\nname: 苏婉\nkind: character\nstatus: canonical\naliases: [阿婉]\nevidence: [第2章]\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "dedup",
+        "kind": "l0",
+        "id_prefix": "dedup-l0-"
+      }
+    },
+    {
+      "id": "dedup-alias-candidate",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "world/objects/su-wan.md": "---\nid: su-wan\nname: 苏婉\nkind: character\nstatus: canonical\naliases: [红衣女子]\nevidence: [第1章, 第2章]\n---\n",
+          "world/pending/p-red.md": "---\nid: p-red\nname: 红衣女子\nkind: character\nstatus: candidate\naliases: []\nevidence: []\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "dedup",
+        "kind": "alias",
+        "id_prefix": "dedup-alias-"
+      }
+    },
+    {
+      "id": "suggest-thin-object",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "world/objects/thin-bell.md": "---\nid: thin-bell\nname: 旧钟楼\nkind: location\nstatus: canonical\naliases: []\nevidence: []\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "suggest",
+        "kind": "thin_object",
+        "id_prefix": "suggest-thin-"
+      }
+    },
+    {
+      "id": "risk-foreshadow-overdue",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "structure/foreshadowing/watch.md": "---\nid: watch\nstatus: canonical\nname: 怀表\nplanned_seed_chapter: 1\nplanned_payoff_chapter: 2\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "foreshadow_overdue",
+        "id_prefix": "risk-foreshadow-overdue-"
+      }
+    },
+    {
+      "id": "risk-chapter-gap",
+      "class": "covered",
+      "inject": {
+        "delete": [
+          "chapters/002.md"
+        ]
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "chapter_gap",
+        "id_prefix": "risk-chapter-gap-"
+      }
+    },
+    {
+      "id": "health-scene-unreviewed",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "scenes/s-unrev.md": "---\nid: s-unrev\nstatus: draft\ntitle: 夜谈\nsource: deep_import\nscene_index: 1\nchapter_ids: [1]\ngoal: 交换情报\ncore_conflict: 互相试探\nmust_happen: 约定暗号\nmust_not_happen: 亮出兵刃\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "scene_unreviewed",
+        "id_prefix": "health-scene_unreviewed-scene-"
+      }
+    },
+    {
+      "id": "health-scene-unassigned-chapter",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "scenes/s-unas.md": "---\nid: s-unas\nstatus: draft\ntitle: 闪回\nsource: deep_import\nscene_index: 2\nreviewed_at: \"2026-09-08T00:00:00Z\"\ngoal: 揭示往事\ncore_conflict: 记忆与现实的错位\nmust_happen: 旧照片出现\nmust_not_happen: 直接说出真相\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "scene_unassigned_chapter",
+        "id_prefix": "health-scene_unassigned_chapter-scene-"
+      }
+    },
+    {
+      "id": "health-scene-missing-setup",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "scenes/s-setup.md": "---\nid: s-setup\nstatus: draft\ntitle: 追逐\nsource: deep_import\nscene_index: 3\nchapter_ids: [2]\nreviewed_at: \"2026-09-08T00:00:00Z\"\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "scene_missing_setup",
+        "id_prefix": "health-scene_missing_setup-scene-"
+      }
+    },
+    {
+      "id": "health-scene-needs-organize",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "scenes/s-org.md": "---\nid: s-org\nstatus: draft\ntitle: 双线\nsource: deep_import\nscene_index: 4\nchapter_ids: [1, 1]\nreviewed_at: \"2026-09-08T00:00:00Z\"\ngoal: 并行推进\ncore_conflict: 时间压力\nmust_happen: 两条线交汇\nmust_not_happen: 提前碰面\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "scene_needs_organize",
+        "id_prefix": "health-scene_needs_organize-scene-"
+      }
+    },
+    {
+      "id": "health-structure-needs-review",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "structure/arcs/act1.md": "---\nid: act1\nstatus: canonical\ntitle: 第一幕\nneeds_review: true\nrelated_thread_ids: []\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "structure_needs_review",
+        "id_prefix": "health-structure_needs_review-arc-"
+      }
+    },
+    {
+      "id": "health-structure-unassigned",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "structure/threads/t-main.md": "---\nid: t-main\nstatus: canonical\ntitle: 主线\nname: 主线\nthread_type: main\nstart_chapter: 1\nend_chapter: 3\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "structure_unassigned",
+        "id_prefix": "health-structure_unassigned-thread-"
+      }
+    },
+    {
+      "id": "relations-target-dangling",
+      "class": "covered",
+      "inject": {
+        "files": {
+          "structure/foreshadowing/f-rel.md": "---\nid: f-rel\nstatus: canonical\nname: 信物\nplanned_seed_chapter: 1\nplanned_payoff_chapter: 3\nrelations:\n  - target: t-nope\n    type: serves_thread\n    status: canonical\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "validateRelations",
+        "face": "relations",
+        "kind": "RELATION_TARGET_NOT_FOUND",
+        "issue_code": "RELATION_TARGET_NOT_FOUND"
+      }
+    },
+    {
+      "id": "pov-missing",
+      "class": "covered",
+      "inject": {
+        "pov_target_chapter": 3
+      },
+      "expected": {
+        "detector": "resolvePovKnowledgeContext",
+        "face": "pov",
+        "kind": "pov_missing",
+        "warning_code": "pov_missing"
+      }
+    },
+    {
+      "id": "pov-ambiguous",
+      "class": "covered",
+      "inject": {
+        "pov_target_chapter": 3,
+        "files": {
+          "scenes/s-pov-a.md": "---\nid: s-pov-a\nstatus: draft\ntitle: 钟楼望风\nsource: deep_import\nscene_index: 5\nchapter_ids: [3]\nreviewed_at: \"2026-09-08T00:00:00Z\"\npov_character_id: su-wan\ngoal: 望风\ncore_conflict: 时间压力\nmust_happen: 暗号响起\nmust_not_happen: 被守卫发现\n---\n",
+          "scenes/s-pov-b.md": "---\nid: s-pov-b\nstatus: draft\ntitle: 巷尾反跟踪\nsource: deep_import\nscene_index: 6\nchapter_ids: [3]\nreviewed_at: \"2026-09-08T00:00:00Z\"\npov_character_id: lin-father\ngoal: 反跟踪\ncore_conflict: 身份暴露风险\nmust_happen: 甩掉尾巴\nmust_not_happen: 打草惊蛇\n---\n",
+          "world/objects/su-wan.md": "---\nid: su-wan\nname: 苏婉\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章, 第2章]\n---\n",
+          "world/objects/lin-father.md": "---\nid: lin-father\nname: 林父\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章, 第2章]\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "resolvePovKnowledgeContext",
+        "face": "pov",
+        "kind": "pov_ambiguous",
+        "warning_code": "pov_ambiguous"
+      }
+    },
+    {
+      "id": "knowledge-future-excluded",
+      "class": "covered",
+      "inject": {
+        "pov_target_chapter": 3,
+        "files": {
+          "scenes/s-pov-c.md": "---\nid: s-pov-c\nstatus: draft\ntitle: 密道口\nsource: deep_import\nscene_index: 7\nchapter_ids: [3]\nreviewed_at: \"2026-09-08T00:00:00Z\"\npov_character_id: su-wan\ngoal: 找到密道\ncore_conflict: 守卫巡逻\nmust_happen: 数清巡逻节拍\nmust_not_happen: 进入密道\n---\n",
+          "world/objects/su-wan.md": "---\nid: su-wan\nname: 苏婉\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章, 第2章]\n---\n",
+          "memory/events.jsonl": "{\"id\":\"ev-5-1\",\"chapter_index\":5,\"sequence\":1,\"event_type\":\"knowledge_changed\",\"snapshot_after\":{\"character_id\":\"su-wan\",\"fact_id\":\"f1\",\"state\":\"known\",\"text\":\"苏婉知道密道位置\"},\"source\":\"manual_edit\",\"created_at\":\"2026-09-08T00:00:00Z\"}\n"
+        }
+      },
+      "expected": {
+        "detector": "resolvePovKnowledgeContext",
+        "face": "knowledge",
+        "kind": "knowledge_future_excluded",
+        "warning_code": "knowledge_future_excluded"
+      }
+    },
+    {
+      "id": "knowledge-event-invalid",
+      "class": "covered",
+      "inject": {
+        "pov_target_chapter": 3,
+        "files": {
+          "scenes/s-pov-c.md": "---\nid: s-pov-c\nstatus: draft\ntitle: 密道口\nsource: deep_import\nscene_index: 7\nchapter_ids: [3]\nreviewed_at: \"2026-09-08T00:00:00Z\"\npov_character_id: su-wan\ngoal: 找到密道\ncore_conflict: 守卫巡逻\nmust_happen: 数清巡逻节拍\nmust_not_happen: 进入密道\n---\n",
+          "world/objects/su-wan.md": "---\nid: su-wan\nname: 苏婉\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章, 第2章]\n---\n",
+          "memory/events.jsonl": "{\"id\":\"ev-1-1\",\"chapter_index\":1,\"sequence\":1,\"event_type\":\"knowledge_changed\",\"snapshot_after\":{\"fact_id\":\"f2\"},\"source\":\"manual_edit\",\"created_at\":\"2026-09-08T00:00:00Z\"}\n"
+        }
+      },
+      "expected": {
+        "detector": "resolvePovKnowledgeContext",
+        "face": "knowledge",
+        "kind": "knowledge_event_invalid",
+        "warning_code": "knowledge_event_invalid"
+      }
+    },
+    {
+      "id": "reveal-before-plant",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/foreshadowing/f-seed.md": "---\nid: f-seed\nstatus: canonical\nname: 信物甲\nplanned_seed_chapter: 3\nplanned_payoff_chapter: 3\n---\n",
+          "structure/reveal/r-early.md": "---\nid: r-early\nstatus: canonical\ntitle: 早期揭示\ntarget_type: foreshadowing\ntarget_id: f-seed\nsecret_summary: 信物甲的来历\nreveal_stages:\n  - stage_index: 0\n    chapter_index: 1\n    reveal_content: 第一章就点破来历\nrelated_thread_ids: []\nrelations:\n  - target: f-seed\n    type: reveals_foreshadowing\n    status: canonical\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "reveal_before_plant",
+        "id_prefix": "risk-reveal-before-plant-"
+      }
+    },
+    {
+      "id": "thread-range-invalid",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/threads/t-rev.md": "---\nid: t-rev\nstatus: canonical\ntitle: 倒叙线\nname: 倒叙线\nthread_type: subplot\nstart_chapter: 5\nend_chapter: 2\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "thread_range_invalid",
+        "id_prefix": "risk-thread-range-invalid-"
+      }
+    },
+    {
+      "id": "arc-thread-range-mismatch",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/arcs/act-narrow.md": "---\nid: act-narrow\nstatus: canonical\ntitle: 窄幕\nchapter_range: [1, 2]\nrelated_thread_ids: [t-long]\n---\n",
+          "structure/threads/t-long.md": "---\nid: t-long\nstatus: canonical\ntitle: 长线\nname: 长线\nthread_type: main\nstart_chapter: 1\nend_chapter: 3\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "arc_thread_range_mismatch",
+        "id_prefix": "risk-arc-thread-range-mismatch-"
+      }
+    },
+    {
+      "id": "thread-orphan",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/threads/t-orphan.md": "---\nid: t-orphan\nstatus: canonical\ntitle: 孤儿线\nname: 孤儿线\nthread_type: subplot\nstart_chapter: 1\nend_chapter: 3\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "thread_orphan",
+        "id_prefix": "risk-thread-orphan-"
+      }
+    },
+    {
+      "id": "reveal-target-dangling",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/reveal/r-ghost.md": "---\nid: r-ghost\nstatus: canonical\ntitle: 幽灵揭示\ntarget_type: world_entity\ntarget_id: no-such-obj\nsecret_summary: 不存在对象的秘密\nrelated_thread_ids: []\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "reveal_target_dangling",
+        "id_prefix": "risk-reveal-target-dangling-"
+      }
+    },
+    {
+      "id": "payoff-scene-dangling",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/foreshadowing/f-pay.md": "---\nid: f-pay\nstatus: canonical\nname: 旧约\nplanned_seed_chapter: 1\nplanned_payoff_chapter: 3\nplanned_payoff_scene: s-nope\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "payoff_scene_dangling",
+        "id_prefix": "risk-payoff-scene-dangling-"
+      }
+    },
+    {
+      "id": "legacy-edge-dangling",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "structure/threads/t-legacy.md": "---\nid: t-legacy\nstatus: canonical\ntitle: 旧字段线\nname: 旧字段线\nthread_type: subplot\nrelated_character_ids: [no-such-char]\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "risk",
+        "kind": "legacy_edge_dangling",
+        "id_prefix": "risk-legacy-edge-dangling-"
+      }
+    },
+    {
+      "id": "scene-index-conflict",
+      "class": "gap",
+      "inject": {
+        "files": {
+          "scenes/s-dup-a.md": "---\nid: s-dup-a\nstatus: draft\ntitle: 巷战甲\nsource: deep_import\nscene_index: 1\nchapter_ids: [2]\nreviewed_at: \"2026-09-08T00:00:00Z\"\ngoal: 拖住追兵\ncore_conflict: 寡不敌众\nmust_happen: 翻墙脱身\nmust_not_happen: 被围死\n---\n",
+          "scenes/s-dup-b.md": "---\nid: s-dup-b\nstatus: draft\ntitle: 巷战乙\nsource: deep_import\nscene_index: 1\nchapter_ids: [2]\nreviewed_at: \"2026-09-08T00:00:00Z\"\ngoal: 接应同伴\ncore_conflict: 视线受阻\nmust_happen: 递出绳钩\nmust_not_happen: 暴露位置\n---\n"
+        }
+      },
+      "expected": {
+        "detector": "runRadarSweep",
+        "face": "writing",
+        "kind": "scene_index_conflict",
+        "id_prefix": "health-scene_index_conflict-"
+      }
+    },
+    {
+      "id": "pov-violation-in-prose",
+      "class": "llm-only",
+      "inject": {
+        "pov_target_chapter": 2,
+        "files": {
+          "scenes/s-pov-d.md": "---\nid: s-pov-d\nstatus: draft\ntitle: 密室\nsource: deep_import\nscene_index: 8\nchapter_ids: [2]\nreviewed_at: \"2026-09-08T00:00:00Z\"\npov_character_id: su-wan\ngoal: 搜查书房\ncore_conflict: 时间有限\nmust_happen: 找到账本\nmust_not_happen: 留下痕迹\n---\n",
+          "world/objects/su-wan.md": "---\nid: su-wan\nname: 苏婉\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章, 第2章]\n---\n",
+          "chapters/002.md": "---\nchapter_index: 2\nstatus: published\ncontent_hash: \"hash-2\"\ntitle: 第二章\n---\n\n苏婉一眼认出, 那是林父藏在密室里的信——她从未被告知密室的存在, 账本也从未出现在她的任何经历里。\n"
+        }
+      },
+      "expected": {
+        "detector": "none",
+        "face": "llm",
+        "kind": "pov_violation_in_prose"
+      }
+    },
+    {
+      "id": "knowledge-leak-in-prose",
+      "class": "llm-only",
+      "inject": {
+        "pov_target_chapter": 3,
+        "files": {
+          "scenes/s-pov-e.md": "---\nid: s-pov-e\nstatus: draft\ntitle: 夜航\nsource: deep_import\nscene_index: 9\nchapter_ids: [3]\nreviewed_at: \"2026-09-08T00:00:00Z\"\npov_character_id: su-wan\ngoal: 摆渡过河\ncore_conflict: 河面巡查\nmust_happen: 对上暗号\nmust_not_happen: 熄灯\n---\n",
+          "world/objects/su-wan.md": "---\nid: su-wan\nname: 苏婉\nkind: character\nstatus: canonical\naliases: []\nevidence: [第1章, 第2章]\n---\n",
+          "chapters/003.md": "---\nchapter_index: 3\nstatus: published\ncontent_hash: \"hash-3\"\ntitle: 第三章\n---\n\n（作者注: 本章怀表失而复得是第三幕回收的铺垫, 苏婉此时并不知道自己已被林父识破——正文却不慎以她的口吻写出了“林父已经识破我”。）\n"
+        }
+      },
+      "expected": {
+        "detector": "none",
+        "face": "llm",
+        "kind": "knowledge_leak_in_prose"
+      }
+    }
+  ]
+}
