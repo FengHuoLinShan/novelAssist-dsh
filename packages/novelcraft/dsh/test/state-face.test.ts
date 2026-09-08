@@ -119,18 +119,35 @@ describe('N53 常驻创作状态面(system-prompt seam)', () => {
     env.cleanup();
   });
 
-  it('指纹漂移自愈: 新 commit 后本次返回旧值, 重算后下轮装配为新值', async () => {
+  it('指纹漂移自愈: 新 commit 后本次返回旧值, assemble 触发的重算收敛后出新值(覆盖 drift 分支)', async () => {
     const env = await setup();
     seedChapters(env.rootA, 1);
     await env.service.residentState!.refreshNow(env.rootA);
     expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('共 1 章');
 
-    seedChapters(env.rootA, 2); // 追加第 2 章 + 新 commit
+    seedChapters(env.rootA, 2); // 追加第 2 章 + 新 commit → 下一次 assemble 检出指纹漂移
     const stale = renderContextSnapshot(await assemble(env.h, agentBound));
     expect(stale).toContain('共 1 章'); // 漂移当轮仍返回旧值(同步 provider 不阻塞)
+    // 不显式 refresh: 依赖 assemble 的 scheduleRefresh('drift') 在 setImmediate 后台
+    // 完成(二轮评审 P2: 之前显式 refreshNow 驱动, 漂移检测分支本身零覆盖)。
+    let converged = false;
+    for (let i = 0; i < 40 && !converged; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      converged = renderContextSnapshot(await assemble(env.h, agentBound)).includes('共 2 章');
+    }
+    expect(converged).toBe(true);
+    env.cleanup();
+  });
 
-    await env.service.residentState!.refreshNow(env.rootA, 'drift');
-    expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('共 2 章');
+  it('stopAll 后 in-flight 重算不写回缓存(二轮评审 P2): 冷启动调度→停用→settle 后仍空贡献', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 1);
+    // 调度冷启动重算但不 await: task 已创建、停在 setImmediate 让出点。
+    env.service.residentState!.scheduleRefresh(env.rootA, 'cold');
+    env.service.residentState!.asVaultRuntime().stopAll?.(); // 停用先于 compute 完成
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(ourText(await assemble(env.h, agentBound))).toBe(''); // 缓存未被复活
     env.cleanup();
   });
 
@@ -171,7 +188,8 @@ describe('N53 常驻创作状态面(system-prompt seam)', () => {
     await service.vaults.bindSession('sess-budget', binding);
     seedChapters(binding.root, 8);
     // 5 条逾期伏笔(长名)使 full 渲染超过 200 tokens → 降级阶梯必然触发
-    // (maxChapter=8 > 计划回收 1..5 且无 reveals 边, 判定与 radar-risk 同规则)。
+    // (maxChapter=8 > 计划回收 1..5 且无 reveals 边; 判定 = radar-risk 规则
+    // + archived 排除, 与 core resident-state 口径一致)。
     const foreDir = path.join(binding.root, 'structure', 'foreshadowing');
     mkdirSync(foreDir, { recursive: true });
     const longName = '被遗忘的'.repeat(12); // 60 字/条

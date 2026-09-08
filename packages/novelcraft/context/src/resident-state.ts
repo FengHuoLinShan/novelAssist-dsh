@@ -125,9 +125,19 @@ function fullRender(s: ResidentStateSnapshot, overdueDetail: boolean, statusDeta
 }
 
 /**
+ * 中和宿主 system-prompt 的严格 `{{}}` 变量插值(N53 二轮评审 P1): 快照正文嵌入
+ * vault 自由文本(书名/章标题/伏笔名/状态键), 裸 `{{` 会让 dsh-system-prompt 的
+ * interpolate 遇未知变量直接 throw, 打断该会话每次请求的快照渲染。零宽间隔后
+ * 仍可读且不可再匹配变量语法。
+ */
+export function sanitizePromptVars(text: string): string {
+  return text.replaceAll("{{", "{\u200b{");
+}
+
+/**
  * 渲染为紧凑中文文本(常驻 user-role snapshot 的正文)。
  * 超预算降级阶梯(确定性): ①去掉伏笔明细只留总数 → ②去掉状态计数行 → ③硬截断加省略标记;
- * 书名与章游标永不降级。
+ * 书名与章游标永不降级。所有返回文本经 sanitizePromptVars(预算口径同样按中和后文本)。
  */
 export function renderResidentState(
   snapshot: ResidentStateSnapshot,
@@ -136,14 +146,15 @@ export function renderResidentState(
   const maxTokens = opts.maxTokens ?? RESIDENT_STATE_BUDGET_DEFAULT;
 
   const levels = [
-    fullRender(snapshot, true, true),
-    fullRender(snapshot, false, true),
-    fullRender(snapshot, false, false),
+    sanitizePromptVars(fullRender(snapshot, true, true)),
+    sanitizePromptVars(fullRender(snapshot, false, true)),
+    sanitizePromptVars(fullRender(snapshot, false, false)),
   ];
   for (const text of levels) {
     if (estimateContextTokens(text) <= maxTokens) return text;
   }
-  // 硬截断(保留头部, 标注省略): 比例迭代收敛到预算内。
+  // 硬截断(保留头部, 标注省略): 比例迭代收敛到预算内。base 已中和, 切片与静态
+  // 后缀拼接不会再产生新的 `{{`。
   const base = levels[levels.length - 1];
   let ratio = Math.min(0.9, maxTokens / Math.max(1, estimateContextTokens(base)));
   let text = base;

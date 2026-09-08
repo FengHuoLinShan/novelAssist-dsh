@@ -54,7 +54,8 @@ export function composeActiveVaultRuntimes(parts: readonly ActiveVaultRuntime[])
   };
 }
 
-/** 采集精简 v1 读面(全只读)。逾期伏笔判定与 radar-risk 同规则:
+/** 采集精简 v1 读面(全只读)。逾期伏笔判定 = radar-risk 规则 + archived 排除
+ * (N53 二轮评审 P2: 快照额外排除已归档伏笔, 故总数可与收件箱 risk 信号计数不一致):
  * planned_payoff_chapter < 当前最大章 且无 reveals_foreshadowing 边指向。 */
 function gatherResidentInput(root: string): ResidentStateInput {
   const map = store.storyMap(root);
@@ -206,7 +207,9 @@ export class NovelcraftResidentStateFace {
         // 后的原同步段执行, 去重窗口保持原子。
         await new Promise<void>((resolve) => setImmediate(resolve));
         const entry = await this.compute(root);
-        if (entry) {
+        // N53 二轮评审 P2: stopAll 后不再写回(已过 setImmediate 的 in-flight compute
+        // 不应把缓存复活; stopped 实例无消费者, 纯卫生守卫)。
+        if (entry && !this.stopped) {
           this.cache.set(root, entry);
           this.ctx.logger?.info?.(
             `[novelcraft] resident-state ${trigger} hash=${entry.hash} tokens=${entry.tokens}`);

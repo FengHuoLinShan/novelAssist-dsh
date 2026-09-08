@@ -119,4 +119,29 @@ describe("renderResidentState(确定性 + 预算降级)", () => {
     expect(r).not.toContain("逾期伏笔");
     expect(r).toContain("待处理信号: 0");
   });
+  it("vault 自由文本含 {{变量}} 时统一中和: 渲染无裸 {{, 硬截断路径同样安全(N53 二轮评审 P1)", () => {
+    const hostile = buildResidentState({
+      book: "草{{draft}}稿",
+      chapters: [{ index: 1, title: "{{spoiler}}" }, { index: 2, title: "正常" }],
+      scenes: [{ slug: "s1", status: "{{evil}}" }],
+      threads: [],
+      arcs: [],
+      foreshadowing: [
+        { slug: "f1", name: "{{leak}}", status: "canonical", plannedPayoffChapter: 1, revealed: false },
+      ],
+      openSignals: [{ severity: "{{risk}}" }],
+    });
+    for (const maxTokens of [600, 25]) {
+      const r = renderResidentState(hostile, { maxTokens });
+      // N53 二轮评审 P1: 裸 {{ 会让宿主 dsh-system-prompt interpolate 抛 unknown
+      // prompt variable, 打断该会话每次请求的快照渲染——任何预算档都必须中和。
+      expect(r).not.toContain("{{");
+      expect(r).toContain("草"); // 书名头部永不降级(硬截断保留头部)
+      if (maxTokens === 600) {
+        expect(r).toContain("稿");
+        expect(r).toContain("逾期伏笔: 1 条");
+        expect(r).toContain("{\u200b{leak}"); // 明细中的伏笔名也被中和
+      }
+    }
+  });
 });
