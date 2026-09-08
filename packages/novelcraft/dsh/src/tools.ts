@@ -11,7 +11,8 @@ import { requireRoot } from './tools/shared.js';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { svc } from './ctx.js';
-import { importTraceFile } from './deep-import.js';
+import { assertImportRange, importTraceFile } from './deep-import.js';
+import { startDeepImportJob } from './jobs/deep-import-job.js';
 import type { NovelCraftService } from './service.js';
 import { novelcraftToolFactory } from './tools/define.js';
 import { buildMapAtlasTools } from './tools/map-atlas.js';
@@ -502,14 +503,15 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
       },
     }),
 
-    // ---- 6. 深度导入(范围授权 + adopt/2b 独立审批门; trace 落 .assistant/import-trace.jsonl) ----
+    // ---- 6. 深度导入(N55/M13-C: 后台 job 托管, 句柄即返; 范围授权 + adopt/2b 独立审批门不变) ----
     tool({
       name: 'novelcraft_deep_import',
       description:
-        '深度导入: 执行前先请求范围授权(授权将调用 LLM 并产出候选; 拒绝则零副作用, fail-closed); ' +
-        '放行后按章节范围顺序跑六阶段(切分/补全/融合/Scene 采用/实体/别名关系/结构)。' +
+        '深度导入: 同步完成范围/参数校验后启动后台 job 并立即返回句柄(不再阻塞会话)。' +
+        'job 内先请求范围授权(授权将调用 LLM 并产出候选; 拒绝则零副作用, fail-closed), ' +
+        '放行后按章节范围顺序跑六阶段(切分/补全/融合/Scene 采用/实体/别名关系/结构); ' +
         'Scene 采用与 2b 别名/关系写入分别过独立审批(fail-closed); 全程 trace 事件落 .assistant/import-trace.jsonl。' +
-        '多章为长任务, 建议由编排层分批触发; 本工具同步执行并返回摘要。' +
+        '完成后助手会收到通知并汇报结果(含待审批项); 进度用 workflow_inspect 查看。' +
         '同范围已存在 completed run 时本工具会走续跑语义(全部批次已完成则零授权重收尾); 显式重放/重开请改用 workflow_inspect 与 workflow_start_new',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
@@ -521,37 +523,33 @@ export function buildWritingCoreTools(ctx: Context, service: NovelCraftService):
         additionalProperties: false,
         properties: {
           ok: { type: 'boolean', required: true },
-          workflow_id: { type: 'string', required: true },
-          adopted: { type: 'integer', required: true },
-          committed: { type: 'integer', required: true },
-          skipped: { type: 'integer', required: true },
-          conflicts: { type: 'integer', required: true },
-          rejected: { type: 'boolean', required: true },
+          job_id: { type: 'string', required: true },
+          mode: { type: 'string', required: true },
+          label: { type: 'string', required: true },
           trace_file: { type: 'string', required: true },
           message: { type: 'string', required: true },
         },
       },
-      timeoutMs: 3_600_000,
+      timeoutMs: 60_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.adoptGuarded.deepImport(run.agent, requireRoot(run), {
+        // 同步 fail-fast(N55): 非法范围(倒序/非整数/<1)直接抛错, 不启动 job(零审批零副作用)。
+        assertImportRange(args.start_chapter, args.end_chapter);
+        const root = requireRoot(run);
+        const handle = startDeepImportJob(ctx, run.agent, root, {
+          mode: 'deep_import',
           startChapter: args.start_chapter,
           endChapter: args.end_chapter,
-        }, run.signal);
-        if (result.rejected) {
-          throw new HarnessError('深度导入的 Scene 采用未获批准, 候选保持未采用', 'APPROVAL_REJECTED');
-        }
-        // §11 事件触发: 导入后去重/风险/剧情/写作四面对账 + RAG 词法索引同步。
-        await run.afterMutation({ radars: ['deepImport'], rag: true });
+        }, (signal) => run.service.capabilities.adoptGuarded.deepImport(run.agent, root, {
+          startChapter: args.start_chapter,
+          endChapter: args.end_chapter,
+        }, signal));
         return {
           ok: true,
-          workflow_id: result.workflow_id,
-          adopted: result.adopted,
-          committed: result.committed.length,
-          skipped: result.skipped.length,
-          conflicts: result.conflicts.length,
-          rejected: result.rejected,
-          trace_file: importTraceFile(requireRoot(run)),
-          message: '深度导入完成: 采用 ' + result.adopted + ' 个 Scene(' + result.skipped.length + ' skip / ' + result.conflicts.length + ' conflict)。',
+          job_id: handle.jobId,
+          mode: handle.mode,
+          label: handle.label,
+          trace_file: importTraceFile(root),
+          message: '深度导入已转后台 job(' + handle.jobId + '), 本工具立即返回。完成后会收到结果通知; 进度用 novelcraft_workflow_inspect 查看',
         };
       },
     }),

@@ -136,7 +136,8 @@ function scopeAuthorizationItems(startChapter: number, endChapter: number): stri
  * —— 避免 scopeAuthorizationItems/摘要对倒序或非整数生成误导性审批内容(R40 语义: 授权范围
  * 必须是合法章节区间); 与 planImport 的「章节范围非法」校验同一口径, 但前置到审批之前。
  */
-function assertImportRange(startChapter: number, endChapter: number): void {
+/** 范围预校验(纯函数, 工具层 job 启动前同步 fail-fast 用; N55/M13-C 加法导出)。 */
+export function assertImportRange(startChapter: number, endChapter: number): void {
   if (
     !Number.isInteger(startChapter) ||
     !Number.isInteger(endChapter) ||

@@ -90,7 +90,7 @@ describe("collectContinuityRadarHits(七项确定性检测器, N54)", () => {
       reveal_stages: [{ stage_index: 0, chapter_index: 3 }],
       relations: [{ target: "f1", type: "reveals_foreshadowing", status: "canonical" }],
     });
-    expect(collectContinuityRadarHits(clean).filter((h) => h.id.startsWith("risk-reveal-before-plant-"))).toHaveLength(0);
+    expect(collectContinuityRadarHits(clean).filter((h) => (h.id ?? "").startsWith("risk-reveal-before-plant-"))).toHaveLength(0);
   });
 
   it("thread_range_invalid: 倒置/越界/<1 → risk; 合法范围零命中", () => {
@@ -177,7 +177,7 @@ describe("collectContinuityRadarHits(七项确定性检测器, N54)", () => {
     expect(ids.some((id) => id.startsWith("risk-legacy-edge-dangling-"))).toBe(true);
     expect(ids.some((id) => id.startsWith("risk-dangling-"))).toBe(true); // radar-risk 既有面负责显式边
     // 同一条显式悬空边不产生 legacy 信号: legacy 命中只来自 related_*_ids 投影。
-    const legacyHits = collectContinuityRadarHits(root).filter((h) => h.id.startsWith("risk-legacy-edge-dangling-"));
+    const legacyHits = collectContinuityRadarHits(root).filter((h) => (h.id ?? "").startsWith("risk-legacy-edge-dangling-"));
     expect(legacyHits).toHaveLength(1); // 只有 t-legacy 的 references_character
     expect(r.created).toBeGreaterThanOrEqual(1);
   });

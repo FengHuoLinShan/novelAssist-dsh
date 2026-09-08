@@ -23,7 +23,7 @@ plugins:
 | `ctx.llm` | `DshProvider`(llm-step `Provider` 实现) | system→system 槽; 文本增量拼装; usage 透传; error/aborted 终止映射可分类错误(retryable); 无 llm 服务→明确报错 |
 | `ctx.approval` | `ApprovalGate` | `request(agent, {action, summary, items})`; 仅 `allowed-once` 放行; 无 agent/服务缺失/异常 → `unavailable`(fail-closed) |
 | `ctx.storageDomain` | `NovelcraftCache` + `novelcraftDomain` | domain `novelcraft` v1: `sessions`(会话→vault 绑定)、`indexes`(派生索引缓存, zod 信封校验, 重开验证); 写失败不影响文件真相; pending 同步读面 |
-| `ctx.jobs` | `RadarScheduler` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval` |
+| `ctx.jobs` | `RadarScheduler` + `deep-import-job` | 每雷达一轮 = 一个 job(kind `novelcraft-radar`); work 遵守 AbortSignal; 取消→killed, 异常→failed; `startInterval` 需宿主 `ctx.setInterval`。N55/M13-C: deep_import 三入口托管为 kind `novelcraft-deep-import` 的后台 job(句柄即返, 每 vault 单席位防重入), 完成通知混合——completed/failed→`Agent.followup` 唤醒, killed→`Agent.inject` 非唤醒, 无 owner 静默; 取消面=jobs.kill(工具 signal 不再贯通, ADR-0023 §3) |
 | `ctx.credentials` | (消费面) | 内容手 Key 由 DSH credentials/LLM 适配器层解析; `.assistant/llm.yml` 只存模型名与参数(N5), 本包不落 Key |
 | 会话↔vault | `SessionVaultBinder` | D17 一书一会话一 vault 根; 内存 + domain 双面绑定; §14 子代理 prompt 注入(书名/路径/纪律条款) |
 | `ctx.tools` | `registerNovelcraftTools`(+ 工具组插件) | 39 个领域工具，一律经 `novelcraftToolFactory` 定义并显式归入 writing(15)/mapAtlas(6)/workflow(4)/book(3)/world(7)/outline(4) 六组(N48)；名称/schema/注册顺序不变。`config.tools` 六键缺省全开；根服务通过 `ctx.inject(['tools'])` 跟随 provider 生命周期注册。六个 internal Cordis 插件硬依赖 novelcraft+tools，仅供包内程序化组合，不是 YAML profile subpath。scope/approval/store/LLM/未知失败仍映射 `HarnessError/isError`。 |

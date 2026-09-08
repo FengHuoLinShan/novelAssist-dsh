@@ -23,7 +23,12 @@ import { NovelCraftService } from '../src/index.js';
 import { DeepImportDeniedError, ImportTraceSink, importTraceFile } from '../src/internal.js';
 import { makeContext, type HarnessServices } from './helpers.js';
 
-const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
+const notifyAgent = vi.hoisted(() => ({
+  followup: vi.fn(),
+  inject: vi.fn(),
+}));
+/** 带 followup/inject 探针的 agent(N55/M13-C: job 完成通知断言)。 */
+const fakeAgent = { id: 'a1', session: { id: 's1' }, ...notifyAgent } as never;
 
 function sceneJson(chapter: number, title: string, anchor: string) {
   return { title, start_chapter: chapter, end_chapter: chapter, start_anchor: anchor, end_anchor: anchor, confidence: 0.9 };
@@ -179,18 +184,26 @@ describe('deepImport(DSH 挂载)', () => {
     const hasRunSpy = vi.spyOn(imports.deepImportEngineSeam.GitRunPersistence.prototype, 'hasRun');
     let out!: {
       ok: boolean;
-      workflow_id: string;
-      adopted: number;
-      committed: number;
-      rejected: boolean;
+      job_id: string;
+      mode: string;
+      label: string;
       trace_file: string;
       message: string;
     };
+    notifyAgent.followup.mockClear();
+    notifyAgent.inject.mockClear();
     try {
       out = (await tool!.execute(
         { root: env.root, start_chapter: 1, end_chapter: 2 },
         { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: controller.signal },
       )) as typeof out;
+      // N55/M13-C: 句柄即返(不阻塞); 执行在 job 内完成。
+      expect(out).toMatchObject({ ok: true, mode: 'deep_import' });
+      expect(out.job_id).toMatch(/^novelcraft-deep-import-/);
+      expect(out.label).toContain('第 1-2 章');
+      expect(out.trace_file).toBe(importTraceFile(env.root));
+      const snapshot = await env.h.jobs.wait(out.job_id as never, 120_000, fakeAgent);
+      expect(snapshot.status).toBe('completed');
       expect(engineSpy).toHaveBeenCalledTimes(1);
       expect(engineSpy.mock.calls[0][1]).toMatchObject({ mode: 'start' });
       expect(hasRunSpy).toHaveBeenCalled();
@@ -205,10 +218,10 @@ describe('deepImport(DSH 挂载)', () => {
       hasRunSpy.mockRestore();
     }
 
-    expect(out).toMatchObject({ ok: true, adopted: 2, committed: 2, rejected: false });
-    expect(out.workflow_id).toMatch(/^imp-[0-9a-f]{16}-/);
-    expect(out.trace_file).toBe(importTraceFile(env.root));
-    expect(out.message).toContain('采用 2 个 Scene');
+    // workflow_id 从 trace begin_import 事件读(句柄不承诺; 新 run 身份在 deepImport 内派生)。
+    const events0 = readTraceEvents(env.root);
+    const workflowId = events0.find((e) => e.type === 'begin_import')?.workflow_id as string;
+    expect(workflowId).toMatch(/^imp-[0-9a-f]{16}-/);
     expect(env.h.adapter.requests).toHaveLength(10);
     expect(existsSync(path.join(env.root, 'scenes', 's001.md'))).toBe(true);
     expect(gitShow(env.root, 'world/objects/obj-a.md')).toContain('红衣女子');
@@ -229,21 +242,27 @@ describe('deepImport(DSH 挂载)', () => {
     expect(reqs[2].reason).toContain('obj-b'); // 目标对象
     expect(reqs[2].reason).toContain('associate'); // 实际关系类型
     expect(reqs[2].reason).toContain('2 项变更'); // items 每对象一条
-    for (const req of reqs) expect(req.signal).toBe(controller.signal);
+    // N55: 审批 signal 来自 job 的 AbortController(kill 即取消路径), 不再是工具调用 signal
+    // —— 浏览器/会话断开不再取消导入(ADR-0023 §3)。
+    for (const req of reqs) expect(req.signal).toBeInstanceOf(AbortSignal);
+    void controller;
 
     // trace 事件按序落盘(§15)
     const events = readTraceEvents(env.root);
     const types = events.map((e) => e.type);
-    expect(types[0]).toBe('begin_import');
+    expect(types[0]).toBe('job_started'); // N55: job 生命周期包裹 deepImport 事件流
     expect(types).toContain('approval');
     expect(types).toContain('adopt');
-    expect(types[types.length - 1]).toBe('complete_import');
+    expect(types).toContain('complete_import');
+    expect(types[types.length - 1]).toBe('job_notify');
+    const notifyEvent = events[events.length - 1] as { channel: string };
+    expect(notifyEvent.channel).toBe('followup'); // completed → followup 唤醒(N55 ②)
 
     // durable 深导状态与 radar Signal 均经 state transaction 进 git，不留部分写。
     expect(gitStatus(env.root)).toEqual([]);
     expect(gitHeadHas(env.root, '.assistant/checkpoint.json')).toBe(true);
     expect(gitHeadHas(env.root, '.assistant/import-trace.jsonl')).toBe(true);
-    const runNs = `.assistant/import-runs/${out.workflow_id}`;
+    const runNs = `.assistant/import-runs/${workflowId}`;
     expect(gitHeadHas(env.root, `${runNs}/run-plan.json`)).toBe(true);
     const manifest = JSON.parse(gitShow(env.root, `${runNs}/manifest.json`));
     expect(manifest.status).toBe('completed');
@@ -256,8 +275,18 @@ describe('deepImport(DSH 挂载)', () => {
       .trim()
       .split('\n')
       .map((l) => JSON.parse(l));
-    expect(headEvents[headEvents.length - 1].type).toBe('complete_import');
+    expect(headEvents[headEvents.length - 1].type).toBe('job_notify'); // job 生命周期事件补提交后进 git
     expect(gitShow(env.root, '.assistant/checkpoint.json')).toContain('authorization_confirmed');
+    // C3 通知: completed → followup 恰一次, 消息带 plugin 来源标 + notice form(N55 ②)。
+    expect(notifyAgent.followup).toHaveBeenCalledTimes(1);
+    expect(notifyAgent.inject).not.toHaveBeenCalled();
+    const notified = notifyAgent.followup.mock.calls[0][0] as unknown as {
+      role: string; source: { kind: string; plugin: string; form: string };
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(notified.role).toBe('user');
+    expect(notified.source).toMatchObject({ kind: 'plugin', plugin: '@novelcraft/dsh', form: 'notice' });
+    expect(notified.content[0].text).toContain('深度导入 job 完成');
     env.cleanup();
   });
 
@@ -315,10 +344,18 @@ describe('deepImport(DSH 挂载)', () => {
     for (const r of happyResponses()) env.h.adapter.enqueue({ deltas: [JSON.stringify(r)] });
     const tool = env.tools.find((x) => x.name === 'novelcraft_deep_import');
     expect(tool).toBeDefined();
-    await expect(tool!.execute(
+    notifyAgent.followup.mockClear();
+    // N55/M13-C: adopt 拒绝不再使工具同步抛错 —— job 照常 completed(rejected 语义进
+    // 通知文本), 模型经通知获知 APPROVAL_REJECTED 结果。
+    const handle = (await tool!.execute(
       { root: env.root, start_chapter: 1, end_chapter: 2 },
       { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    )).rejects.toMatchObject({ code: 'APPROVAL_REJECTED' });
+    )) as { job_id: string };
+    const snapshot = await env.h.jobs.wait(handle.job_id as never, 120_000, fakeAgent);
+    expect(snapshot.status).toBe('completed');
+    expect(notifyAgent.followup).toHaveBeenCalledTimes(1);
+    const notified = notifyAgent.followup.mock.calls[0][0] as unknown as { content: Array<{ text: string }> };
+    expect(notified.content[0].text).toContain('未获批准');
     expect(existsSync(path.join(env.root, 'scenes', 's001.md'))).toBe(false);
 
     const events = readTraceEvents(env.root);
@@ -334,24 +371,34 @@ describe('deepImport(DSH 挂载)', () => {
       .split('\n')
       .map((l) => JSON.parse(l));
     expect(headEvents.map((e: { type: string }) => e.type)).toContain('reject');
-    expect(headEvents[headEvents.length - 1].type).toBe('complete_import');
+    expect(headEvents[headEvents.length - 1].type).toBe('job_notify');
     env.cleanup();
   });
 
-  it('工具: 范围授权拒绝 → 宿主失败通道, 零副作用', async () => {
+  it('工具: 范围授权拒绝 → job failed + 通知, deepImport 工件零副作用(N55)', async () => {
     const env = await setup('rejected', ['rejected']);
     const t = env.tools.find((x) => x.name === 'novelcraft_deep_import');
     expect(t).toBeDefined();
+    notifyAgent.followup.mockClear();
 
-    await expect(t!.execute(
+    // 授权拒绝发生在 job 内: 工具同步返回句柄, job 以 failed 终态收敛。
+    const handle = (await t!.execute(
       { root: env.root, start_chapter: 1, end_chapter: 2 },
       { callId: 'c1', name: 'novelcraft_deep_import', arguments: {}, agent: fakeAgent, signal: new AbortController().signal },
-    )).rejects.toMatchObject({
-      code: 'APPROVAL_REJECTED',
-      message: expect.stringContaining('范围授权'),
-    });
-    expect(env.h.adapter.requests).toHaveLength(0);
-    expect(existsSync(importTraceFile(env.root))).toBe(false);
+    )) as { job_id: string };
+    const snapshot = await env.h.jobs.wait(handle.job_id as never, 120_000, fakeAgent);
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.detail).toContain('范围授权');
+    expect(env.h.adapter.requests).toHaveLength(0); // 零 provider 调用(deepImport 工件零副作用不变)
+    expect(existsSync(paths(env.root).assistant.checkpoint)).toBe(false); // 无 plan/checkpoint
+    expect(existsSync(path.join(env.root, 'scenes', 's001.md'))).toBe(false); // 无 canonical 写
+    // N55 边界修正: job 生命周期事件(job_started/finished/notify)是 dsh 层审计事实,
+    // 允许落 trace 并精确提交 —— 与「deepImport 工件零副作用」分开断言。
+    const events = readTraceEvents(env.root);
+    expect(events.map((e) => e.type)).toEqual(['job_started', 'job_finished', 'job_notify']);
+    expect((events[1] as { detail?: string }).detail).toContain('范围授权');
+    expect(notifyAgent.followup).toHaveBeenCalledTimes(1);
+    expect(gitStatus(env.root)).toEqual([]); // trace 补提交后工作区洁净
     env.cleanup();
   });
 

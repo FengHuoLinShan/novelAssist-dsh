@@ -165,6 +165,24 @@ describe("N33 batch/resume/apply trace contract", () => {
   });
 });
 
+describe("job 生命周期事件(N55/M13-C 词表加法)", () => {
+  it("job_started/job_finished/job_notify 可记录且保留通道/终态字段", () => {
+    const t = recorder();
+    t.record({ type: "job_started", job_id: "novelcraft-deep-import-1", mode: "deep_import", label: "深度导入: 第 1-2 章" });
+    t.record({ type: "job_finished", job_id: "novelcraft-deep-import-1", workflow_id: "wf-x", status: "completed" });
+    t.record({ type: "job_notify", job_id: "novelcraft-deep-import-1", workflow_id: "wf-x", channel: "followup" });
+    expect(t.eventsOf("job_started")).toMatchObject([{ mode: "deep_import" }]);
+    expect(t.eventsOf("job_finished")).toMatchObject([{ status: "completed" }]);
+    expect(t.eventsOf("job_notify")).toMatchObject([{ channel: "followup" }]);
+  });
+  it("job_notify 通道三值封闭: followup/inject/silent(类型层由编译器保证, 此处锁枚举语义)", () => {
+    const channels = new Set(["followup", "inject", "silent"]);
+    const t = recorder();
+    t.record({ type: "job_notify", job_id: "j", workflow_id: "w", channel: "silent" });
+    expect(channels.has((t.eventsOf("job_notify")[0] as { channel: string }).channel)).toBe(true);
+  });
+});
+
 describe("MockApproval / loadPolicyDefaults", () => {
   it("脚本化按序弹出; 耗尽 fail-closed 返回 unavailable", async () => {
     const m = new MockApproval({ decisions: ["allowed-once"] });

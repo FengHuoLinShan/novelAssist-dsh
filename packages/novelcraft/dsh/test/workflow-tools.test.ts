@@ -7,14 +7,16 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, wr
 import os from 'node:os';
 import path from 'node:path';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { NovelCraftService } from '../src/index.js';
 import { registerNovelcraftTools, buildTools, isWorkflowTool } from '../src/tools.js';
+import { activeDeepImportJobId, startDeepImportJob } from '../src/jobs/deep-import-job.js';
 import { makeContext } from './helpers.js';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 
-const fakeAgent = { id: 'a1', session: { id: 's1' } } as never;
+const notifyAgent = vi.hoisted(() => ({ followup: vi.fn(), inject: vi.fn() }));
+const fakeAgent = { id: 'a1', session: { id: 's1' }, ...notifyAgent } as never;
 
 interface TestEnv {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -84,6 +86,30 @@ const tool = (env: TestEnv, name: string): ToolDefinition => {
 
 const exec = (env: TestEnv, name: string, args: Record<string, unknown>) =>
   tool(env, name).execute(args, { callId: 'c1', name, arguments: args, agent: fakeAgent, signal: new AbortController().signal });
+
+describe('workflow abandon 前置 kill(N55/M13-C, 评审 P0-1/P1-1)', () => {
+  it('活 deep-import job: map-atlas abandon 不连带击杀; deep-import abandon kill 后流入既有校验', async () => {
+    const env = await setup({ approval: { outcome: 'allowed-once' } });
+    // 活 job: work 观察 signal, abort 时以错误结算(job 终态 killed, kill 可达终态)。
+    const handle = startDeepImportJob(env.h.ctx, fakeAgent, env.root, { mode: 'deep_import', startChapter: 1, endChapter: 2 },
+      (signal) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('被停止')), { once: true });
+      }));
+    expect(activeDeepImportJobId(env.root)).toBe(handle.jobId);
+
+    // map-atlas kind: 不触发前置 kill(评审 P1-1) → 直达 requireListedRun 拒绝, job 仍存活。
+    await expect(exec(env, 'novelcraft_workflow_abandon', { root: env.root, kind: 'map-atlas', workflow_id: 'nope' }))
+      .rejects.toMatchObject({ code: 'WORKFLOW_RUN_NOT_FOUND' });
+    expect(env.h.jobs.get(handle.jobId as never, fakeAgent as never).status).toBe('running');
+
+    // deep-import kind: kill(caller=发起 agent, fencing)→有界 wait→killed → 流入既有
+    // abandon 校验(requireListedRun 不存在 → 拒绝, 证明 kill 后主线可达)。
+    await expect(exec(env, 'novelcraft_workflow_abandon', { root: env.root, kind: 'deep-import', workflow_id: 'nope' }))
+      .rejects.toMatchObject({ code: 'WORKFLOW_RUN_NOT_FOUND' });
+    expect(activeDeepImportJobId(env.root)).toBeUndefined();
+    env.cleanup();
+  });
+});
 
 describe('workflow 工具组(M10-B1/N40)', () => {
   it('注册面: workflow 四工具完整; isWorkflowTool 前缀判定', async () => {

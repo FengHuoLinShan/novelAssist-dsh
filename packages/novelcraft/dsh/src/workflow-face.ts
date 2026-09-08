@@ -116,6 +116,22 @@ function requireDeepImportScope(root: string, workflowId: string): { startChapte
   return { startChapter: cp.start_chapter, endChapter: cp.end_chapter };
 }
 
+/**
+ * resume 前置三重校验(只读, 同步 fail-fast; N55/M13-C 抽出供工具层在启动 job 前直达错误):
+ * 枚举存在性 → force run 不可 resume(identity 含随机熵, 重跑恒新 run)→ checkpoint 绑定。
+ */
+export function workflowResumePreflight(root: string, workflowId: string): { startChapter: number; endChapter: number } {
+  requireListedRun(root, 'deep-import', workflowId);
+  if (/-f[0-9a-z]{6,}$/.test(workflowId)) {
+    throw new HarnessError(
+      `run ${workflowId} 是 workflow_start_new 创建的强制新 run(identity 含随机段, 无法按 checkpoint 绑定续跑)。` +
+        '如需重跑该范围请再次 workflow_start_new',
+      'WORKFLOW_RESUME_INVALID',
+    );
+  }
+  return requireDeepImportScope(root, workflowId);
+}
+
 /** 恢复执行(fail-closed: 授权/画像不合法即抛, 零 provider 零写由 deepImport 前置保证)。 */
 export async function workflowResumeGuarded(
   service: NovelCraftService,
@@ -124,18 +140,7 @@ export async function workflowResumeGuarded(
   workflowId: string,
   signal?: AbortSignal,
 ): Promise<imports.DeepImportResult> {
-  // 前置三重校验(Track B review P1-3): 枚举存在性 → force run 不可 resume(identity
-  // 含随机熵, 重跑恒新 run, 与"中断后可再次 resume"矛盾)→ checkpoint 绑定。
-  const listed = requireListedRun(root, 'deep-import', workflowId);
-  if (/-f[0-9a-z]{6,}$/.test(workflowId)) {
-    throw new HarnessError(
-      `run ${workflowId} 是 workflow_start_new 创建的强制新 run(identity 含随机段, 无法按 checkpoint 绑定续跑)。` +
-        '如需重跑该范围请再次 workflow_start_new',
-      'WORKFLOW_RESUME_INVALID',
-    );
-  }
-  void listed;
-  const scope = requireDeepImportScope(root, workflowId);
+  const scope = workflowResumePreflight(root, workflowId);
   // 同 scope 复用 deepImport: classification=resume → authorize_deep_import_resume 只请求
   // 剩余范围/成本(completed 批次跳过; provider_outcome_unknown 批次重试授权, N33 §5.0/§8)。
   const result = await deepImport(service, agent, root, scope, signal);

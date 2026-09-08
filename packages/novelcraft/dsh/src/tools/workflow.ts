@@ -6,6 +6,8 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import type { NovelCraftService } from '../service.js';
 import { novelcraftToolFactory } from './define.js';
+import { assertImportRange } from '../deep-import.js';
+import { killActiveDeepImportJob, startDeepImportJob } from '../jobs/deep-import-job.js';
 
 export function buildWorkflowTools(ctx: Context, service: NovelCraftService): ToolDefinition[] {
   const tool = novelcraftToolFactory(ctx, service);
@@ -58,10 +60,11 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
     tool({
       name: 'novelcraft_workflow_resume',
       description:
-        '恢复中断的深度导入 run: 前置校验(枚举存在/非 start_new 强制 run/checkpoint 绑定)后' +
-        '从 checkpoint 读原范围续跑(与 workflow_id 绑定校验, 不匹配拒绝; 执行后对账 identity)' +
-        '并续跑 —— 已完成批次跳过, 只对剩余批次请求范围/成本授权(authorize_deep_import_resume)。' +
-        '注意: 同步执行, 大范围导入可能耗时较长; 中断后可再次 resume(幂等)。',
+        '恢复中断的深度导入 run: 同步完成前置校验(枚举存在/非 start_new 强制 run/checkpoint 绑定, ' +
+        '不合法直接报错)后启动后台 job 立即返回句柄(N55/M13-C, 不再阻塞会话)。job 内从 checkpoint ' +
+        '读原范围续跑(workflow_id 绑定校验 + 执行后对账 identity)—— 已完成批次跳过, 只对剩余批次' +
+        '请求范围/成本授权(authorize_deep_import_resume)。完成后助手会收到通知; 进度用 workflow_inspect ' +
+        '查看; 中断后可再次 resume(幂等)。',
       parameters: {
         root: { type: 'string', required: true, description: 'vault 根绝对路径' },
         workflow_id: { type: 'string', required: true, description: 'workflow_inspect 返回的 workflow_id' },
@@ -71,25 +74,30 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
         additionalProperties: false,
         properties: {
           ok: { type: 'boolean', required: true },
-          workflow_id: { type: 'string', required: true },
-          adopted: { type: 'integer', required: true },
-          committed: { type: 'integer', required: true },
-          skipped: { type: 'integer', required: true },
-          conflicts: { type: 'integer', required: true },
+          job_id: { type: 'string', required: true },
+          mode: { type: 'string', required: true },
+          label: { type: 'string', required: true },
+          requested_workflow_id: { type: 'string', required: true },
+          message: { type: 'string', required: true },
         },
       },
-      timeoutMs: 3_600_000,
+      timeoutMs: 60_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.adoptGuarded.workflowResume(
-          run.agent, args.root, args.workflow_id, run.signal,
-        );
+        // 同步 fail-fast: 三重前置校验(枚举存在/非 force run/checkpoint 绑定)直达模型, 不进 job 延迟失败。
+        run.service.capabilities.read.workflowResumePreflight(args.root, args.workflow_id);
+        const handle = startDeepImportJob(ctx, run.agent, args.root, {
+          mode: 'resume',
+          workflowId: args.workflow_id,
+        }, (signal) => run.service.capabilities.adoptGuarded.workflowResume(
+          run.agent, args.root, args.workflow_id, signal,
+        ));
         return {
           ok: true,
-          workflow_id: result.workflow_id,
-          adopted: result.adopted,
-          committed: result.committed.length,
-          skipped: result.skipped.length,
-          conflicts: result.conflicts.length,
+          job_id: handle.jobId,
+          mode: handle.mode,
+          label: handle.label,
+          requested_workflow_id: handle.requested_workflow_id,
+          message: '恢复续跑已转后台 job(' + handle.jobId + '), 本工具立即返回。完成后会收到结果通知; 进度用 novelcraft_workflow_inspect 查看',
         };
       },
     }),
@@ -110,28 +118,32 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
         additionalProperties: false,
         properties: {
           ok: { type: 'boolean', required: true },
-          workflow_id: { type: 'string', required: true },
-          adopted: { type: 'integer', required: true },
-          committed: { type: 'integer', required: true },
-          skipped: { type: 'integer', required: true },
-          conflicts: { type: 'integer', required: true },
+          job_id: { type: 'string', required: true },
+          mode: { type: 'string', required: true },
+          label: { type: 'string', required: true },
+          message: { type: 'string', required: true },
         },
       },
-      timeoutMs: 3_600_000,
+      timeoutMs: 60_000,
       async execute(args, run) {
-        const result = await run.service.capabilities.adoptGuarded.workflowStartNew(
+        // 同步 fail-fast: 非法范围不启动 job(N55)。
+        assertImportRange(args.start_chapter, args.end_chapter);
+        const handle = startDeepImportJob(ctx, run.agent, args.root, {
+          mode: 'start_new',
+          startChapter: args.start_chapter,
+          endChapter: args.end_chapter,
+        }, (signal) => run.service.capabilities.adoptGuarded.workflowStartNew(
           run.agent,
           args.root,
           { startChapter: args.start_chapter, endChapter: args.end_chapter },
-          run.signal,
-        );
+          signal,
+        ));
         return {
           ok: true,
-          workflow_id: result.workflow_id,
-          adopted: result.adopted,
-          committed: result.committed.length,
-          skipped: result.skipped.length,
-          conflicts: result.conflicts.length,
+          job_id: handle.jobId,
+          mode: handle.mode,
+          label: handle.label,
+          message: '重开导入已转后台 job(' + handle.jobId + '), 本工具立即返回。完成后会收到结果通知; 进度用 novelcraft_workflow_inspect 查看',
         };
       },
     }),
@@ -154,6 +166,7 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
         properties: {
           ok: { type: 'boolean', required: true },
           abandoned: { type: 'array', required: true },
+          message: { type: 'string', required: true },
         },
       },
       timeoutMs: 60_000,
@@ -161,10 +174,24 @@ export function buildWorkflowTools(ctx: Context, service: NovelCraftService): To
         if (args.kind !== 'deep-import' && args.kind !== 'map-atlas') {
           throw new Error(`kind 必须是 'deep-import' 或 'map-atlas'(收到: ${args.kind})`);
         }
+        // N55/M13-C: 放弃 deep-import run 时先停本书运行中的 deep-import job(kill +
+        // 有界等待至终态; 仅 kind=deep-import —— 放弃 map-atlas run 不得连带击杀深导,
+        // 评审 P1-1); kill-pending 如实返回(清理留待终态), 不冒充完成。caller=发起
+        // agent(真实宿主 owned-job fencing, 评审 P0-1)。
+        const killState = args.kind === 'deep-import'
+          ? await killActiveDeepImportJob(ctx, run.agent, args.root)
+          : 'none';
+        if (killState === 'kill-pending') {
+          return {
+            ok: false,
+            abandoned: [],
+            message: '停止请求已发出但 job 尚未到达终态, 本次未清理(不冒充完成)。请稍后重试 workflow_abandon',
+          };
+        }
         const result = await run.service.capabilities.adoptGuarded.workflowAbandon(
           run.agent, args.root, { kind: args.kind, workflowId: args.workflow_id },
         );
-        return { ok: true, abandoned: result.abandoned };
+        return { ok: true, abandoned: result.abandoned, message: '已放弃并清理 run 目录(精确 git 提交)' };
       },
     }),
   ];

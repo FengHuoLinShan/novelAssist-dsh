@@ -17,7 +17,10 @@ export type TraceEventType =
   | "approval"
   | "adopt"
   | "reject"
-  | "complete_import";
+  | "complete_import"
+  | "job_started"
+  | "job_finished"
+  | "job_notify";
 
 /** 审批决策(与 DSH ApprovalOutcome 的 allowed-once/rejected/unavailable 对齐; fail-closed)。 */
 export type ApprovalDecision = "allowed-once" | "rejected" | "unavailable";
@@ -171,6 +174,32 @@ export interface CompleteImportEvent extends TraceEventBase {
   adopted: number;
 }
 
+/** deep_import 后台 job 启动(N55/M13-C; 三入口句柄化)。 */
+export interface JobStartedEvent extends TraceEventBase {
+  type: "job_started";
+  job_id: string;
+  mode: "deep_import" | "resume" | "start_new";
+  label: string;
+}
+
+/** deep_import 后台 job 终态(N55; completed/failed/killed, 与宿主 JobStatus 终态对齐)。 */
+export interface JobFinishedEvent extends TraceEventBase {
+  type: "job_finished";
+  job_id: string;
+  workflow_id: string;
+  status: "completed" | "failed" | "killed";
+  detail?: string;
+}
+
+/** deep_import job 完成通知通道(N55 ② 用户裁定: completed/failed→followup 唤醒;
+ *  killed→inject 非唤醒; 无 owner→silent)。 */
+export interface JobNotifyEvent extends TraceEventBase {
+  type: "job_notify";
+  job_id: string;
+  workflow_id: string;
+  channel: "followup" | "inject" | "silent";
+}
+
 export type TraceEvent =
   | BeginImportEvent
   | StageCandidatesEvent
@@ -185,7 +214,10 @@ export type TraceEvent =
   | ApprovalEvent
   | AdoptEvent
   | RejectEvent
-  | CompleteImportEvent;
+  | CompleteImportEvent
+  | JobStartedEvent
+  | JobFinishedEvent
+  | JobNotifyEvent;
 
 /** 记录入参 = 事件去 seq/ts(由记录器补全)。 */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;

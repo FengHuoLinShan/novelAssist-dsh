@@ -496,7 +496,12 @@ export class NovelCraftService extends Service {
     return bookFace.bookOpenGuarded(this, agent, sessionId, book);
   }
 
-  /** 恢复 deep-import run: checkpoint scope 续跑(授权只请求剩余, N33 P2 既有语义)。 */
+  /** resume 前置三重校验(只读; N55/M13-C: 工具层启动 job 前同步 fail-fast)。 */
+  workflowResumePreflight(root: string, workflowId: string): { startChapter: number; endChapter: number } {
+    return workflowFace.workflowResumePreflight(root, workflowId);
+  }
+
+  /** 恢复中断的 deep-import run: 前置校验 + checkpoint scope 续跑 + 执行后 identity 对账(N40)。 */
   async workflowResumeGuarded(
     agent: Parameters<NovelCraftService['deepImport']>[0],
     root: string,

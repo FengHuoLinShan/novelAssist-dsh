@@ -25,6 +25,8 @@ const READ_METHODS = [
   'refreshResidentState',
   // M10-B1(N40): 长任务恢复只读面(durable run 枚举 + checkpoint 概要)。
   'workflowInspect',
+  // N55/M13-C: resume 前置三重校验(job 启动前同步 fail-fast, 只读)。
+  'workflowResumePreflight',
   // M11(N42): 书库只读枚举。
   'bookList',
 ] as const satisfies readonly MethodName[];

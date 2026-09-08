@@ -14,7 +14,7 @@ function fakeService(): NovelCraftService {
     'radarSweep', 'refreshIndex', 'ragSync', 'ragEmbed', 'applyAtlasAnnotationQueue', 'adoptGuarded',
     'worldCreateGuarded', 'worldUpdateGuarded', 'reviewMapAtlasGuarded', 'deepImport',
     'saveChapterGuarded', 'restoreChapterGuarded',
-    'workflowInspect', 'workflowResumeGuarded', 'workflowStartNewGuarded', 'workflowAbandonGuarded',
+    'workflowInspect', 'workflowResumePreflight', 'workflowResumeGuarded', 'workflowStartNewGuarded', 'workflowAbandonGuarded',
     'outlinePreview', 'outlineItemPreview', 'outlineApplyGuarded', 'outlineItemApplyGuarded',
     'worldGenChat', 'worldGenConverge', 'worldGenExplore', 'worldGenInspect', 'worldGenBibleSuggest',
     'bookList', 'bookCreateGuarded', 'bookOpenGuarded', 'refreshResidentState',

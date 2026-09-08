@@ -117,6 +117,7 @@ export class FakeApproval extends ApprovalService {
 interface FakeJob {
   snapshot: JobSnapshot;
   hooks: ReturnType<JobStart['run']>;
+  owner?: import('@deepseek-ai/dsh-agent').Agent;
 }
 
 export class FakeJobs extends JobRegistry {
@@ -136,7 +137,7 @@ export class FakeJobs extends JobRegistry {
       reported: false,
     };
     const hooks = spec.run();
-    this.jobs.set(id, { snapshot, hooks });
+    this.jobs.set(id, { snapshot, hooks, ...(spec.owner !== undefined ? { owner: spec.owner } : {}) });
     void hooks.done.then((outcome) => {
       snapshot.status = outcome.status;
       snapshot.detail = outcome.detail;
@@ -148,34 +149,49 @@ export class FakeJobs extends JobRegistry {
     return id;
   }
 
-  list(caller?: import('@deepseek-ai/dsh-agent').Agent): JobSnapshot[] {
-    void caller;
-    return [...this.jobs.values()].map((j) => ({ ...j.snapshot }));
+  /** owner fencing(真实宿主 LocalJobRegistry.assertAccess 同语义, M13-C 评审 P0-1):
+   *  owned job 对 caller=undefined/非 owner 一律拒绝 —— 曾因 FakeJobs 无 fencing
+   *  掩盖「killActiveDeepImportJob 不传 agent 在真实宿主上断裂」的缺陷。 */
+  private assertAccess(job: FakeJob, caller?: import('@deepseek-ai/dsh-agent').Agent, op = 'access'): void {
+    if (job.owner === undefined) return;
+    if (caller === undefined || caller !== job.owner) {
+      throw new Error(`job ${String(job.snapshot.id)} belongs to another session (denied ${op})`);
+    }
   }
 
-  get(id: JobId): JobSnapshot {
+  list(caller?: import('@deepseek-ai/dsh-agent').Agent): JobSnapshot[] {
+    return [...this.jobs.values()]
+      .filter((j) => j.owner === undefined || j.owner === caller)
+      .map((j) => ({ ...j.snapshot }));
+  }
+
+  get(id: JobId, caller?: import('@deepseek-ai/dsh-agent').Agent): JobSnapshot {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`unknown job ${id}`);
+    this.assertAccess(job, caller, 'get');
     return { ...job.snapshot };
   }
 
-  read(id: JobId): JobRead {
+  read(id: JobId, caller?: import('@deepseek-ai/dsh-agent').Agent): JobRead {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`unknown job ${id}`);
+    this.assertAccess(job, caller, 'read');
     return { text: '', snapshot: { ...job.snapshot } };
   }
 
-  kill(id: JobId, _caller?: import('@deepseek-ai/dsh-agent').Agent, reason?: string): 'requested' | 'already-finished' {
+  kill(id: JobId, caller?: import('@deepseek-ai/dsh-agent').Agent, reason?: string): 'requested' | 'already-finished' {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`unknown job ${id}`);
+    this.assertAccess(job, caller, 'kill');
     if (job.snapshot.status !== 'running') return 'already-finished';
     job.hooks.cancel(reason);
     return 'requested';
   }
 
-  async wait(id: JobId, timeoutMs: number): Promise<JobSnapshot> {
+  async wait(id: JobId, timeoutMs: number, caller?: import('@deepseek-ai/dsh-agent').Agent): Promise<JobSnapshot> {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`unknown job ${id}`);
+    this.assertAccess(job, caller, 'wait');
     const deadline = Date.now() + timeoutMs;
     while (job.snapshot.status === 'running' && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 5));
