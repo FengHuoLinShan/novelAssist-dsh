@@ -23,6 +23,7 @@
     "check:audit-gate": "node scripts/audit-baseline-selftest.mjs",
     "bench:read-paths": "npm run build && node scripts/benchmark-read-paths.mjs",
     "bench:continuity": "npm run build && node scripts/continuity-benchmark.mjs",
+    "tools:report": "npm run build && node scripts/tool-token-report.mjs",
     "eval:pilot:dry-run": "node scripts/eval-pilot-dry-run.mjs",
     "eval:pilot:self-test": "node scripts/eval-pilot-dry-run.mjs --self-test",
     "vault:portability:self-test": "npm run build -w @novelcraft/vault && node scripts/vault-portability.mjs --self-test",

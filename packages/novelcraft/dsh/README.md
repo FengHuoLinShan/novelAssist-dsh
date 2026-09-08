@@ -37,6 +37,17 @@ plugins:
 afterMutation / vault 激活 / 指纹漂移检测才反映; 工具链内写路径均经 N32 事务提交,
 下一回合即收敛。
 
+**工具面 Model Experience(N57/M13-E; 数字为 `npm run tools:report` 2026-09-08 实测)**:
+
+- **What the model sees**: 六组 39 个工具的 name + description + parameters schema 常驻
+  模型上下文(注册期即固定; `config.tools.<组>` 开关只影响该组是否注册)。
+- **Token effect**: 合计 ≈ 5825 tokens/轮(name 未计入, 约 4–5% 低估)——writing 2310 /
+  world 1203 / mapAtlas 917 / outline 582 / workflow 566 / book 247(schema 约六成、
+  description 约四成)。对照常驻创作状态面预算缺省 600 tokens(N53), 工具面约为其 9.7×。
+- **KV cache effect**: 工具面在会话内恒定、不按回合变化 → 属稳定 prompt 前缀, prefix
+  缓存友好; 这正是 N57 不做动态分域暴露的核心理由(按回合/按会话状态变动会破坏前缀
+  缓存与可回放简单性)。复跑计量: `npm run tools:report`(仅报告不设门禁; `--json` 可选)。
+
 服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + 受误用保护的
 `read/propose/adoptGuarded` capability + 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /
 `deepImport`(runDeepImport 挂载: DshProvider + ApprovalGate + ImportTraceSink)。

@@ -61,7 +61,7 @@ imports/*.md                导入原文停靠(会话收据支持 .txt/.md)
 
 ## 当前可执行面
 
-- `available-now`: 当前 agent catalog 有 19 个 `novelcraft_*` 领域工具, 覆盖内容步、索引、
+- `available-now`: 当前 agent catalog 有 39 个 `novelcraft_*` 领域工具(writing15/mapAtlas6/workflow4/book3/world7/outline4 六组), 覆盖内容步、索引、
   采用、收件箱、深导入、续写、结构检查、文本摄入、雷达、RAG 与 Map Atlas。所有 Vault
   工具仍以 session 绑定为 authority; `root` 参数不能切书。失败由 DSH rc.8 原生
   `isError/HarnessError.code` 承载; 不得把失败描述成已完成。

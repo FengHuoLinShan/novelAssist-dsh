@@ -44,4 +44,4 @@ Story Map 与章节档案当前是 `UI-only` client 读面, 不在 model-facing 
 5. `novelcraft_map_atlas_annotation` — 应用 UI 队列或精确 ops(标签编辑不过 approval)。
 6. (可选)`novelcraft_map_atlas_update_prompt` — 仅 prompt_only 候选可改 Prompt。
 
-> 上述 6 工具已随 Phase 5 落地(`@novelcraft/dsh` tools.ts, 全部 19 个领域工具); adopt 类动作经 ApprovalGate fail-closed。
+> 上述 6 工具已随 Phase 5 落地(`@novelcraft/dsh` tools.ts, 现共 39 个领域工具六组); adopt 类动作经 ApprovalGate fail-closed。
