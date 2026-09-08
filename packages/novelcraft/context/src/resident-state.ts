@@ -87,11 +87,12 @@ export function buildResidentState(input: ResidentStateInput): ResidentStateSnap
 }
 
 export interface RenderResidentStateOptions {
-  /** 渲染 token 上界(estimateContextTokens 口径); 超出按降级阶梯收缩。 */
+  /** 渲染 token 上界(estimateContextTokens 口径, 最小 200); 超出按降级阶梯收缩。 */
   maxTokens?: number;
 }
 
 const RESIDENT_STATE_BUDGET_DEFAULT = 600;
+const RESIDENT_STATE_BUDGET_MIN = 200;
 
 function joinStatusCounts(label: string, counts: Record<string, number>): string {
   const entries = Object.entries(counts);
@@ -134,16 +135,35 @@ export function sanitizePromptVars(text: string): string {
   return text.replaceAll("{{", "{\u200b{");
 }
 
+function anchorRender(s: ResidentStateSnapshot, maxTokens: number): string {
+  const chapter = s.latestChapter
+    ? `章节: 共 ${s.chapterCount} 章, 最新第 ${s.latestChapter.index} 章`
+    : "章节: 尚无章节";
+  const book = [...sanitizePromptVars(s.book)];
+  const render = (length: number) => `书名: 《${book.slice(0, length).join("")}》\n${chapter}\n…(截断)`;
+  let low = 0;
+  let high = book.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (estimateContextTokens(render(middle)) <= maxTokens) low = middle;
+    else high = middle - 1;
+  }
+  return render(low);
+}
+
 /**
  * 渲染为紧凑中文文本(常驻 user-role snapshot 的正文)。
- * 超预算降级阶梯(确定性): ①去掉伏笔明细只留总数 → ②去掉状态计数行 → ③硬截断加省略标记;
- * 书名与章游标永不降级。所有返回文本经 sanitizePromptVars(预算口径同样按中和后文本)。
+ * 超预算降级阶梯(确定性): ①去掉伏笔明细只留总数 → ②去掉状态计数行 → ③只保留
+ * 书名行与章游标(过长书名按预算截断)。所有返回文本经 sanitizePromptVars。
  */
 export function renderResidentState(
   snapshot: ResidentStateSnapshot,
   opts: RenderResidentStateOptions = {},
 ): string {
   const maxTokens = opts.maxTokens ?? RESIDENT_STATE_BUDGET_DEFAULT;
+  if (!Number.isInteger(maxTokens) || maxTokens < RESIDENT_STATE_BUDGET_MIN) {
+    throw new RangeError(`maxTokens 必须是不小于 ${RESIDENT_STATE_BUDGET_MIN} 的整数`);
+  }
 
   const levels = [
     sanitizePromptVars(fullRender(snapshot, true, true)),
@@ -153,14 +173,5 @@ export function renderResidentState(
   for (const text of levels) {
     if (estimateContextTokens(text) <= maxTokens) return text;
   }
-  // 硬截断(保留头部, 标注省略): 比例迭代收敛到预算内。base 已中和, 切片与静态
-  // 后缀拼接不会再产生新的 `{{`。
-  const base = levels[levels.length - 1];
-  let ratio = Math.min(0.9, maxTokens / Math.max(1, estimateContextTokens(base)));
-  let text = base;
-  for (let i = 0; i < 8 && estimateContextTokens(text) > maxTokens; i += 1) {
-    text = base.slice(0, Math.max(1, Math.floor(base.length * ratio))) + "…(截断)";
-    ratio *= 0.8;
-  }
-  return text;
+  return anchorRender(snapshot, maxTokens);
 }

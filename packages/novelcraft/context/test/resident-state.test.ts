@@ -101,17 +101,19 @@ describe("renderResidentState(确定性 + 预算降级)", () => {
     expect(r1).toContain("计划第 3 章回收");
     expect(r1).toContain("note 1 / risk 2");
   });
-  it("预算充足含全部段落; 极小预算走降级阶梯仍保书名与游标", () => {
+  it("预算充足含全部段落; 最小预算严守上界并保留书名行与游标", () => {
     const s = buildResidentState(baseInput);
     const full = renderResidentState(s, { maxTokens: 600 });
     expect(full).toContain("剧情线:");
     expect(full).toContain("场景:");
 
-    const tiny = renderResidentState(s, { maxTokens: 25 });
-    expect(tiny).toContain("《长夜》");
-    expect(tiny).toContain("最新第 9 章");
-    expect(estimateContextTokens(tiny)).toBeLessThanOrEqual(25 + 12); // 截断标记容差
-    expect(tiny).not.toContain("剧情线:");
+    const longBook = { ...s, book: "长".repeat(1_000) };
+    const compact = renderResidentState(longBook, { maxTokens: 200 });
+    expect(compact).toContain("书名: 《长");
+    expect(compact).toContain("最新第 9 章");
+    expect(compact).toContain("…(截断)");
+    expect(estimateContextTokens(compact)).toBeLessThanOrEqual(200);
+    expect(() => renderResidentState(s, { maxTokens: 199 })).toThrow(/maxTokens/);
   });
   it("无逾期伏笔时不出现伏笔行; 无信号时显示 0", () => {
     const s = buildResidentState({ ...baseInput, foreshadowing: [], openSignals: [] });
@@ -121,7 +123,7 @@ describe("renderResidentState(确定性 + 预算降级)", () => {
   });
   it("vault 自由文本含 {{变量}} 时统一中和: 渲染无裸 {{, 硬截断路径同样安全(N53 二轮评审 P1)", () => {
     const hostile = buildResidentState({
-      book: "草{{draft}}稿",
+      book: "草{{draft}}稿".repeat(100),
       chapters: [{ index: 1, title: "{{spoiler}}" }, { index: 2, title: "正常" }],
       scenes: [{ slug: "s1", status: "{{evil}}" }],
       threads: [],
@@ -131,12 +133,12 @@ describe("renderResidentState(确定性 + 预算降级)", () => {
       ],
       openSignals: [{ severity: "{{risk}}" }],
     });
-    for (const maxTokens of [600, 25]) {
+    for (const maxTokens of [600, 200]) {
       const r = renderResidentState(hostile, { maxTokens });
       // N53 二轮评审 P1: 裸 {{ 会让宿主 dsh-system-prompt interpolate 抛 unknown
       // prompt variable, 打断该会话每次请求的快照渲染——任何预算档都必须中和。
       expect(r).not.toContain("{{");
-      expect(r).toContain("草"); // 书名头部永不降级(硬截断保留头部)
+      expect(r).toContain("草");
       if (maxTokens === 600) {
         expect(r).toContain("稿");
         expect(r).toContain("逾期伏笔: 1 条");

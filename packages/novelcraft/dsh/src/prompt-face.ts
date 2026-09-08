@@ -20,7 +20,7 @@ import {
   type ResidentStateInput,
 } from '@novelcraft/context';
 import * as store from '@novelcraft/store';
-import { paths, validateInitializedVault } from '@novelcraft/vault';
+import { assertNoSymlinkOnPath, paths, validateInitializedVault } from '@novelcraft/vault';
 import type { PromptConfig } from './config.js';
 import type { ActiveVaultRuntime } from './lifecycle/node-runtime.js';
 import type { SessionVaultBinder } from './vault/binding.js';
@@ -108,8 +108,10 @@ function signalsFingerprint(root: string): string {
     let count = 0;
     let maxMtime = 0;
     for (const name of readdirSync(dir)) {
+      const file = path.join(dir, name);
+      assertNoSymlinkOnPath(root, file);
       count += 1;
-      maxMtime = Math.max(maxMtime, statSync(path.join(dir, name)).mtimeMs);
+      maxMtime = Math.max(maxMtime, statSync(file).mtimeMs);
     }
     return `${count}@${maxMtime}`;
   } catch {
@@ -196,16 +198,14 @@ export class NovelcraftResidentStateFace {
   /** 可等待重算(测试与确定性消费面); 与 scheduleRefresh 共享 inflight 去重。 */
   async refreshNow(root: string | undefined, trigger = 'manual'): Promise<void> {
     if (root === undefined || this.stopped) return;
-    if (!validateInitializedVault(root).ok) return;
     const inflight = this.inflight.get(root);
     if (inflight) return inflight;
     const task = (async () => {
       try {
-        // 兑现「重算在请求路径外」(M13-A review P1-1): 让出同步段——compute 的
-        // storyMap/rebuildIndexSnapshot 全量重扫不落在调用栈(text provider 的同步
-        // assemble 路径 / afterMutation 的工具 await 链)内。inflight.set 仍在创建
-        // 后的原同步段执行, 去重窗口保持原子。
+        // 先让出请求调用栈; vault 验证会同步执行 git rev-parse,
+        // 必须与后续全量重扫一起在请求路径外。
         await new Promise<void>((resolve) => setImmediate(resolve));
+        if (this.stopped || !validateInitializedVault(root).ok) return;
         const entry = await this.compute(root);
         // N53 二轮评审 P2: stopAll 后不再写回(已过 setImmediate 的 in-flight compute
         // 不应把缓存复活; stopped 实例无消费者, 纯卫生守卫)。

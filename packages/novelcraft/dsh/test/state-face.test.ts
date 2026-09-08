@@ -1,13 +1,13 @@
 // N53 / M13-A 常驻创作状态面行为契约: 真实 dsh-system-prompt 插件 + 真实 NovelCraftService。
 // 断言: 官方 seam 注册形态(section + context)、按 agent 会话分支、绑定隔离、
 // 指纹漂移自愈、enabled=false 零注册、工具面不受影响(仍 39 工具)。
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import SystemPrompt, { renderContextSnapshot } from '@deepseek-ai/dsh-system-prompt';
 import type { AssembleContext, PromptAssembly } from '@deepseek-ai/dsh-system-prompt';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { estimateContextTokens } from '@novelcraft/context';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { ingestChapter } from '@novelcraft/writing';
@@ -17,6 +17,24 @@ import { makeContext, type HarnessServices } from './helpers.js';
 const agentBound = { id: 'a1', session: { id: 'sess-state-A' } } as never;
 const agentOther = { id: 'a2', session: { id: 'sess-state-B' } } as never;
 const agentUnbound = { id: 'u1', session: { id: 'sess-state-NO' } } as never;
+
+let symlinkCapable: boolean | undefined;
+function symlinksSupported(): boolean {
+  if (symlinkCapable === undefined) {
+    const probe = mkdtempSync(path.join(os.tmpdir(), 'nc-state-link-'));
+    try {
+      const target = path.join(probe, 'target');
+      writeFileSync(target, 'x');
+      symlinkSync(target, path.join(probe, 'link'));
+      symlinkCapable = true;
+    } catch {
+      symlinkCapable = false;
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+    }
+  }
+  return symlinkCapable;
+}
 
 interface TestEnv {
   h: HarnessServices;
@@ -136,6 +154,31 @@ describe('N53 常驻创作状态面(system-prompt seam)', () => {
       converged = renderContextSnapshot(await assemble(env.h, agentBound)).includes('共 2 章');
     }
     expect(converged).toBe(true);
+    env.cleanup();
+  });
+
+  it.skipIf(!symlinksSupported())('信号指纹不跟随 vault 内 symlink 读外部目标', async () => {
+    const env = await setup();
+    const outside = path.join(env.vaultsDir, 'outside-signal');
+    writeFileSync(outside, 'before');
+    symlinkSync(outside, path.join(env.rootA, '.assistant', 'signals', 'fingerprint-link'));
+    await env.service.residentState!.refreshNow(env.rootA);
+
+    const schedule = vi.spyOn(env.service.residentState!, 'scheduleRefresh');
+    writeFileSync(outside, 'after-and-longer');
+    await assemble(env.h, agentBound);
+    expect(schedule).not.toHaveBeenCalled();
+    env.cleanup();
+  });
+
+  it('vault 验证也在让出请求调用栈后执行', async () => {
+    const env = await setup();
+    let settled = false;
+    const refresh = env.service.residentState!.refreshNow(path.join(env.vaultsDir, 'missing'));
+    void refresh.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await refresh;
     env.cleanup();
   });
 
