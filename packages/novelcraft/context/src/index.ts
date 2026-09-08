@@ -2,3 +2,4 @@
 export * from "./context.js";
 export * from "./auditable.js";
 export * from "./selection.js";
+export * from "./resident-state.js";
