@@ -30,6 +30,7 @@ import { resolveExecutionProfile, requireTrustedExecutionProfile, type Execution
 import type { ResolveExecutionProfileOptions } from './llm/execution-profile.js';
 import { planMapAtlasRun, reviewMapAtlasDecision } from './map-atlas-face.js';
 import { optionalBgeLoader } from './optional-bge.js';
+import { composeActiveVaultRuntimes, registerPromptStateFace, type NovelcraftResidentStateFace } from './prompt-face.js';
 import { NovelcraftCache } from './storage/domain.js';
 import { registerNovelcraftTools } from './tools.js';
 import { SessionVaultBinder } from './vault/binding.js';
@@ -79,6 +80,8 @@ export class NovelCraftService extends Service {
   /** N34 Node-hosted one-timer-per-vault scheduler and real session lifecycle composition. */
   readonly watchScheduler: ActiveVaultWatchScheduler;
   readonly nodeRuntime: NovelcraftNodeRuntime;
+  /** N53 常驻创作状态面(system-prompt seam; config.prompt.enabled=false → undefined)。 */
+  readonly residentState: NovelcraftResidentStateFace | undefined;
   /** N35 防误用能力面；新插件只能按 read/propose/adoptGuarded 语义消费。 */
   readonly capabilities: NovelCraftCapabilities;
   /** 客户端 UI 面(认证 Connection RPC 数据源: 只读聚合 + 收据暂存 + 决定记录 + 配置; 不写正史)。 */
@@ -119,10 +122,15 @@ export class NovelCraftService extends Service {
         onError: (root, error) => reportRuntimeError(`watch:${root}`, error),
       },
     );
+    // N53 常驻状态面: 与 watch 调度共用 vault 生命周期(激活预热/停用清缓存)。
+    this.residentState = registerPromptStateFace(ctx, this.vaults, config.prompt);
     this.nodeRuntime = new NovelcraftNodeRuntime(
       ctx,
       this.vaults,
-      this.watchScheduler,
+      composeActiveVaultRuntimes([
+        this.watchScheduler,
+        ...(this.residentState ? [this.residentState.asVaultRuntime()] : []),
+      ]),
       (operation, error) => reportRuntimeError(`session:${operation}`, error),
     );
     // Establish rollback ownership before start/scan/tool registration can throw. Cordis awaits this
@@ -390,6 +398,12 @@ export class NovelCraftService extends Service {
    *  .receiptMaxChars 显式缺省 65,536 —— 工具经 capabilities.read 读取, 不直读 config。 */
   receiptLimit(): number {
     return this.config.llm.receiptMaxChars ?? 65_536;
+  }
+
+  /** N53 常驻状态面重算入口(read 声明表: 纯缓存刷新副作用, 零 canonical 写,
+   *  尽力而为; afterMutation 漏斗经 capabilities.read 调用)。 */
+  async refreshResidentState(root: string | undefined, trigger = 'manual'): Promise<void> {
+    await this.residentState?.refreshNow(root, trigger);
   }
 
   /** 只读枚举 durable workflow runs + checkpoint 概要(M10-B1/N40, read 声明表)。 */

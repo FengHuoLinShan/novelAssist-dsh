@@ -211,6 +211,12 @@ export class SessionVaultBinder {
     return undefined;
   }
 
+  /** 只读同步查询内存绑定(N53 常驻状态面: system-prompt text provider 必须同步;
+   *  不做 domain 回查、无副作用——活跃会话都经 session/created/HMR 扫描进过 bySession)。 */
+  peek(sessionId: string): VaultBinding | undefined {
+    return this.bySession.get(sessionId);
+  }
+
   /** 给任意目录内路径找最近 vault 根(vault.resolveVaultRoot); 找不到返回 undefined。 */
   resolveFromPath(startPath: string): VaultBinding | undefined {
     try {

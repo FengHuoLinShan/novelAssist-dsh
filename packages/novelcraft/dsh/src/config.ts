@@ -33,6 +33,14 @@ export interface WatchConfig {
   intervalMinutes: number;
 }
 
+export interface PromptConfig {
+  /** 常驻创作状态面(N53/M13-A, 默认开): 经宿主 system-prompt seam 把书的
+   *  结构状态注册为 cache-safe 快照(compaction 不影响)。 */
+  enabled: boolean;
+  /** 快照渲染 token 上界(200–2000; 缺省 600, 精简 v1 用户裁定)。 */
+  maxTokens: number;
+}
+
 export interface ToolsConfig {
   /** 写作/存储基础工具组(15 个; 默认开) */
   writing?: boolean;
@@ -55,6 +63,8 @@ export interface Config {
   vaultsDir: string;
   /** 雷达守望 */
   watch: WatchConfig;
+  /** 常驻创作状态面(system-prompt seam 注入) */
+  prompt: PromptConfig;
   /** 工具组开关(profile 即产品; 缺省六组全开) */
   tools?: ToolsConfig;
 }
@@ -91,6 +101,12 @@ export const Config: z<Config> = z.object({
       intervalMinutes: z.number().min(1).default(60),
     })
     .default({ enabled: false, intervalMinutes: 60 }),
+  prompt: z
+    .object({
+      enabled: z.boolean().default(true),
+      maxTokens: z.natural().min(200).max(2_000).default(600),
+    })
+    .default({ enabled: true, maxTokens: 600 }),
   tools: z
     .object({
       writing: z.boolean().default(true),
@@ -107,6 +123,7 @@ export const DEFAULT_CONFIG: Config = {
   llm: { provider: 'deepseek', model: 'deepseek-v4-flash' },
   vaultsDir: '~/Novels',
   watch: { enabled: false, intervalMinutes: 60 },
+  prompt: { enabled: true, maxTokens: 600 },
   tools: { writing: true, mapAtlas: true, workflow: true, book: true, world: true, outline: true },
 };
 

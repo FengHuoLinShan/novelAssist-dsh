@@ -17,7 +17,7 @@ function fakeService(): NovelCraftService {
     'workflowInspect', 'workflowResumeGuarded', 'workflowStartNewGuarded', 'workflowAbandonGuarded',
     'outlinePreview', 'outlineItemPreview', 'outlineApplyGuarded', 'outlineItemApplyGuarded',
     'worldGenChat', 'worldGenConverge', 'worldGenExplore', 'worldGenInspect', 'worldGenBibleSuggest',
-    'bookList', 'bookCreateGuarded', 'bookOpenGuarded',
+    'bookList', 'bookCreateGuarded', 'bookOpenGuarded', 'refreshResidentState',
   ];
   for (const name of methods) service[name] = vi.fn(function (this: Record<string, unknown>) { return this.marker; });
   // Existing raw direct annotation and raw facade members intentionally exist on service but must not be routed.

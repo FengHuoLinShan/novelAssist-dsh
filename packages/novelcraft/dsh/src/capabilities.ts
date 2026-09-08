@@ -21,6 +21,8 @@ const READ_METHODS = [
   // M10-A review(N39 ②): 工具回执上界读取走声明表 —— 工具不得直读 service.config
   // (N35 源码扫描只放行 capabilities./vaults.)。
   'receiptLimit',
+  // N53(M13-A): 常驻状态面重算(纯缓存刷新副作用, afterMutation 漏斗调用面)。
+  'refreshResidentState',
   // M10-B1(N40): 长任务恢复只读面(durable run 枚举 + checkpoint 概要)。
   'workflowInspect',
   // M11(N42): 书库只读枚举。

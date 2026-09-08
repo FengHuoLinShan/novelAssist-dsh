@@ -29,6 +29,13 @@ plugins:
 | `ctx.tools` | `registerNovelcraftTools`(+ 工具组插件) | 39 个领域工具，一律经 `novelcraftToolFactory` 定义并显式归入 writing(15)/mapAtlas(6)/workflow(4)/book(3)/world(7)/outline(4) 六组(N48)；名称/schema/注册顺序不变。`config.tools` 六键缺省全开；根服务通过 `ctx.inject(['tools'])` 跟随 provider 生命周期注册。六个 internal Cordis 插件硬依赖 novelcraft+tools，仅供包内程序化组合，不是 YAML profile subpath。scope/approval/store/LLM/未知失败仍映射 `HarnessError/isError`。 |
 | client UI 数据面 | `service.ui`(`NovelcraftUiFace`) | DSH 认证 Connection RPC 数据源：复用冻结 `read` 命名空间 + `view` 只读聚合 + `stage` 收据暂存 + `records.actOnSignal` + `config.selectPreset`；零正史写（铁律 3）。client 不再 import 核心包运行时/裸 fs（type-only 例外）。 |
 | client-modules | `@novelcraft/dsh-client`（独立 UI 插件） | 本包只提供宿主服务；章节工作区、收件箱和会话页内状态由独立 client 插件通过认证 Connection RPC 读取，不从浏览器写正史。 |
+| `ctx.systemPrompt` | `NovelcraftResidentStateFace`(`src/prompt-face.ts`, N53/M13-A) | 常驻创作状态面: section `novelcraft:usage`(order 300, 静态用法说明) + context `novelcraft:state`(order 130, durable user-role snapshot, **compaction 不影响**); text provider 按 `ac.agent.session` 分支(`SessionVaultBinder.peek`), 无 agent/未绑定 → 空贡献。快照=精简 v1(书名/章游标/结构状态计数/逾期伏笔 top-N/open 信号计数, 预算 `config.prompt.maxTokens` 200–2000 缺省 600); 重算在请求路径外(激活预热 + afterMutation + git ref/信号 mtime 指纹漂移自愈); `config.prompt.enabled` 缺省开, 关闭零注册零 IO。 |
+
+**常驻状态面部署注记(N53)**: ①宿主 system-prompt 配置 `includeRuntimeContext: false`
+时, 动态 context 快照不进模型历史(静态 usage section 不受影响)——需要状态面时保持默认
+`true`。②vault 被工具链外的手段直改(编辑文件但不 commit)时, 快照要到下一次
+afterMutation / vault 激活 / 指纹漂移检测才反映; 工具链内写路径均经 N32 事务提交,
+下一回合即收敛。
 
 服务门面: `ctx.novelcraft`(`NovelCraftService`)暴露上述适配器 + 受误用保护的
 `read/propose/adoptGuarded` capability + 便捷方法 `runStep` / `adoptGuarded` / `refreshIndex` / `inbox` /

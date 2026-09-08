@@ -1,0 +1,196 @@
+// N53 / M13-A 常驻创作状态面行为契约: 真实 dsh-system-prompt 插件 + 真实 NovelCraftService。
+// 断言: 官方 seam 注册形态(section + context)、按 agent 会话分支、绑定隔离、
+// 指纹漂移自愈、enabled=false 零注册、工具面不受影响(仍 39 工具)。
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import SystemPrompt, { renderContextSnapshot } from '@deepseek-ai/dsh-system-prompt';
+import type { AssembleContext, PromptAssembly } from '@deepseek-ai/dsh-system-prompt';
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
+import { describe, expect, it } from 'vitest';
+import { estimateContextTokens } from '@novelcraft/context';
+import { gitAdd, gitCommit } from '@novelcraft/store';
+import { ingestChapter } from '@novelcraft/writing';
+import { NovelCraftService } from '../src/index.js';
+import { makeContext, type HarnessServices } from './helpers.js';
+
+const agentBound = { id: 'a1', session: { id: 'sess-state-A' } } as never;
+const agentOther = { id: 'a2', session: { id: 'sess-state-B' } } as never;
+const agentUnbound = { id: 'u1', session: { id: 'sess-state-NO' } } as never;
+
+interface TestEnv {
+  h: HarnessServices;
+  service: NovelCraftService;
+  vaultsDir: string;
+  rootA: string;
+  rootB: string;
+  tools: ToolDefinition[];
+  cleanup: () => void;
+}
+
+async function setup(opts: { promptEnabled?: boolean } = {}): Promise<TestEnv> {
+  const h = await makeContext();
+  await h.ctx.plugin(SystemPrompt);
+  const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-state-face-'));
+  const tools: ToolDefinition[] = [];
+  h.ctx.provide('tools', {
+    register(def: ToolDefinition) {
+      tools.push(def);
+      return () => {};
+    },
+  });
+  await h.ctx.plugin(NovelCraftService, {
+    llm: { provider: 'fake', model: 'fake-model' },
+    vaultsDir,
+    watch: { enabled: false, intervalMinutes: 60 },
+    ...(opts.promptEnabled === false ? { prompt: { enabled: false } } : {}),
+  });
+  const service = h.ctx.novelcraft;
+  const bindingA = service.vaults.ensureVault('书甲');
+  const bindingB = service.vaults.ensureVault('书乙');
+  await service.vaults.bindSession('sess-state-A', bindingA);
+  await service.vaults.bindSession('sess-state-B', bindingB);
+  return {
+    h,
+    service,
+    vaultsDir,
+    rootA: bindingA.root,
+    rootB: bindingB.root,
+    tools,
+    cleanup: () => rmSync(vaultsDir, { recursive: true, force: true }),
+  };
+}
+
+async function assemble(h: HarnessServices, agent?: unknown): Promise<PromptAssembly> {
+  return h.ctx.systemPrompt.assemble((agent === undefined ? {} : { agent }) as AssembleContext);
+}
+
+/** 我们 context 条目自身的文本(其他 provider 如 approval:policy 的贡献不属于本面)。 */
+function ourText(assembly: PromptAssembly): string {
+  return assembly.contexts.find((c) => c.name === 'novelcraft:state')?.text ?? '';
+}
+
+function seedChapters(root: string, count: number): void {
+  for (let i = 1; i <= count; i += 1) {
+    ingestChapter(root, { chapterIndex: i, text: `第${i}章正文`, source: 'paste' });
+  }
+  gitAdd(root);
+  gitCommit(root, 'fixture chapters');
+}
+
+describe('N53 常驻创作状态面(system-prompt seam)', () => {
+  it('注册形态: 静态 usage section + novelcraft:state context; 工具面不变仍 39', async () => {
+    const env = await setup();
+    expect(env.tools).toHaveLength(39); // 防口径漂移: 状态面零新工具
+    const assembly = await assemble(env.h);
+    const usage = assembly.sections.find((s) => s.name === 'novelcraft:usage');
+    expect(usage).toBeDefined();
+    expect(usage?.text).toContain('NovelCraft 常驻状态');
+    expect(usage?.text).not.toContain('{{'); // section 文本会被严格变量插值
+    expect(assembly.contexts.some((c) => c.name === 'novelcraft:state')).toBe(true);
+    env.cleanup();
+  });
+
+  it('无 agent → 空贡献(不污染非 agent 装配); 未绑定会话同样空贡献', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 2);
+    await env.service.residentState!.refreshNow(env.rootA);
+
+    expect(ourText(await assemble(env.h))).toBe('');
+    expect(ourText(await assemble(env.h, agentUnbound))).toBe('');
+    env.cleanup();
+  });
+
+  it('绑定会话: 快照含书名与章游标; 双书互不串书', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 3);
+    seedChapters(env.rootB, 1);
+    await env.service.residentState!.refreshNow(env.rootA);
+    await env.service.residentState!.refreshNow(env.rootB);
+
+    const forA = renderContextSnapshot(await assemble(env.h, agentBound));
+    expect(forA).toContain('《书甲》');
+    expect(forA).toContain('共 3 章, 最新第 3 章');
+
+    const forB = renderContextSnapshot(await assemble(env.h, agentOther));
+    expect(forB).toContain('《书乙》');
+    expect(forB).toContain('共 1 章');
+    expect(forB).not.toContain('书甲');
+    env.cleanup();
+  });
+
+  it('指纹漂移自愈: 新 commit 后本次返回旧值, 重算后下轮装配为新值', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 1);
+    await env.service.residentState!.refreshNow(env.rootA);
+    expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('共 1 章');
+
+    seedChapters(env.rootA, 2); // 追加第 2 章 + 新 commit
+    const stale = renderContextSnapshot(await assemble(env.h, agentBound));
+    expect(stale).toContain('共 1 章'); // 漂移当轮仍返回旧值(同步 provider 不阻塞)
+
+    await env.service.residentState!.refreshNow(env.rootA, 'drift');
+    expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('共 2 章');
+    env.cleanup();
+  });
+
+  it('停用清缓存(stopAll)后回到冷路径: 空贡献并重新调度', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 1);
+    await env.service.residentState!.refreshNow(env.rootA);
+    expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('《书甲》');
+
+    env.service.residentState!.asVaultRuntime().stopAll?.();
+    expect(ourText(await assemble(env.h, agentBound))).toBe('');
+    env.cleanup();
+  });
+
+  it('config.prompt.enabled=false → 零注册零状态面', async () => {
+    const env = await setup({ promptEnabled: false });
+    expect(env.service.residentState).toBeUndefined();
+    const assembly = await assemble(env.h, agentBound);
+    expect(assembly.sections.some((s) => s.name === 'novelcraft:usage')).toBe(false);
+    expect(assembly.contexts.some((c) => c.name === 'novelcraft:state')).toBe(false);
+    expect(ourText(assembly)).toBe('');
+    env.cleanup();
+  });
+
+  it('maxTokens 预算真实生效: 超预算 fixture 走降级且渲染不超上界', async () => {
+    const h = await makeContext();
+    await h.ctx.plugin(SystemPrompt);
+    const vaultsDir = mkdtempSync(path.join(os.tmpdir(), 'nc-state-face-budget-'));
+    h.ctx.provide('tools', { register: () => () => {} });
+    await h.ctx.plugin(NovelCraftService, {
+      llm: { provider: 'fake', model: 'fake-model' },
+      vaultsDir,
+      watch: { enabled: false, intervalMinutes: 60 },
+      prompt: { enabled: true, maxTokens: 200 },
+    });
+    const service = h.ctx.novelcraft;
+    const binding = service.vaults.ensureVault('预算书');
+    await service.vaults.bindSession('sess-budget', binding);
+    seedChapters(binding.root, 8);
+    // 5 条逾期伏笔(长名)使 full 渲染超过 200 tokens → 降级阶梯必然触发
+    // (maxChapter=8 > 计划回收 1..5 且无 reveals 边, 判定与 radar-risk 同规则)。
+    const foreDir = path.join(binding.root, 'structure', 'foreshadowing');
+    mkdirSync(foreDir, { recursive: true });
+    const longName = '被遗忘的'.repeat(12); // 60 字/条
+    for (let i = 1; i <= 5; i += 1) {
+      writeFileSync(path.join(foreDir, `f${i}.md`), [
+        '---', `title: ${longName}${i}`, 'status: canonical', `planned_payoff_chapter: ${i}`, '---', '',
+      ].join('\n'), 'utf8');
+    }
+    gitAdd(binding.root);
+    gitCommit(binding.root, 'fixture foreshadowing');
+    await service.residentState!.refreshNow(binding.root);
+
+    const assembly = await assemble(h, { id: 'b1', session: { id: 'sess-budget' } } as never);
+    const text = renderContextSnapshot(assembly);
+    expect(text).toContain('《预算书》'); // 书名/游标永不降级
+    expect(text).toContain('逾期伏笔: 5 条'); // 总数行保留
+    expect(estimateContextTokens(text)).toBeLessThanOrEqual(200);
+    // 降级特征二择一: 伏笔明细被去掉, 或走到硬截断分支。
+    expect(!text.includes('计划第') || text.includes('…(截断)')).toBe(true);
+    rmSync(vaultsDir, { recursive: true, force: true });
+  });
+});
