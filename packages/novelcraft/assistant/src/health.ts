@@ -7,6 +7,7 @@
 import {
   listScenes,
   sceneHealthSignals,
+  sceneIndexConflicts,
   structureHealthSignals,
   structureHealthSignalsFromEntries,
 } from "@novelcraft/outline";
@@ -25,6 +26,7 @@ const SEVERITY: Record<string, Severity> = {
   scene_unassigned_chapter: "risk",
   scene_missing_setup: "risk",
   scene_needs_organize: "risk",
+  scene_index_conflict: "risk",
   structure_needs_review: "note",
   structure_unassigned: "risk",
 };
@@ -167,6 +169,21 @@ export function collectHealthRadarHits(root: string, snapshot?: VaultIndexSnapsh
       });
   for (const s of sceneHealthSignals(scenes)) {
     for (const d of s.details) hits.push(sceneSignal(s.slug, s.title, d));
+  }
+
+  // 同章 scene_index 重复(N54/M13-B 批 2, 章级信号): scene_index 是排序键,
+  // 唯一性破坏才是冲突(任意排列合法)。id 契约: health-scene_index_conflict-chapter-<n>。
+  for (const conflict of sceneIndexConflicts(scenes)) {
+    hits.push({
+      id: `health-scene_index_conflict-chapter-${conflict.chapter}`,
+      logical_key: signalLogicalKey("health", "scene_index_conflict", "chapter", conflict.chapter),
+      radar: RADAR,
+      severity: SEVERITY.scene_index_conflict,
+      title: `第 ${conflict.chapter} 章的场景顺序索引重复`,
+      evidence: [`场景 ${conflict.slugs.join("、")} 同用顺序索引 ${conflict.index}`],
+      proposed_action: "为这些场景分配不同的顺序索引",
+      reversibility: true,
+    });
   }
 
   const structures = snapshot === undefined

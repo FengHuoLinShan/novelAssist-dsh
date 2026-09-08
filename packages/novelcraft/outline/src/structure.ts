@@ -47,6 +47,29 @@ export function sceneHealthSignals(
     .filter((x) => x.keys.length > 0);
 }
 
+/** 同章 scene_index 重复冲突(N54/M13-B 批 2): scene_index 是排序键, 任意排列合法、
+ * 唯一性破坏才是冲突; 按 章×index 聚合出重复组(章级信号, 健康面消费)。 */
+export function sceneIndexConflicts(
+  scenes: readonly SceneLite[],
+): Array<{ chapter: number; index: number; slugs: string[] }> {
+  const groups = new Map<string, { chapter: number; index: number; slugs: string[] }>();
+  for (const s of scenes) {
+    const index = typeof s.fm.scene_index === "number" && Number.isFinite(s.fm.scene_index)
+      ? s.fm.scene_index
+      : undefined;
+    if (index === undefined) continue;
+    for (const chapter of s.chapter_ids) {
+      const key = `${chapter}\n${index}`;
+      const group = groups.get(key) ?? { chapter, index, slugs: [] };
+      group.slugs.push(s.slug);
+      groups.set(key, group);
+    }
+  }
+  // slugs 排序: evidence 顺序进 observation_hash, readdirSync 顺序跨平台不确定,
+  // 不排序会让同一状态在不同文件系统上产生不同 hash(评审 P2-2, 裁决漂移面)。
+  return [...groups.values()].filter((g) => g.slugs.length > 1).map((g) => ({ ...g, slugs: g.slugs.slice().sort() }));
+}
+
 /** 结构资产级信号(N1 后两键): threads/arcs 等目录里的 needs_review/unassigned。 */
 export interface StructureHealthInput {
   kind: string;

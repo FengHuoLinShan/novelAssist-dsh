@@ -11,4 +11,5 @@ export * from "./radar-dedup.js";
 export * from "./radar-suggest.js";
 export * from "./radar-plot.js";
 export * from "./radar-risk.js";
+export * from "./radar-continuity.js";
 export * from "./sweep.js";

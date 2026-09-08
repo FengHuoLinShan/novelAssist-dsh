@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initVault } from "@novelcraft/vault";
 import { MockProvider } from "@novelcraft/llm-step";
 import { StoreError, gitAdd, gitCommit, gitStatusEntries, relOf, parseFrontmatter, validateFrontmatter } from "@novelcraft/store";
-import { analyzeOutline, buildOutlineSelectedContext, generateOutlineItem, generateStoryOutline, listOutlinePreviews, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
+import { analyzeOutline, buildOutlineSelectedContext, generateOutlineItem, generateStoryOutline, listOutlinePreviews, listScenes, readOutline, sceneFusionDraft, sceneHealthSignals, sceneIndexConflicts, structureHealthSignals, writeOutline, writeStructureAsset } from "../src/index";
 
 const dirs: string[] = [];
 function makeRoot() {
@@ -45,6 +45,20 @@ describe("sceneHealthSignals(N1 四键)", () => {
     expect(signals[0].title).toBe("S1");
     const missing = signals[0].details.find((d) => d.key === "scene_missing_setup");
     expect(missing?.missing).toContain("goal");
+  });
+});
+
+describe("sceneIndexConflicts(N54/M13-B 批 2: 同章 scene_index 重复)", () => {
+  it("同章同 index → 一组; 排列不同/跨章同 index 不算; 缺 scene_index 跳过", () => {
+    const scenes = [
+      { slug: "s-a", title: "甲", status: "draft", chapter_ids: [2], file: "", fm: { scene_index: 1 } },
+      { slug: "s-b", title: "乙", status: "draft", chapter_ids: [2], file: "", fm: { scene_index: 1 } },
+      { slug: "s-c", title: "丙", status: "draft", chapter_ids: [2], file: "", fm: { scene_index: 0 } },
+      { slug: "s-d", title: "丁", status: "draft", chapter_ids: [3], file: "", fm: { scene_index: 1 } },
+      { slug: "s-e", title: "戊", status: "draft", chapter_ids: [3], file: "", fm: {} },
+    ] as never;
+    const conflicts = sceneIndexConflicts(scenes);
+    expect(conflicts).toEqual([{ chapter: 2, index: 1, slugs: ["s-a", "s-b"] }]);
   });
 });
 

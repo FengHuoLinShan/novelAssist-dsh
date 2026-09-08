@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "name": "novelcraft-continuity-benchmark",
-  "description": "结构维护连续性基准的错误注入目录(N54, M13-B)。单一事实源: scripts/continuity-benchmark.mjs 消费, vitest 不消费(避免 dist 解析与跨包依赖门禁问题)。class 三分类诚实呈现: covered=现状检测器已捕获; gap=批 2 目标(确定性可补, 现状预期 MISS); llm-only=本质需 LLM 语义判断, 只标注不断言。门禁纪律(N54 ②): 捕获率仅报告, MISS 不红。 gap 条目的 id_prefix 是批 2 检测器的信号 id 契约(入册时一次定死, 批 2 实现后即转 PASS, 脚本零改动)。",
+  "description": "结构维护连续性基准的错误注入目录(N54, M13-B)。单一事实源: scripts/continuity-benchmark.mjs 消费, vitest 不消费(避免 dist 解析与跨包依赖门禁问题)。class 三分类诚实呈现: covered=现状检测器已捕获; gap=批 2 目标(2026-09-08 批 2 已实现, 8 条已改类 covered 并全部 PASS); llm-only=本质需 LLM 语义判断, 只标注不断言。门禁纪律(N54 ②): 捕获率仅报告, MISS 不红。 gap 条目的 id_prefix 是批 2 检测器的信号 id 契约(入册时一次定死, 批 2 实现后即转 PASS, 脚本零改动)。",
   "base_seed": {
     "chapters": [
       1,
@@ -294,7 +294,7 @@
     },
     {
       "id": "reveal-before-plant",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/foreshadowing/f-seed.md": "---\nid: f-seed\nstatus: canonical\nname: 信物甲\nplanned_seed_chapter: 3\nplanned_payoff_chapter: 3\n---\n",
@@ -310,7 +310,7 @@
     },
     {
       "id": "thread-range-invalid",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/threads/t-rev.md": "---\nid: t-rev\nstatus: canonical\ntitle: 倒叙线\nname: 倒叙线\nthread_type: subplot\nstart_chapter: 5\nend_chapter: 2\n---\n"
@@ -325,7 +325,7 @@
     },
     {
       "id": "arc-thread-range-mismatch",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/arcs/act-narrow.md": "---\nid: act-narrow\nstatus: canonical\ntitle: 窄幕\nchapter_range: [1, 2]\nrelated_thread_ids: [t-long]\n---\n",
@@ -341,7 +341,7 @@
     },
     {
       "id": "thread-orphan",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/threads/t-orphan.md": "---\nid: t-orphan\nstatus: canonical\ntitle: 孤儿线\nname: 孤儿线\nthread_type: subplot\nstart_chapter: 1\nend_chapter: 3\n---\n"
@@ -356,7 +356,7 @@
     },
     {
       "id": "reveal-target-dangling",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/reveal/r-ghost.md": "---\nid: r-ghost\nstatus: canonical\ntitle: 幽灵揭示\ntarget_type: world_entity\ntarget_id: no-such-obj\nsecret_summary: 不存在对象的秘密\nrelated_thread_ids: []\n---\n"
@@ -371,7 +371,7 @@
     },
     {
       "id": "payoff-scene-dangling",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/foreshadowing/f-pay.md": "---\nid: f-pay\nstatus: canonical\nname: 旧约\nplanned_seed_chapter: 1\nplanned_payoff_chapter: 3\nplanned_payoff_scene: s-nope\n---\n"
@@ -386,7 +386,7 @@
     },
     {
       "id": "legacy-edge-dangling",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "structure/threads/t-legacy.md": "---\nid: t-legacy\nstatus: canonical\ntitle: 旧字段线\nname: 旧字段线\nthread_type: subplot\nrelated_character_ids: [no-such-char]\n---\n"
@@ -401,7 +401,7 @@
     },
     {
       "id": "scene-index-conflict",
-      "class": "gap",
+      "class": "covered",
       "inject": {
         "files": {
           "scenes/s-dup-a.md": "---\nid: s-dup-a\nstatus: draft\ntitle: 巷战甲\nsource: deep_import\nscene_index: 1\nchapter_ids: [2]\nreviewed_at: \"2026-09-08T00:00:00Z\"\ngoal: 拖住追兵\ncore_conflict: 寡不敌众\nmust_happen: 翻墙脱身\nmust_not_happen: 被围死\n---\n",

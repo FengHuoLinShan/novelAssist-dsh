@@ -7,7 +7,8 @@ import { collectIngestRadarHits, scanIngestRadar } from "./radar-ingest.js";
 import { collectDedupRadarHits, scanDedupRadar } from "./radar-dedup.js";
 import { collectSuggestRadarHits, scanSuggestRadar } from "./radar-suggest.js";
 import { plotSummaryFromStoryMap, plotSummaryLine, scanPlotRadar } from "./radar-plot.js";
-import { collectRiskRadarHits, scanRiskRadar } from "./radar-risk.js";
+import { collectRiskRadarHits } from "./radar-risk.js";
+import { collectContinuityRadarHits, scanRiskContinuityRadar } from "./radar-continuity.js";
 import type { RadarKind } from "./signals.js";
 import { reconcileRadarSignalGroupsAtomic, type RadarReconcileResult, type RadarSignalGroup } from "./radar-utils.js";
 
@@ -40,7 +41,9 @@ export function runRadarSweep(
         results.plot = scanPlotRadar(root, opts.now);
         break;
       case "risk":
-        results.risk = scanRiskRadar(root, opts.now);
+        // N54/M13-B 批 2: risk 面 = radar-risk 命中 + 连续性命中, 合并后一次对账
+        // (scanRiskContinuityRadar; 同前缀分开对账会互相 resolve/reopen 抖动)。
+        results.risk = scanRiskContinuityRadar(root, opts.now);
         break;
       case "writing":
         results.writing = scanHealthSignals(root, opts.now);
@@ -84,9 +87,12 @@ function collectGroup(root: string, kind: RadarKind, snapshot?: SweepSnapshot): 
     case "plot": return { idPrefix: "plot-", hits: [] };
     case "risk": return {
       idPrefix: "risk-",
-      hits: snapshot?.map
-        ? collectRiskRadarHits(root, { map: snapshot.map, index: snapshot.vault.index })
-        : collectRiskRadarHits(root),
+      hits: [
+        ...(snapshot?.map
+          ? collectRiskRadarHits(root, { map: snapshot.map, index: snapshot.vault.index })
+          : collectRiskRadarHits(root)),
+        ...collectContinuityRadarHits(root, snapshot?.map ? { map: snapshot.map, index: snapshot.vault.index } : {}),
+      ],
     };
     case "writing": return { idPrefix: "health-", hits: collectHealthRadarHits(root, snapshot?.vault) };
   }
