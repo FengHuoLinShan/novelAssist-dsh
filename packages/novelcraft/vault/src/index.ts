@@ -654,7 +654,8 @@ function bytesEqual(a: Buffer | null, b: Buffer | null): boolean {
  *   不触碰 index(不自动清除、不并入)。
  * - `update-ref <ref> <commit> <zero-oid>` 三参 CAS(加固 ③): unborn 期望 = 合法全零
  *   OID(按仓库 object format: sha1=40 / sha256=64, 加固 ⑤); 发布点前后复核 symbolic
- *   HEAD 仍指向被更新分支(加固 ④); CAS 失败 = 跨进程竞争 → loser 安全识别: 分支现值
+ *   HEAD 仍指向被更新分支(加固 ④); 不在 CAS 前用 show-ref 重复判定 unborn,
+ *   避免把已发布相同 commit 的并发赢家误报为不一致。CAS 失败 = 跨进程竞争 → loser 安全识别: 分支现值
  *   == 本地确定性 commit(同内容必同 OID)→ 视为已 bootstrap no-op; 指向其他 commit
  *   → 冲突抛错, 绝不 force 覆盖; 分支仍 unborn(并发 ref lock, 无法判定)→ fail-closed。
  * - 共享 index 安装仅由 CAS 赢家执行(另一进程负责时不得重复写): 安装前复核 lock 缺席
@@ -709,14 +710,7 @@ export function bootstrapVaultGitHistory(root: string): void {
     );
   }
 
-  // 前置 7: 目标分支必须尚不存在(unborn HEAD 却已有分支引用 = 状态不一致, 拒绝覆盖)。
-  if (gitSucceeds(r, ['show-ref', '--verify', '--quiet', ref])) {
-    throw new Error(
-      `bootstrapVaultGitHistory: 分支 "${ref}" 已存在但 HEAD unborn, 拒绝覆盖 (N32/R9)`,
-    );
-  }
-
-  // 前置 8: initVault 声明的实际落盘文件。目录/其他条目一律 fail-closed(绝不 add
+  // 前置 7: initVault 声明的实际落盘文件。目录/其他条目一律 fail-closed(绝不 add
   // 目录递归卷入外部文件); 直接调用场景缺文件则跳过, 一个都不在则视为无语义内容。
   const bootstrapFiles: string[] = [];
   for (const name of BOOTSTRAP_INIT_FILES) {
@@ -731,7 +725,7 @@ export function bootstrapVaultGitHistory(root: string): void {
   }
   if (bootstrapFiles.length === 0) return;
 
-  // 前置 9: object format 探测(sha1/sha256 → zero OID 长度, 加固 ⑤)。
+  // 前置 8: object format 探测(sha1/sha256 → zero OID 长度, 加固 ⑤)。
   const fmt = gitObjectFormat(r);
   const oidLen = fmt === 'sha256' ? 64 : 40;
   const zeroOid = '0'.repeat(oidLen);
