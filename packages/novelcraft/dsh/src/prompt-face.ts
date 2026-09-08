@@ -20,14 +20,14 @@ import {
   type ResidentStateInput,
 } from '@novelcraft/context';
 import * as store from '@novelcraft/store';
-import { assertNoSymlinkOnPath, paths, validateInitializedVault } from '@novelcraft/vault';
+import { assertNoSymlinkOnPath, guardPath, paths, validateInitializedVault } from '@novelcraft/vault';
 import type { PromptConfig } from './config.js';
 import type { ActiveVaultRuntime } from './lifecycle/node-runtime.js';
 import type { SessionVaultBinder } from './vault/binding.js';
 
 /** 静态用法说明(稳定 prefix; 不得含 `{{`——section 文本会被严格变量插值)。 */
 const USAGE_SECTION_TEXT = [
-  '[NovelCraft 常驻状态] 下方「当前书状态」快照来自作者的书库 vault, 是结构的权威摘要:',
+  '[NovelCraft 常驻状态] 若下方出现「当前书状态」快照, 其来自作者的书库 vault, 是结构的权威摘要:',
   '快照在会话历史被压缩后仍然有效; 续写/审查/规划前先对照章游标、剧情线与逾期伏笔。',
   '快照只是导航摘要, 结构事实以 novelcraft 工具实时读取为准。',
 ].join('\n');
@@ -76,44 +76,53 @@ function gatherResidentInput(root: string): ResidentStateInput {
   };
 }
 
-/** git HEAD 指纹: 工具链内写路径均经 N32 事务提交 → 分支 ref 文件 mtime 随每次 commit 移动。
- *  只读文件系统(不 spawn git 进程); 非正常 repo(worktree/packed-refs)退化常量, 保持缓存不空转。 */
+/** git HEAD 指纹: 直接读取 loose/packed ref 的 OID, 不依赖文件时间精度且不 spawn git。 */
 function gitHeadFingerprint(root: string): string {
   try {
     const dotGit = path.join(root, '.git');
     if (!existsSync(dotGit)) return 'no-git';
-    const stat = statSync(dotGit);
-    let gitDir = dotGit;
-    if (stat.isFile()) {
-      gitDir = readFileSync(dotGit, 'utf8').trim().replace(/^gitdir:\s*/, '');
-    }
-    const head = readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    assertNoSymlinkOnPath(root, dotGit);
+    if (!statSync(dotGit).isDirectory()) return 'unknown';
+    const headPath = path.join(dotGit, 'HEAD');
+    assertNoSymlinkOnPath(root, headPath);
+    const head = readFileSync(headPath, 'utf8').trim();
     if (head.startsWith('ref: ')) {
       const ref = head.slice(5).trim();
-      const refPath = path.join(gitDir, ref);
-      if (existsSync(refPath)) return `${ref}@${statSync(refPath).mtimeMs}`;
-      return `${ref}@packed`;
+      const refPath = guardPath(dotGit, ref);
+      assertNoSymlinkOnPath(dotGit, refPath);
+      if (existsSync(refPath)) return `${ref}@${readFileSync(refPath, 'utf8').trim()}`;
+      const packedPath = path.join(dotGit, 'packed-refs');
+      assertNoSymlinkOnPath(root, packedPath);
+      if (!existsSync(packedPath)) return `${ref}@unborn`;
+      const packed = readFileSync(packedPath, 'utf8')
+        .split(/\r?\n/)
+        .find((line) => line.endsWith(` ${ref}`));
+      return `${ref}@${packed?.split(' ', 1)[0] ?? 'unborn'}`;
     }
-    return `detached@${stat.mtimeMs}`;
+    return `detached@${head}`;
   } catch {
     return 'unknown';
   }
 }
 
-/** 信号指纹: 收件箱决定(act/对账写信号文件但不 commit)→ 目录条目数 + 最新 mtime。 */
+/** 信号指纹: 按文件名与独立 stat 元数据聚合; 不跟随 symlink, 不被单个未来 mtime 遮蔽。 */
 function signalsFingerprint(root: string): string {
   try {
     const dir = paths(root).assistant.signals;
     if (!existsSync(dir)) return 'none';
-    let count = 0;
-    let maxMtime = 0;
-    for (const name of readdirSync(dir)) {
+    const names = readdirSync(dir).filter((name) => name.endsWith('.json')).sort();
+    const hash = createHash('sha256');
+    for (const name of names) {
       const file = path.join(dir, name);
-      assertNoSymlinkOnPath(root, file);
-      count += 1;
-      maxMtime = Math.max(maxMtime, statSync(file).mtimeMs);
+      try {
+        assertNoSymlinkOnPath(root, file);
+        const stat = statSync(file, { bigint: true });
+        hash.update(`${name}\0${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}\0`);
+      } catch {
+        hash.update(`${name}\0unsafe\0`);
+      }
     }
-    return `${count}@${maxMtime}`;
+    return `${names.length}@${hash.digest('hex').slice(0, 16)}`;
   } catch {
     return 'unknown';
   }
@@ -127,6 +136,7 @@ function residentFingerprint(root: string): string {
 export class NovelcraftResidentStateFace {
   private readonly cache = new Map<string, ResidentCacheEntry>();
   private readonly inflight = new Map<string, Promise<void>>();
+  private readonly generations = new Map<string, number>();
   private stopped = false;
 
   constructor(
@@ -162,11 +172,13 @@ export class NovelcraftResidentStateFace {
         this.scheduleRefresh(binding.root, 'activate');
       },
       deactivate: (root) => {
+        this.generations.set(root, (this.generations.get(root) ?? 0) + 1);
         this.cache.delete(root);
       },
       stopAll: () => {
         this.stopped = true;
         this.cache.clear();
+        this.generations.clear();
       },
     };
   }
@@ -200,6 +212,7 @@ export class NovelcraftResidentStateFace {
     if (root === undefined || this.stopped) return;
     const inflight = this.inflight.get(root);
     if (inflight) return inflight;
+    const generation = this.generations.get(root) ?? 0;
     const task = (async () => {
       try {
         // 先让出请求调用栈; vault 验证会同步执行 git rev-parse,
@@ -209,7 +222,7 @@ export class NovelcraftResidentStateFace {
         const entry = await this.compute(root);
         // N53 二轮评审 P2: stopAll 后不再写回(已过 setImmediate 的 in-flight compute
         // 不应把缓存复活; stopped 实例无消费者, 纯卫生守卫)。
-        if (entry && !this.stopped) {
+        if (entry && !this.stopped && generation === (this.generations.get(root) ?? 0)) {
           this.cache.set(root, entry);
           this.ctx.logger?.info?.(
             `[novelcraft] resident-state ${trigger} hash=${entry.hash} tokens=${entry.tokens}`);

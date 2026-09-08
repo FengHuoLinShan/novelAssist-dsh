@@ -1,13 +1,15 @@
 // N53 / M13-A 常驻创作状态面行为契约: 真实 dsh-system-prompt 插件 + 真实 NovelCraftService。
 // 断言: 官方 seam 注册形态(section + context)、按 agent 会话分支、绑定隔离、
 // 指纹漂移自愈、enabled=false 零注册、工具面不受影响(仍 39 工具)。
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import SystemPrompt, { renderContextSnapshot } from '@deepseek-ai/dsh-system-prompt';
 import type { AssembleContext, PromptAssembly } from '@deepseek-ai/dsh-system-prompt';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { describe, expect, it, vi } from 'vitest';
+import { createSignal, saveSignal } from '@novelcraft/assistant';
 import { estimateContextTokens } from '@novelcraft/context';
 import { gitAdd, gitCommit } from '@novelcraft/store';
 import { ingestChapter } from '@novelcraft/writing';
@@ -104,6 +106,7 @@ describe('N53 常驻创作状态面(system-prompt seam)', () => {
     const usage = assembly.sections.find((s) => s.name === 'novelcraft:usage');
     expect(usage).toBeDefined();
     expect(usage?.text).toContain('NovelCraft 常驻状态');
+    expect(usage?.text).toContain('若下方出现');
     expect(usage?.text).not.toContain('{{'); // section 文本会被严格变量插值
     expect(assembly.contexts.some((c) => c.name === 'novelcraft:state')).toBe(true);
     env.cleanup();
@@ -157,7 +160,74 @@ describe('N53 常驻创作状态面(system-prompt seam)', () => {
     env.cleanup();
   });
 
-  it.skipIf(!symlinksSupported())('信号指纹不跟随 vault 内 symlink 读外部目标', async () => {
+  it('git 指纹读 OID: ref mtime 被还原仍能检出新 commit', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 1);
+    await env.service.residentState!.refreshNow(env.rootA);
+    const head = readFileSync(path.join(env.rootA, '.git', 'HEAD'), 'utf8').trim();
+    const refPath = path.join(env.rootA, '.git', head.slice('ref: '.length));
+    const before = statSync(refPath);
+
+    seedChapters(env.rootA, 2);
+    utimesSync(refPath, before.atime, before.mtime);
+    expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('共 1 章');
+    let converged = false;
+    for (let i = 0; i < 40 && !converged; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      converged = renderContextSnapshot(await assemble(env.h, agentBound)).includes('共 2 章');
+    }
+    expect(converged).toBe(true);
+    env.cleanup();
+  });
+
+  it('git 指纹读 packed ref OID: 两次 pack 之间的 commit 仍可检出', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 1);
+    execFileSync('git', ['pack-refs', '--all', '--prune'], { cwd: env.rootA, stdio: 'pipe' });
+    await env.service.residentState!.refreshNow(env.rootA);
+
+    seedChapters(env.rootA, 2);
+    execFileSync('git', ['pack-refs', '--all', '--prune'], { cwd: env.rootA, stdio: 'pipe' });
+    expect(renderContextSnapshot(await assemble(env.h, agentBound))).toContain('共 1 章');
+    let converged = false;
+    for (let i = 0; i < 40 && !converged; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      converged = renderContextSnapshot(await assemble(env.h, agentBound)).includes('共 2 章');
+    }
+    expect(converged).toBe(true);
+    env.cleanup();
+  });
+
+  it('信号指纹逐文件聚合: 未来 mtime 不遮蔽其他信号更新', async () => {
+    const env = await setup();
+    const first = createSignal({
+      id: 'sig-first', radar: 'risk', severity: 'risk', title: '一', evidence: ['e'],
+      proposed_action: '处理', reversibility: true,
+    }, new Date('2026-01-01T00:00:00Z'));
+    const future = createSignal({
+      id: 'sig-future', radar: 'risk', severity: 'risk', title: '二', evidence: ['e'],
+      proposed_action: '处理', reversibility: true,
+    }, new Date('2026-01-01T00:00:01Z'));
+    saveSignal(env.rootA, first);
+    saveSignal(env.rootA, future);
+    const futurePath = path.join(env.rootA, '.assistant', 'signals', 'sig-future.json');
+    const futureTime = new Date('2030-01-01T00:00:00Z');
+    utimesSync(futurePath, futureTime, futureTime);
+    await env.service.residentState!.refreshNow(env.rootA);
+    expect(ourText(await assemble(env.h, agentBound))).toContain('risk 2');
+
+    saveSignal(env.rootA, { ...first, status: 'rejected' });
+    expect(ourText(await assemble(env.h, agentBound))).toContain('risk 2');
+    let converged = false;
+    for (let i = 0; i < 40 && !converged; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      converged = ourText(await assemble(env.h, agentBound)).includes('risk 1');
+    }
+    expect(converged).toBe(true);
+    env.cleanup();
+  });
+
+  it.skipIf(!symlinksSupported())('非 JSON symlink 不参与信号指纹', async () => {
     const env = await setup();
     const outside = path.join(env.vaultsDir, 'outside-signal');
     writeFileSync(outside, 'before');
@@ -191,6 +261,19 @@ describe('N53 常驻创作状态面(system-prompt seam)', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(ourText(await assemble(env.h, agentBound))).toBe(''); // 缓存未被复活
+    env.cleanup();
+  });
+
+  it('deactivate 后 in-flight 重算不复活该 vault 缓存', async () => {
+    const env = await setup();
+    seedChapters(env.rootA, 1);
+    await env.service.residentState!.refreshNow(env.rootA);
+    seedChapters(env.rootA, 2);
+    env.service.residentState!.scheduleRefresh(env.rootA, 'mutation');
+    await env.service.residentState!.asVaultRuntime().deactivate(env.rootA);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(env.service.residentState!.textFor(agentBound)).toBe('');
     env.cleanup();
   });
 

@@ -42,15 +42,15 @@ export interface ResidentStateSnapshot {
 }
 
 function countByStatus(items: Array<{ status: string }>): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const it of items) counts[it.status] = (counts[it.status] ?? 0) + 1;
-  return Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  const counts = new Map<string, number>();
+  for (const it of items) counts.set(it.status, (counts.get(it.status) ?? 0) + 1);
+  return Object.fromEntries([...counts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 function countSignals(openSignals: Array<{ severity: string }>): Array<{ severity: string; count: number }> {
-  const counts: Record<string, number> = {};
-  for (const s of openSignals) counts[s.severity] = (counts[s.severity] ?? 0) + 1;
-  return Object.entries(counts)
+  const counts = new Map<string, number>();
+  for (const s of openSignals) counts.set(s.severity, (counts.get(s.severity) ?? 0) + 1);
+  return [...counts]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([severity, count]) => ({ severity, count }));
 }

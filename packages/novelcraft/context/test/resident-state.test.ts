@@ -57,6 +57,22 @@ describe("buildResidentState(纯派生)", () => {
     expect(Object.keys(a.sceneStatus)).toEqual(Object.keys(b.sceneStatus));
     expect(a.sceneStatus).toEqual({ canonical: 2, draft: 1 });
   });
+  it("状态计数不被 Object 原型键吞掉", () => {
+    const s = buildResidentState({
+      ...baseInput,
+      scenes: [
+        { slug: "s1", status: "__proto__" },
+        { slug: "s2", status: "constructor" },
+        { slug: "s3", status: "__proto__" },
+      ],
+      openSignals: [{ severity: "__proto__" }, { severity: "constructor" }],
+    });
+    expect(Object.entries(s.sceneStatus)).toEqual([["__proto__", 2], ["constructor", 1]]);
+    expect(s.openSignals).toEqual([
+      { severity: "__proto__", count: 1 },
+      { severity: "constructor", count: 1 },
+    ]);
+  });
   it("逾期 top-N 截断且按计划回收章升序再按名", () => {
     const many = Array.from({ length: RESIDENT_FORESHADOWING_TOP_N + 3 }, (_, i) => ({
       slug: `f${i}`,

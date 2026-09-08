@@ -103,10 +103,10 @@ export function novelcraftToolFactory(ctx: Context, service: NovelCraftService) 
             signal: exec.signal,
             root,
             sessionId: () => sessionIdOf(exec),
-            afterMutation: (opts) => {
-              // N53: 变更后刷新常驻状态面(尽力而为, 不阻塞工具返回; 指纹漂移自愈兜底)。
+            afterMutation: async (opts) => {
+              await afterMutation(ctx, root, opts); // none 模式 root=undefined: book 组无 afterMutation
+              // 雷达对账先落信号, 再异步刷新常驻状态; 不阻塞工具返回。
               void service.capabilities.read.refreshResidentState(root, 'mutation');
-              return afterMutation(ctx, root, opts); // none 模式 root=undefined: book 组无 afterMutation
             },
           };
           return await spec.execute(rawArgs as InferArgs<S>, run);
