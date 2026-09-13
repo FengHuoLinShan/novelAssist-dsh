@@ -14,7 +14,7 @@ import {
   apply as applyHostPlugin,
   createNovelcraftHandlers,
   ENDPOINTS,
-  RPC_CHANNEL,
+  RPC_FETCH_PATH,
   type ChapterWorkspaceValue,
   type NovelcraftHostService,
 } from '../src/index.js';
@@ -978,13 +978,10 @@ describe('atlas 端点(Phase 6)', () => {
 // action/NaN 坐标拒绝且无越界文件(文件真相 + R9/N19 写边界)。
 // ===========================================================================
 
-interface CapturedChannel {
-  channel?: string;
-  handler?: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<{
-    ok: boolean;
-    value?: unknown;
-    error?: { code: string; message: string; details?: unknown };
-  }>;
+interface CapturedRoute {
+  path?: string;
+  methods?: readonly string[];
+  fetch?: (request: Request) => Promise<Response>;
 }
 
 type SetupOptions = {
@@ -992,25 +989,42 @@ type SetupOptions = {
   llm?: { listProviders?: () => Array<{ id: string; name?: string }> };
 };
 
-/** setup() + 注册假 connection + 跑宿主 apply; 返回可经通道分发的 handler。 */
+/** setup() + 注册假 connection + 跑宿主 apply; 返回可经 Fetch 路由分发的调用面。 */
 function setupDispatchApp(overrides: SetupOptions = {}) {
   const env = setup(overrides);
-  const captured: CapturedChannel = {};
+  const captured: CapturedRoute = {};
   env.ctx.provide('connection', {
-    rpc: {
-      handle: (channel: string, handler: unknown) => {
-        captured.channel = channel;
-        captured.handler = handler as CapturedChannel['handler'];
+    fetch: {
+      register: (route: { path: string; methods: readonly string[]; fetch: (request: Request) => Promise<Response> }) => {
+        captured.path = route.path;
+        captured.methods = route.methods;
+        captured.fetch = route.fetch;
         return async () => undefined;
       },
     },
   });
   applyHostPlugin(env.ctx);
   const dispatch = async (endpoint: string, payload: unknown) => {
-    if (!captured.handler) throw new Error('apply 未注册 connection handler');
-    return captured.handler(endpoint, payload, new AbortController().signal);
+    if (!captured.fetch) throw new Error('apply 未注册 connection Fetch 路由');
+    const request = new Request('http://dsh.local' + (captured.path ?? RPC_FETCH_PATH), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint, payload }),
+    });
+    const response = await captured.fetch(request);
+    return await response.json() as { ok: boolean; value?: unknown; error?: { code: string; message: string; details?: unknown } };
   };
-  return { ...env, captured, dispatch };
+  /** 直发原始 body 到捕获的 fetch(绕过 dispatch 的信封构造), 看 HTTP 层行为。 */
+  const rawFetch = async (body: string) => {
+    if (!captured.fetch) throw new Error('apply 未注册 connection Fetch 路由');
+    const response = await captured.fetch(new Request('http://dsh.local' + (captured.path ?? RPC_FETCH_PATH), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    }));
+    return { status: response.status, body: await response.json() as { ok: boolean; error?: { code: string; message: string } } };
+  };
+  return { ...env, captured, dispatch, rawFetch };
 }
 
 /** 拒绝后无越界文件: vault 根(含子目录, 跨目录拼写)下不存在任何同名文件。 */
@@ -1030,14 +1044,55 @@ async function expectNoFileNamed(root: string, name: string): Promise<void> {
 }
 
 describe('apply/connection 通道分发(真实 handler 走线)', () => {
-  it('注册到认证 Connection 通道(RPC_CHANNEL); 未知端点 → 作者语言错误', async () => {
+  it('注册到 /api 精确 Fetch 路由(RPC_FETCH_PATH); 未知端点 → 作者语言错误', async () => {
     const env = setupDispatchApp();
-    expect(env.captured.channel).toBe(RPC_CHANNEL);
-    // N50: DSH 在进入 handler 前完成 Host/Origin 围栏与浏览器会话认证;
+    expect(env.captured.path).toBe(RPC_FETCH_PATH);
+    expect(env.captured.methods).toEqual(['POST']);
+    // N50: DSH 在 /api 载体上完成 Host/Origin 围栏与浏览器会话认证;
     // 本通道自身只读信号/记录决定, 不写 canonical 资产。
+    // 约束: 不得改回 rpc.handle——dsh 0.1.5-rc.2 起对第三方插件构造性损坏。
     const res = await env.dispatch('atlas/nope', {});
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error?.message).toContain('unknown endpoint');
+    env.cleanup();
+  });
+
+  it('信封契约: 非 JSON/缺 endpoint → 400 bad-request; payload null 归一 {} 走作者语言校验', async () => {
+    const env = setupDispatchApp();
+    // 非 JSON body → request.json() 失败折叠 null → 400。
+    const notJson = await env.rawFetch('not-json{');
+    expect(notJson.status).toBe(400);
+    expect(notJson.body.ok).toBe(false);
+    expect(notJson.body.error?.code).toBe('bad-request');
+    // JSON 但缺 endpoint 字符串 → 400。
+    const noEndpoint = await env.rawFetch(JSON.stringify({ payload: {} }));
+    expect(noEndpoint.status).toBe(400);
+    expect(noEndpoint.body.error?.code).toBe('bad-request');
+    // payload: null 归一为 {}: 需要会话的端点返回作者语言错误而非 TypeError。
+    const nullPayload = await env.dispatch(ENDPOINTS.intakeStage, null);
+    expect(nullPayload.ok).toBe(false);
+    if (!nullPayload.ok) expect(nullPayload.error?.message).toContain('会话');
+    // watch/state 的 null payload 维持未绑定四态缺省(不因归一改变语义)。
+    const watch = await env.dispatch(ENDPOINTS.watchState, null);
+    expect(watch.ok).toBe(true);
+    env.cleanup();
+  });
+
+  it('处理器抛异常 → 折叠为 RpcResult internal(不穿成无体 4xx/5xx)', async () => {
+    const env = setupDispatchApp({
+      service: {
+        vaults: {
+          resolve: async () => { throw new Error('vault resolver exploded'); },
+          resolveFromPath: () => undefined,
+        },
+      },
+    });
+    const res = await env.dispatch(ENDPOINTS.watchState, { sessionId: 's1' });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error?.code).toBe('internal');
+      expect(res.error?.message).toContain('vault resolver exploded');
+    }
     env.cleanup();
   });
 

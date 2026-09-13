@@ -1,6 +1,10 @@
-// 浏览器侧 RPC 数据面: 轮询 /novelcraft 通道的 watch/state 与 inbox/list,
-// 四动词经 inbox/act 回宿主(assistant.act 确定性函数)。数据流纯 React hooks。
+// 浏览器侧 RPC 数据面: 轮询宿主 /api/novelcraft Fetch 路由的 watch/state 与
+// inbox/list, 四动词经 inbox/act 回宿主(assistant.act 确定性函数)。数据流纯 React hooks。
+// 约束: 不得改回 connection.rpc.call——宿主端注册通道在 dsh 0.1.5-rc.2 起对第三方
+// 构造性损坏(见 src/wire.ts RPC_FETCH_PATH 注释); 本侧走同源 fetch(cookie 认证
+// 随行), connection 仅保留为"宿主连接在位"的能力门控。
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RpcResult } from '@deepseek-ai/dsh-client-connection/client'
 import type { RpcCaller } from './index.ts'
 import type {
   ChapterDossierValue,
@@ -24,7 +28,7 @@ import type {
   BooksListValue,
   WorldWorkspaceValue,
 } from '../wire.ts'
-import { ENDPOINTS, RPC_CHANNEL } from '../wire.ts'
+import { ENDPOINTS, RPC_FETCH_PATH } from '../wire.ts'
 
 /** 通道调用薄封装: 传输错误折叠为 null(UI 显示缺省态)。 */
 async function call<T>(
@@ -34,7 +38,13 @@ async function call<T>(
 ): Promise<T | null> {
   if (!connection) return null
   try {
-    const result = await connection.rpc.call(RPC_CHANNEL, endpoint, payload)
+    const response = await fetch(RPC_FETCH_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint, payload }),
+    })
+    if (!response.ok) return null
+    const result = (await response.json()) as RpcResult<unknown>
     if (result.ok) return result.value as T
     return null
   } catch {

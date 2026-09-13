@@ -1,7 +1,7 @@
-// @novelcraft/dsh-client · node 半身: /novelcraft 认证 Connection RPC 通道处理器。
+// @novelcraft/dsh-client · node 半身: /api/novelcraft Fetch 路由的通道处理器。
 // 依据: 设计文档 §9/§17(宠物/收件箱读 .assistant/signals; 动作回调走宿主服务面);
 // §22.3(client seam = client-modules, 不直接 import 核心包运行时)。
-// 数据路径: 浏览器 → ctx.connection.rpc.call('/novelcraft', endpoint, payload)
+// 数据路径: 浏览器 → 同源 fetch('/api/novelcraft', {endpoint, payload})
 // → 本处理器(宿主) → ctx.novelcraft.ui(read/view/stage/records/config, 铁律 3:
 // 本通道零正史写, adopt 由助手 agent 经 DSH approval 执行, §9 fail-closed)。
 // 核心包仅作 type-only import(零运行时依赖; 运行时数据面全部经宿主 ui seam)。
@@ -370,13 +370,14 @@ const EMPTY_DOSSIER: ChapterDossierAsset = {
 };
 
 /** 解析 vault 根: 只认 sessionId(M11/N42: workspacePath 旁路已删——客户端路径不是绑定
- *  权威, N34 会话绑定是唯一 root 解析面; 未绑定返回 undefined 由调用方呈现「未绑定」态)。 */
+ * 权威, N34 会话绑定是唯一 root 解析面; 未绑定返回 undefined 由调用方呈现「未绑定」态)。
+ * payload 容忍 null(信封 {endpoint, payload} 的 payload 可为 null)。 */
 async function resolveRoot(
   svc: NovelcraftHostService | undefined,
-  payload: { sessionId?: string },
+  payload: { sessionId?: string } | null,
 ): Promise<{ book: string; root: string } | undefined> {
   if (!svc) return undefined;
-  if (payload.sessionId) {
+  if (payload?.sessionId) {
     return svc.vaults.resolve(payload.sessionId);
   }
   return undefined;

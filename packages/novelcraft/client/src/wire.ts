@@ -1,6 +1,14 @@
 // @novelcraft/dsh-client · 通道 wire 契约(纯类型 + 常量, 宿主/浏览器共享;
 // 无任何运行时依赖, 可被 client bundle 安全引用)。
-export const RPC_CHANNEL = '/novelcraft';
+
+/**
+ * 宿主半身 Fetch 路由(dsh-client-connection /api 共享通道下的精确路由)。
+ * 约束: 不得改回 connection.rpc.handle——dsh 0.1.5-rc.2 起 client-connection
+ * 自身 inject 不再含 webServer, 其 owner.webServer.register 对第三方插件必然抛
+ * "cannot get property \"webServer\" without inject"; connection.fetch.register
+ * 由 client-connection 已挂载的 /api 路由伺服, 认证围栏一致, 新旧版本同行为。
+ */
+export const RPC_FETCH_PATH = '/api/novelcraft';
 
 /** 通道端点名。 */
 export const ENDPOINTS = {

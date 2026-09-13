@@ -1,5 +1,5 @@
 // @novelcraft/dsh-client · 浏览器半身: 空白会话/会话头作者动作 + 工作区面板。
-// 数据 = /novelcraft 认证 Connection RPC(宿主读 .assistant/signals + jobs);
+// 数据 = 同源 fetch /api/novelcraft Fetch 路由(宿主读 .assistant/signals + jobs);
 // 四动词回宿主 assistant.act。UI 只呈现作者语言, 不暴露 raw JSON/内部枚举。
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RpcResult } from '@deepseek-ai/dsh-client-connection/client'
