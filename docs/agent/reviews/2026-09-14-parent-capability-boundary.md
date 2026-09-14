@@ -1,7 +1,8 @@
 # 父仓库能力边界勘察(2026-09-14, 基线 `4db3df9b6`)
 
 > 方法: 两个只读勘察子代理分头摸父仓库 `ai-writing-assist`(后端能力面 / 前端·产品·部署面),
-> 本仓侧对载荷数字做了复核抽查(端点/路由文件/ADR 精确吻合, 表数在口径噪声内, 见 §7)。
+> 本仓侧对载荷数字做了复核抽查。2026-09-14 又从两仓当前代码、父仓机器清单、
+> 远端 ref 与公网只读接口独立复算; 本文已按复算结果订正, 见 §7。
 > 父仓库全程只读(铁律 8); 本文引用的父仓状态以 2026-09-14 HEAD `4db3df9b6` 为准,
 > 后续引用须重新核实。本文是 N58/M14(后续开发计划 §4h)的依据文档, 数字重审结论
 > 已同步《能力图-ai-writing-assist.md》头部注记与台账 §6.1/§6.25。
@@ -10,7 +11,7 @@
 
 父仓已从「工程验证系统」进化为**挂公网(novel.zhh.se)的双入口 Alpha 产品**(作者工作台 +
 RP 私人故事), 后端能力边界显著外扩: 端点 412→519、表 100→115、任务 handler 37→47、
-ADR 25→32; 新增三大全新能力域(匿名公开 RP、公开只读副本、世界库·共创·评审治理)并在
+ADR 25→32; 新增三大全新能力域(匿名公开 RP、公开只读演示及登录后可编辑副本、世界库·共创·评审治理)并在
 **既有** `story/continuity` 模块上落成时空连续性四阶段扩展——后者与本仓 M13-B 刚落地的
 八项确定性检测器正面收敛, 是 M14 对齐批的首要对照对象。
 
@@ -23,6 +24,10 @@ ADR 25→32; 新增三大全新能力域(匿名公开 RP、公开只读副本、
 | 任务 handler | 37 | 37 | **47** | `@task_handler(` 注册调用(排除 registry.py docstring 示例) |
 | ADR | 25 | 27 | **32** | docs/adr/ 下 md 文件(除 README; 含 7 篇无编号主题 ADR); 本仓独立复核吻合 |
 | 路由文件 | 19 | 19 | **20** | 含 `APIRouter` 的 backend py 文件(新增 = modules/assistant/api.py); 本仓独立复核吻合。注意: 能力图 §0 的「15 条前端一级路由」是另一维度, 勿混 |
+
+父仓当前 `scripts/check_architecture_docs.py` 另独输出 **9 个业务模块 / 115 张 ORM 表 /
+47 个 task handler / 16 条前端路由 / 32 篇 ADR**。「20 个后端路由文件」与「16 条前端
+路由」是两种口径, 不可互换。
 
 推进节奏: `8c..fede3bd72`(121 commits)后端近乎冻结(+13 端点, 重心在前端/CI/RP);
 **`fede3bd72..HEAD`(274 commits)是后端增量主体(+94 端点; 8c 以来共 +107, 几乎全部落在
@@ -49,16 +54,17 @@ ADR 25→32; 新增三大全新能力域(匿名公开 RP、公开只读副本、
    配置非法即整线静默 inert(fail-closed); 24h idle/absolute 会话 + HttpOnly Cookie +
    每小时级联清理; 访客自备 DeepSeek Key 只在 SSE 请求头临时构建 client(不落
    Cookie/DB/快照/日志/worker); 禁看海循环/后台连续性/web search/导入。
-2. **公开演示只读副本**(`fc35d51e7`, 新表 `demo_project_copies`): 演示项目一次性
-   owner-scoped 可编辑副本, 只拷持久作者资产(20+ 表), 只暴露 published 章节
+2. **公开只读演示 + 登录后可编辑副本**(`fc35d51e7`, 新表 `demo_project_copies`): 演示源只暴露
+   published 章节; 登录 owner 可幂等创建一份可编辑副本, 只拷持久作者资产(20+ 表)
    (`428e3a70c`), 读者身份与作者 workspace 摘要隔离(`dafef5e90`/`8b8193d31`)。
-3. **世界库/共创会话/评审治理**(父仓 ADR-0020/0021/0022): world 域 +36 端点、+6 张
-   `world_library_*` 表、`world_cocreation_sessions/messages` 持久化、review ownership +
+3. **世界库/共创会话/评审治理**(父仓 ADR-0020/0021/0022): 该能力簇 +36 端点、+8 张相关表
+   (5 张 `world_library_*` + 2 张 `world_cocreation_*` + `world_validation_review_items`), review ownership +
    impact preview + author adjudication(`c7278293e`/`0f6d3232d`/`632b6953d`/`ab8f826c6`)。
 4. **时空连续性管线(既有模块上的四阶段扩展)**: `backend/modules/story/continuity/`
-   在 8c 时代已存在, 本窗口在其上与 `writing/services.py` 落成四阶段: `2210c3aac`
-   temporal/causal 事件摄取 → `de9846689` scene memory contract 版本化 → `c4d178706`
-   确定性连续性检查(主体落 writing/services.py) → `f54b1972e` 作者确认事实。
+   在 8c 时代已存在。本窗口的能力锚点为 `de9846689`(scene memory contract 版本化)、
+   `2210c3aac`(temporal/causal 事件摄取)、`c4d178706`(确定性检查, 主体落
+   `writing/services.py`)、`f54b1972e`(作者确认事实); 运行时语义顺序是事件摄取→版本化
+   checkpoint 投影→确定性检查→作者确认, 不把这个顺序当 commit 拓扑。
    **与本仓 M13-B(§4d)正面收敛。**
 
 ### 2.2 次级增量
@@ -86,15 +92,18 @@ topic_members/favorites/recents/workspace_profiles、world_validation_review_ite
   收拢(today→writing 规范化), home 只剩作家/RP 双入口; author workspace 重设计收官
   (`07b69d800` 引入 ShellApp/Sidebar/Topbar + 本地主题包, `e580950bc` 收官 546 files,
   含 Apple 设计审计与组件动效规则)。
-- **公开 demo 承诺**(README + new-user-guide): 匿名访客只读浏览固定演示作品的已发布
-  章节(五个路由) + 跑一段演示 RP; 不能看海/后台连续性/续写/web search/导入/写回原作。
+- **公开 demo 边界**(README + new-user-guide + 公网只读探测): 代码支持固定作品只读浏览与匿名
+  演示 RP; 2026-09-14 公网 `/api/auth/config` 实测为 `demo.enabled=true`、`demo.rp_enabled=false`,
+  因而当前对外只有只读演示, 匿名演示 RP 仍在 flag 后。启用后也不能看海/后台连续性/
+  续写/web search/导入/写回原作。
 - **主题系统**(父仓 ADR-0019): 纯前端本地 `.nctheme.zip`(Worker 解压 + manifest 校验 +
   IndexedDB 存储不上服务器)。#134 缘起首次生产发布翻车(资产白名单不认 zip MIME),
   发布合同脚本自动回滚, 回滚状态记录于 `62d0fd1e8`。
 - **移动端**: 系统性响应式适配(多断点覆盖 390–1100; @media 规则散布数十文件, 具体口径
   未复核) + 2026-09-11 专项审计(`ui-size-audit.md`, 71 条论断三轮复核)落地四批修复;
   已知残留 761–1099px 中档缝隙。
-- **部署/CI**: 生产 9 服务 compose(digest 钉死 + read_only/cap_drop 加固)+ openresty +
+- **部署/CI**: 生产 compose 声明 10 个 service(7 个默认 + 1 个 `search` profile + 2 个 `ops`
+  profile; digest 钉死 + read_only/cap_drop 加固)+ openresty +
   Cloudflare Tunnel(公网 novel.zhh.se, `verify_public.sh` 全绿合同); CI 为同工作流 +
   `scripts/classify_ci_changes.py` 按改动分流(PR 按影响面选门禁, main 全量)。
 - **文档面**: 出现面向最终用户层(new-user-guide.md + .docx + user-personas.md 产品判据),
@@ -102,9 +111,9 @@ topic_members/favorites/recents/workspace_profiles、world_validation_review_ite
 
 ## 4. 能力边界判定
 
-| 已对外可用(公网) | flag 后面(默认关) | 内部/实验 |
+| 已对外(公网) | 已入 main 但在 flag/部署配置后 | 内部/实验 |
 |---|---|---|
-| 双入口注册 + 自带 Key; 作者主链(导入→版本化写作→Scene→世界→大纲→证据→AI 地图, 候选先审后采); RP 私人故事(不可变分支/流式恢复/看海); 公开 demo(匿名只读章节 + 演示 RP); 本地主题包; 生产发布合同(失败自动回滚) | 匿名 RP/demo 读取(三层 PUBLIC_DEMO_* env, 配置非法整线 inert); `debug_api`(public 部署不注册且关 docs/openapi); RAG query planner/reranker(compose 默认 false); Assistant(`ASSISTANT_ENABLED=false`) | 演示 source 物化脚本(dry-run 默认); 跨作品 crossover/项目共享/公开发布(README 明示非目标); 761–1099px 响应式缝隙; 高级生成工具定位为内部恢复工具 |
+| **实测入口**: HTTPS/健康接口、邮箱认证配置已启用、公开只读 demo 项目可读, 下发 bundle 含作者/RP 双入口。**已提交对外合同(本轮未登录/未调 provider 复验)**: 作者主链、登录 RP 私人故事、登录后演示副本、本地主题包、失败自动回滚的发布合同 | 匿名演示 RP(三层 `PUBLIC_DEMO_*` 门禁; 公网当前 `rp_enabled=false`); RAG query planner/reranker(compose 默认 false); Assistant(父仓 ADR-0023, `ASSISTANT_ENABLED=false`); `debug_api` 只在非 public 模式注册 | 演示 source 物化脚本(dry-run 默认); 跨作品 crossover/项目共享/公开发布(README 明示非目标); 761–1099px 响应式缝隙; 高级生成工具定位为内部恢复工具 |
 
 ## 5. 对本仓的对齐含义(N58/M14 的输入)
 
@@ -125,7 +134,7 @@ topic_members/favorites/recents/workspace_profiles、world_validation_review_ite
 
 ### 5.2 不对齐维持(父仓产品面, N58 防回流)
 
-匿名公开 RP/公开只读副本/公网部署线(hosted 多用户形态, 本仓是本地 DSH 插件, D23 与
+匿名公开 RP/公开只读演示及登录后可编辑副本/公网部署线(hosted 多用户形态, 本仓是本地 DSH 插件, D23 与
 多用户/云同步边界不变); 主题包机制(N52 维持); 面向最终用户的产品文档/截图门面; 镜像
 digest/部署栈(本仓无镜像分发); 付费评测(维持需用户裁决)。
 
@@ -152,15 +161,26 @@ digest/部署栈(本仓无镜像分发); 付费评测(维持需用户裁决)。
 
 ## 7. 勘察口径与复核状态
 
-- 端点 519/路由文件 20/ADR 32: 本仓独立复核精确吻合(2026-09-14, git grep 口径同 §1);
-  路由文件基线 8c/fede 均为 19(评审机器复核), +1 = modules/assistant/api.py。
-- 表数 115: 评审机器复核「排除 tests 的唯一 `__tablename__` 赋值」= 115(tests 内另有
-  1 处); 迁移文件 46→56, +15 张具名新表名单逐张吻合, 0 删除。M14 批 1 以父仓机器清单
-  (scripts/check_architecture_docs.py)复核定数。
-- 任务 handler 47: 子代理口径 `@task_handler(` 注册(排除 registry.py docstring 示例);
-  父仓机器清单业务口径会偏低(8c 时代 37 vs 机器口径 30, 同类差异), 批 1 一并核对。
-- `story/continuity` 定性: 目录 10 个文件在 8c/fede 均已存在, 本窗口为四阶段扩展
-  (净变化 +323/−180; 确定性检查主体落 writing/services.py +380)——「新域」定性不成立,
-  评审修正后全文按「既有模块四阶段扩展」表述。
-- 父仓工作树状态: `main...origin/main` 干净同步(此前 N52 记录的本地 ahead 2 perf(world)
-  提交已不在, 引用旧结论须废弃)。
+- 两仓基线: 父仓 `HEAD`/`origin/main`/远端 `refs/heads/main` 均为 `4db3df9b6`, 工作树干净;
+  本仓复核起点 `HEAD`/`origin/main`/远端均为 `57dd276b`, 只有既存未跟踪 `docs/agent/drafts/`。
+- 历史区间: `8c1516daf..fede3bd72` = 121 commits, `fede3bd72..4db3df9b6` = 274,
+  合计 395; 端点按生产 Python 路径中 FastAPI 装饰器计数为 412/425/519,
+  后端路由文件为 19/19/20, ADR 文件为 25/27/32, 迁移文件为 46/47/56。
+- 父仓机器清单 `PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_architecture_docs.py` 实际通过,
+  输出 9 个业务模块/115 张 ORM 表/47 个 task handler/16 条前端路由/32 篇 ADR;
+  handler 37/37/47 另经 `@task_handler(` 注册口径复算。
+- `fede3bd72..4db3df9b6` 的 `world/api.py` 端点由 136→172(+36, 0 删除),
+  `world/map_atlas_api.py` 由 22→35(+13), 合计对应 world 域 158→207(+49)。
+- 表清单 100/101/115; 8c→当前精确新增 §2.3 所列 15 张、0 删除。其中
+  `world_library_*` 是 5 张, 与 2 张 `world_cocreation_*` 及 1 张 review 表合计 8 张;
+  原文「6 张 `world_library_*`」已订正。
+- `story/continuity` 在 8c/fede/当前均有 16 个 tracked 文件; 本窗口其中 10 个文件发生变化,
+  净变化 +323/−180。父仓确定性检查在 `writing/services.py` 内共 9 个 rule code
+  (space/time/logic 各 3); 「既有模块扩展」成立, 「新域」不成立。
+- 生产只读探测: `https://novel.zhh.se/` 与 `/api/health` 返回 200/healthy+connected;
+  `/api/auth/config` 返回 `auth_mode=public`、`email_enabled=true`、`demo.enabled=true`、
+  `demo.rp_enabled=false`; 该配置指向的 `/api/projects/{id}?demo=1` 可读, 已下发 JS bundle 含作者/RP
+  双入口文案。本轮未登录、未调 provider, 不将源码/单测扩大为
+  公网业务全链验收。
+- compose 当前声明 10 个 service: 7 个默认服务、1 个 `search` profile 服务、2 个 `ops`
+  profile 服务; 原文「生产 9 服务」已订正。
