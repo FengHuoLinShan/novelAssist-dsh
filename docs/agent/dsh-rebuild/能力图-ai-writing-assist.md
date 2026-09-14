@@ -1,45 +1,40 @@
-# ai-writing-assist 能力图(截至 8c1516daf)
+# ai-writing-assist 能力图(截至 4db3df9b6)
 
-> 审计基准: 父仓库 `ai-writing-assist` HEAD `8c1516daf`("fix(writing): bind semantic review to
-> confirmed context"), 审计日期 2026-08-31。父仓库只读(铁律 8), 本文档仅为重构参考。
+> 审计基准: 父仓库 `ai-writing-assist` HEAD `4db3df9b6`, 审计日期 2026-09-14(M14 批 1
+> 基线重审, N58; 8c1516daf 为 2026-08-31 上一基线)。父仓库只读(铁律 8), 本文档仅为
+> 重构参考。
 >
 > **文档定位**: 本文是父仓库能力的**自包含全景图**, 以父仓库为中心描述"它现在有什么"。
 > 与《功能对照清单.md》的分工: 对照清单 §1–§5 是 5337fbcd3 旧快照的历史审计、§6 是与
 > dsh 现状的**对照切片**; 本文是**当前 HEAD 的源系统侧事实**, 全量清单与裁定均以本文为准
 > 覆盖旧快照数字。重构时先读本文建立能力全景, 再到对照清单 §6 查对应切片的差距。
 >
-> **2026-09-14 基线推进注记(N58, 正文尚未全文重审——全文重审属 M14 批 1, 后续开发计划 §4h)**:
-> 父仓 main 已推进至 `4db3df9b6`(2026-09-07 对齐点 `fede3bd72` 之后又 274 commits, 后端
-> 增量主体)。勘察重审数字: HTTP 端点 412→**519**、ORM 表 100→**115**(+15 具名, 迁移
-> 46→56 对账)、任务 handler 37→**47**、ADR 25→**32**、路由文件 19→**20**(本表「15 条
-> 前端一级路由」是另一维度)。新增三大全新能力域: 匿名公开 RP(父仓 ADR-0024, 三层 env
-> 门禁 fail-closed)/公开只读副本/世界库·共创·评审治理(父仓 ADR-0020/0021/0022,
-> world +36 端点 +8 表); 并在**既有** `backend/modules/story/continuity/` 模块上落成
-> **时空连续性四阶段扩展**(事件摄取→contract 版本化→确定性检查→作者确认事实, 与本仓
-> M13-B 检测面正面收敛); 另有父仓 ADR-0023 有界 agent runtime(默认关)与父仓 ADR-0018
-> RP 源版本化。产品形态变为**公网双入口
-> Alpha**(novel.zhh.se, 作者工作台+RP, 含面向最终用户文档层)。勘察全文与证据锚点见
+> **2026-09-14 基线推进注记(N58, 已完成)**: 本文已于 2026-09-14 按 M14 批 1 全文重审至
+> `4db3df9b6`, 正文各节数字与新增能力域均已落文(§0/§2/§3/§4/§5/§6/§8)。保留三处关键
+> 订正: 世界库簇 8 表 = 5 library + 2 cocreation + 1 review; compose 声明 10 个 service
+> (7 默认 + 1 search profile + 2 ops profile); 2026-09-14 公网只读实测
+> `demo.enabled=true` 但 `demo.rp_enabled=false`(只读 demo 已开、匿名 demo RP 未开,
+> 本轮未登录/未调 provider)。勘察全文与证据锚点见
 > `../reviews/2026-09-14-parent-capability-boundary.md`。**注意两仓 ADR 编号独立撞号**
 > (父仓本轮新增 ADR-0018–0024 与本仓同号段 0018–0024 全部同号不同义), 引用必须带
-> 「父仓/本仓」限定。本文下述
-> 正文(8c1516daf 快照)在 evidence/RAG 检索与 RP 前端体验两域之外大体仍有效, 引用前先
-> 对照本注记。
+> 「父仓/本仓」限定。
 
 ## 0. 规模快照(与旧快照的漂移)
 
-| 维度 | 5337fbcd3(旧台账 §1–§5) | 当前 HEAD 8c1516daf | 核实方式 |
-|---|---|---|---|
-| 业务模块 | 13 个目录 | **8 个 owner 模块**(settings/rag/context/outline/memory 五目录已物理删除, 非兼容壳) | `git ls-files backend/modules`; ADR-0015 |
-| ORM 表 | 90 张 | **100 张** | `scripts/check_architecture_docs.py` 机器清单 |
-| API 端点 | 357 个 | **412 个**(409 router + 3 main 内联) | AST 静态解析 |
-| 任务 handler | ~30 | **37 个**(含 3 个退役 stub、4 个非 LLM) | `app/task_runtime.py` 注册表 |
-| 前端一级路由 | 14 条 | **15 条**(其中 4 条为兼容重定向) | `frontend-console/router.js` routes 表 |
-| ADR | — | **25 篇** | `docs/adr/` |
-| 旧兼容挂载 | — | `/api/rag/*`、`/api/context/*`、`/api/settings/*` 已**退场删除**; 保留 `/api/outline/*` 与 `/api/novels/{id}/memories` 为 canonical 路径 | 39c3878f0 |
+| 维度 | 5337fbcd3(旧台账 §1–§5) | 8c1516daf(2026-08-31) | 4db3df9b6(2026-09-14 重审) | 核实方式 |
+|---|---|---|---|---|
+| 业务模块 | 13 个目录 | 8 个 owner 模块(settings/rag/context/outline/memory 五目录已物理删除, 非兼容壳) | **9 个 owner 模块**(新增 assistant 有界 agent runtime, 父仓 ADR-0023, 默认关) | `git ls-files backend/modules`; ADR-0015 |
+| ORM 表 | 90 张 | 100 张 | **115 张**(世界库簇 +8、assistant 4、map_atlas_revisions、interaction_source_revisions、demo_project_copies 等) | `scripts/check_architecture_docs.py` 机器清单 |
+| API 端点 | 357 个 | 412 个(409 router + 3 main 内联) | **519 个**(router 装饰器口径, 按域见 §4 头部) | router 装饰器计数 |
+| 任务 handler | ~30 | 37 个(含 3 个退役 stub、4 个非 LLM) | **47 个**(本窗口新增 10 个, 见 §5 新增子表; 3 退役 stub 维持) | `@task_handler` 注册计数 |
+| 前端一级路由 | 14 条 | 15 条(其中 4 条为兼容重定向) | **16 条**(新增 demo-rp; 4 条兼容维持) | `frontend-console/router.js` routes 表 |
+| ADR | — | 25 篇 | **32 篇**(新增父仓 0018–0024) | `docs/adr/` |
+| 迁移文件 | — | 46 个 | **56 个**(fede3bd72→HEAD 新增 9 个, 链尾见 §6.3) | `backend/alembic/versions/` |
+| 旧兼容挂载 | — | `/api/rag/*`、`/api/context/*`、`/api/settings/*` 已**退场删除**; 保留 `/api/outline/*` 与 `/api/novels/{id}/memories` 为 canonical 路径 | 维持 8c1516daf 状态(无回退) | 39c3878f0 |
 
-架构机器清单口径(`make docs-check`): `8 business modules, 100 ORM tables, 30 task handlers,
-15 frontend routes, 25 ADR files`(handler 数 30 与注册表 37 的差异 = 3 退役 stub + 4 global
-清理/确定性任务不计入业务口径)。
+架构机器清单口径(`make docs-check`, M14 批 1 重审实测): `9 business modules, 115 ORM
+tables, 47 task handlers, 16 frontend routes, 32 ADR files`; handler 数 47 已与
+`@task_handler` 注册计数口径一致(旧文「机器清单 30 vs 注册表 37」的口径差不再存在)。
 
 ## 1. 系统总览
 
@@ -55,17 +50,22 @@
     World/Outline/RAG/writing/memory, 不支持原作导入/按章分叉/公开分享。
 - 账号体系: 公开浏览器账号(邮箱 OTP + Authing 微信互斥主身份, ADR-0010); 线上
   novel.zhh.se, 用户自连 API Key。**dsh 已裁定单用户本机替代(D11), 此层不迁移**。
+- **公网双入口 Alpha(M14 批 1 重审)**: novel.zhh.se 对外提供作者工作台 + RP 双入口;
+  2026-09-14 公网只读实测 `/api/auth/config`: auth_mode=public、email_enabled=true、
+  demo.enabled=true、demo.rp_enabled=false(只读 demo 已开、匿名 demo RP 未开); 本轮
+  未登录/未调 provider, 不替代业务全链验收(见 §3.19)。
 - "明确不做"(`docs/00_整体设计.md`): 多 Agent 协同写正文、未授权自动合并、
   Neo4j/GraphRAG、项目共享/协作权限、商业功能。
 
-### 1.2 架构分层(8 模块)
+### 1.2 架构分层(9 模块)
 
 ```
 事实层     project, world(含 story/continuity 记忆事件账本)
 结构层     story(= outline_state 总纲/P20/Scene + continuity 记忆)
 辅助层     imports(导入流水线), evidence(= indexing RAG + compilation 上下文),
            writing(正文)
-层外       account(账户/会话/Key), interaction(RP 旅程)
+层外       account(账户/会话/Key), interaction(RP 旅程),
+           assistant(有界 agent runtime, 父仓 ADR-0023, 默认关; 见 §3.18)
 ```
 
 - 跨模块只允许依赖对方 `contracts.py`/`facade.py`/DI port(父仓 `AGENTS.md:54-58`);
@@ -78,7 +78,7 @@
 | 依赖 | 用途 |
 |---|---|
 | Python 3.12 + FastAPI + SQLAlchemy 2.0 + Pydantic v2 | 后端 |
-| PostgreSQL 17 + pgvector(Vector 768, HNSW) + pg_trgm | 全部 100 张表; `rag_chunks`/`core_entities` 向量列; `search_text` 生成列 |
+| PostgreSQL 17 + pgvector(Vector 768, HNSW) + pg_trgm | 全部 115 张表; `rag_chunks`/`core_entities` 向量列; `search_text` 生成列 |
 | **无 Redis/Celery** | 任务队列表 `async_tasks` + `FOR UPDATE SKIP LOCKED`(`backend/infrastructure/tasks/__init__.py`) |
 | MinIO(S3 兼容, 私有双桶) | 地图册图片(`MAP_ATLAS_S3_*`, PNG ≤50MB/8192²) + 对象图片(`WORLD_OBJECT_S3_BUCKET`, WebP 多变体); 32GiB 单盘硬上限(ADR-0014) |
 | BGE 本地嵌入 | `BAAI/bge-base-zh-v1.5` ONNX int8 独立子进程, 批队列背压 |
@@ -88,23 +88,29 @@
 
 | # | 能力域 | owner 模块 | API 前缀(端点数) | 核心数据 | 对照清单切片 |
 |---|---|---|---|---|---|
-| 1 | 账户与身份 | account | `/api/auth`、`/api/account`(28) | accounts/web_sessions/凭据 9 表 | §6.13(dsh 去账号) |
-| 2 | 项目与工作区 | project | `/api/projects`(25) | projects/偏好/作者任务 4 表 | §6.13 |
+| 1 | 账户与身份 | account | `/api/auth`、`/api/account`(29) | accounts/web_sessions/凭据 9 表 | §6.13(dsh 去账号) |
+| 2 | 项目与工作区 | project | `/api/projects`(28) | projects/偏好/作者任务/demo 副本 5 表 | §6.13 |
 | 3 | LLM 连接与路由 | account+project | settings 端点 | account_llm_credentials/global_llm_defaults | §6.23.6 |
-| 4 | 文件导入与深度导入 | imports | `/api/imports`(9) | import_records/imported_chapters/import_workflow_runs 3 表 | §6.6、§6.14 |
-| 5 | 世界事实底座 | world | `/api/world` 实体部分(≈60) | core_entities/relations/aliases/revisions 等 core+character 7 表 | §6.10 |
+| 4 | 文件导入与深度导入 | imports | `/api/imports`(21) | import_records/imported_chapters/import_workflow_runs 3 表 | §6.6、§6.14 |
+| 5 | 世界事实底座 | world | `/api/world` 实体部分(≈60, 8c 粒度) | core_entities/relations/aliases/revisions 等 core+character 7 表 | §6.10 |
 | 6 | 世界正典权威(Phase 0) | world | `/api/world/canon*`(5) | world_assertions/canon_revisions/canon_heads 4 表 | §6.17 |
-| 7 | 世界书与生成中心 | world | `/api/world/bible*`、`/generation-center`(≈55) | bible 20 张表 | §6.17 |
+| 7 | 世界书与生成中心 | world | `/api/world/bible*`、`/generation-center`(≈55, 8c 粒度) | bible 20 张表 | §6.17 |
 | 8 | 知识边界与读者揭示 | world | knowledge-tags/reveal(3+投入各域) | character_knowledge/tags/policies 7 表 | §6.12.7 |
 | 9 | 故事结构(总纲/P20/Scene) | story | `/api/outline`(55)+`/api/story`(31) | outline_state 11 表 | §6.18 |
 | 10 | 记忆与连续性 | story/continuity | `/api/novels/{id}/memories`(11) | memory 5 表(事件账本) | §6.18.4 |
-| 11 | 证据域(RAG+上下文) | evidence | `/api/evidence/*`(30) | indexing 3 表 + compilation 7 表 | §6.11、§6.12 |
+| 11 | 证据域(RAG+上下文) | evidence | `/api/evidence/*`(34) | indexing 3 表 + compilation 7 表 | §6.11、§6.12 |
 | 12 | 正文写作与审查 | writing | `/api/writing`(23) | writing_drafts/conflict 3 表 | §6.15–6.16 |
 | 13 | Story 派生资产 | story | `/api/story`(人物卡/剧本) | story 4 表 | §6.18 |
-| 14 | AI 地图册 | world | `/api/world/map-atlas`(22) | map_atlas 4 表 + S3 | §6.19 |
-| 15 | RP 互动旅程 | interaction | `/api/interactions`(32) | interaction 7 表 | §6.20(dsh 已延期) |
+| 14 | AI 地图册 | world | `/api/world/map-atlas`(35) | map_atlas 5 表(+revisions) + S3 | §6.19 |
+| 15 | RP 互动旅程 | interaction | `/api/interactions`(53) | interaction 8 表(+source_revisions) | §6.20(dsh 已延期) |
 | 16 | 长任务与恢复 | infrastructure/tasks | `/api/tasks`(4)+operation receipts | async_tasks 1 表 | §6.9 |
-| 17 | 前端工作台 | frontend-console | 15 路由(4 兼容) | — | §6.22 |
+| 17 | 前端工作台 | frontend-console | 16 路由(新增 demo-rp, 4 兼容) | — | §6.22 |
+| 18 | 世界库·共创·评审 | world | `/api/world` 内(+36, M14 批 1) | library 5 + cocreation 2 + review 1 = 8 表 | §6.17 待扩/M14 候选评估区 |
+| 19 | 有界 agent runtime | assistant | `/api/assistant`(17, 默认关) | assistant_runs/watches/notices/action_batches 4 表 | §6.24 候选 |
+| 20 | 公开演示与匿名 RP | account+project+interaction | demo 端点群(anonymous-rp/demo 副本) | demo_project_copies | §6.20 注记(M14 批 A/B 裁定前不预建) |
+
+world 域合计 207 端点(/api/world 172 + map-atlas 35), story 97、evidence 34、writing 23
+(M14 批 1 重审); 行内 ≈ 数为 8c1516daf 粒度快照, 新增端点群见 §3.4/§3.7/§3.14/§3.15/§4。
 
 ## 3. 能力域详述
 
@@ -171,6 +177,11 @@
   generation 代次、每项目至多一个活动 run 部分唯一索引)。
 - 上下文快照: 每次真实 LLM 调用前持久化 context snapshot(审计记录), 紧凑元数据长期保留、
   rendered_context 30 天/200 条先到先清(`workflows/ai-import-persistent-context-snapshot.md`)。
+- **有界评审解决与可恢复定向补全(M14 批 1 重审, 锚点 29a1a174b/424749166)**: imports
+  +12 端点(9→21); 新增三个 handler 均 `manual_resume`——`imports_completion_review`
+  (完成评审)、`import_review_resolution`(评审解决)、`targeted_completion`(可恢复定向
+  补全, 见 §5 新增子表); 评审产物经显式裁决后才采用, 延续"规则可回滚自动采用、冲突/低置信
+  进待处理"语义。
 - **dsh 参考**: dsh 已有六阶段 durable workflow + ApprovalGate; 缺用户可达的
   list/status/resume/abandon(§6.6/§6.9)。
 
@@ -227,6 +238,13 @@
 - 问世界(ask-world): 基于可见证据的问答, 带引用可复核/引用重开+新鲜度, 无证据时模型零
   调用(no_answer); 作者显式保存才建待处理建议。
 - 知识图谱(只读)。
+- **世界库主题目录/共创会话持久化/评审治理(M14 批 1 重审; 父仓 ADR-0020/0021/0022,
+  锚点 c7278293e/0f6d3232d/632b6953d/ab8f826c6)**: `/api/world` 内 +36 端点、+8 表——
+  library 5(`world_library_topics`/`topic_members`/`favorites`/`recents`/
+  `workspace_profiles`)+ cocreation 2(`world_cocreation_sessions`/`messages`)+
+  review 1(`world_validation_review_items`); 评审治理带 review ownership +
+  impact preview + author adjudication; 共创 turn 走 handler `world_cocreation_turn`
+  (auto_requeue, 见 §5)。
 - **dsh 参考**: 内容步/schema/文件真相可复用; 世界书读写工作台、多轮来源 receipt、历史
   恢复、采纳包、validation/health 均未对齐(§6.17)。
 
@@ -275,6 +293,13 @@
 - 行为: Scene 锚定事件按业务顺序重放; **Scene 重跑替换该段并失效后续系统 checkpoint/
   snapshot**; 普通正文发布只快照已有事件(不从新正文补事件); rebuild 从修正点重建;
   scene-checkpoints ensure/rebuild/repair; panorama 章节世界全景读面。
+- **时空连续性四阶段扩展(M14 批 1 重审, 四 commit 锚点)**: 事件摄取(2210c3aac,
+  temporal+causal 事件摄取)→ contract 版本化(de9846689, scene memory contract)→
+  确定性检查(c4d178706, 9 个 rule code 落 `writing/services.py`:
+  space_exit_state_mismatch/space_simultaneous_presence/space_route_not_declared/
+  time_order_cycle/time_simultaneous_order_conflict/time_anchor_conflict/
+  logic_claim_conflict/logic_precondition_missing/logic_commitment_unmet)→
+  作者确认事实(f54b1972e)。与本仓 M13-B 检测面正面收敛, 是 M14 批 A 对照对象。
 - **dsh 参考**: dsh 的 `memory/events.jsonl` 有原语无生产 writer/reader; 按故事顺序投影
   而非 created_at 是关键语义(§6.18.4)。
 
@@ -348,7 +373,11 @@
 - 跨 run 稳定层级节点(`map_atlas_nodes`: novel+semantic_key 唯一, provisional/adopted);
   标注点(位置 0~1 Check);"为何这样画"证据区(直接支持/AI 补全/冲突/来源清单)。
 - 删除竞态: 项目 share/exclusive lock + 两个 global 清理任务(S3 前缀幂等清理)。
-- **dsh 参考**: dsh 的 Map Atlas 已有安全外部交接主链; ADR-0020 确认不做站内生图(§6.19)。
+- **图集深化(M14 批 1 重审)**: 统一空间结构与图集(fe3deb82f); 评审历史+排练
+  (40734638e); 可恢复 focused one-hop 检索(b4909a3fb, handler
+  `evidence_focused_search` manual_resume×5, 见 §5); 新增 `map_atlas_revisions` 表与
+  handler `world_map_schematic_generate`(manual_resume×4); map-atlas 端点 22→35。
+- **dsh 参考**: dsh 的 Map Atlas 已有安全外部交接主链; 本仓 ADR-0020 确认不做站内生图(§6.19)。
 
 ### 3.15 RP 互动旅程(interaction)
 
@@ -362,6 +391,10 @@
   修订(7 段结构); **看海(see_sea)自适应模式**(确认弹窗+偏好记忆+断连自动关闭)。
 - 生命周期: 归档/恢复/删除/重命名/导出(md 完整 / txt 纯故事); 心跳/离开上报;
   composer 草稿本地暂存(100k 上限)。
+- **RP 源资料版本化与本轮扩展(父仓 ADR-0018, M14 批 1 重审)**: 新增
+  `interaction_source_revisions` 表(同 owner、显式版本化的 source 只读引用);
+  新增 handler `interaction_agent_story_generate`(restart_origin)与
+  `interaction_continuity_review`(manual_resume); 端点 32→53。匿名 demo RP 见 §3.19。
 - **dsh 参考**: D23 已确认延后至 R6 后; 不为主线预建实现(§6.20)。
 
 ### 3.16 长任务、进度与恢复(infrastructure/tasks)
@@ -376,43 +409,78 @@
 - 恢复策略四种: auto_requeue(退避 1,2,4,8,16,30s)/manual_resume(标 interrupted,
   用户显式继续, 如深导入)/restart_origin(如 publish_chapter)/never_retry; stale 心跳
   扫描(30s 心跳/120s gap); 启动时 4 个领域 owner reconciler, 恢复失败 fail-closed。
+- Handler 总数 37→**47**(M14 批 1 重审): 新增 assistant_turn/evidence_focused_search/
+  targeted_completion/imports_completion_review/import_review_resolution/
+  interaction_continuity_review/interaction_agent_story_generate/story_reference_review/
+  world_cocreation_turn/world_map_schematic_generate 共 10 个, 明细归 §5 新增子表;
+  3 个退役 stub 维持。
 - **Operation receipts**(ADR-0013): 作者 AI 长任务由前端生成 UUID operation_id +
   submission_fingerprint, 服务端同指纹复用原任务(含终态)、异请求 409; **不建全局任务
   中心/跨设备锁**; 只在原页恢复(localStorage receipt + 1.5s 轮询)。
 - 对外 API 仅 4 个(POST/GET/cancel/retry); 通用提交需 generic_submit_schema(当前无
   handler 注册)。
-- **dsh 参考**: ADR-0023"显式长 job 由 Node 托管"尚未接到创作工具; 作者不能离开/重开/
+- **dsh 参考**: 本仓 ADR-0023"显式长 job 由 Node 托管"尚未接到创作工具; 作者不能离开/重开/
   继续/放弃是当前差距(§6.9)。
 
 ### 3.17 前端工作台(frontend-console)
 
 - 栈: 原生 JS 骨架(router.js hash 双格式 + state.js Proxy + api.js/apiContracts.js 约
   180 条契约) + Vue shell + 按路由懒加载 island; 禁 v-html、无 Vue Router/Pinia。
-- 15 条路由(§5 全表): home(双入口)/project/journeys/interaction/today→writing 兼容/
-  world(bible/objects/review/relations/aliases)/rag(search/status)/outline(story-outline/
-  arcs/threads/scenes)/scene 兼容/writing(?home=1 首页模式)/map/generate 兼容(→OwnerAi
-  抽屉)/llm 兼容/settings/project-settings。
+- 16 条路由(M14 批 1 重审): home(双入口)/project/journeys/interaction/**demo-rp(新增)**/
+  today→writing 兼容/world(bible/objects/review/relations/aliases)/rag(search/status)/
+  outline(story-outline/arcs/threads/scenes)/scene 兼容/writing(?home=1 首页模式)/map/
+  generate 兼容(→OwnerAi 抽屉)/llm 兼容/settings/project-settings; 新增
+  `PUBLIC_DEMO_ROUTES` 集合(writing/world/outline/map/rag/demo-rp, 见 §3.19)。
 - 横切: 空/载/错/冲突态分层(temporary 可重试/inaccessible 401→account/4xx/stale 代次
   丢弃); "失败保留旧数据+警告条"; keep-alive 全删, 离开即卸载(ADR-0009 附录 A, 显式
   session 重建); 写作本地草稿备份; 窄屏 760/1100 断点 + 移动底栏; 可访问性(aria-live/
   焦点捕获恢复/Escape 层级/reduced-motion); 三主题 + RP 独立纯白壳; CSP; errorLogger
   错误编号化(50 条/脱敏/keepalive 上报); 账号失效事件强制安全刷新; 浏览器存储按账号
   scope。
+- **本轮新增(M14 批 1 重审)**: workspace 重设计收官(07b69d800 引入
+  ShellApp/Sidebar/Topbar, e580950bc 收官 546 files); 本地主题包(父仓 ADR-0019:
+  纯前端 .nctheme.zip, Worker 解压 + manifest 校验 + IndexedDB); 移动端响应式
+  390–1100 多断点 + ui-size-audit(71 条三轮复核、四批修复, 残留 761–1099px 缝隙);
+  出现面向最终用户文档层(new-user-guide.md/.docx/user-personas.md)。
 - **dsh 参考**: dsh 已从 agent-only 进入 agent-first 主链(14 loopback 端点 + rc.8
   conversation.view); World/Story operation、统一返回目标、390px 行为未闭合(§6.22)。
 
-## 4. API 端点全量清单(412 个)
+### 3.18 有界 agent runtime(assistant, 父仓 ADR-0023)
 
-挂载入口 `backend/app/main.py:748-774`。按模块: system 3 + debug 3(仅非 public) +
-tasks 4 + account 28 + imports 9 + interaction 32 + project 25 + world 158 +
-evidence 30 + story 97 + writing 23。
+- 第 9 个业务模块(M14 批 1 重审): 17 端点; 4 表(assistant_runs/watches/notices/
+  action_batches); handler `assistant_turn`(manual_resume); **默认
+  `ASSISTANT_ENABLED=false`**。有界单 Agent 循环: 在服务端注册、授权及可见范围内选择
+  查证/提案工具, 带 schema/预算/超时/日志, 业务写入须领域确认, 禁跨项目访问与绕过确认。
+- **dsh 参考**: M14 候选评估区; 本仓已有 M13-A 常驻状态面 + M13-C 混合通知等价面,
+  大概率记观察(N58)。
 
-### 4.1 system/debug/tasks(10)
+### 3.19 公开演示与匿名 RP(M14 批 1 重审)
+
+- **公开只读 demo**: 已对外(demo.enabled=true), 只暴露 published 章节; 前端走
+  `PUBLIC_DEMO_ROUTES`(writing/world/outline/map/rag/demo-rp)。
+- **登录后可编辑副本**: 登录 owner 幂等创建副本, 只拷持久作者资产 20+ 表, 记
+  `demo_project_copies`(project 模块)。
+- **匿名 demo RP(父仓 ADR-0024)**: `POST /api/auth/anonymous-rp` + interaction
+  demo_router; 24h idle/absolute 会话 + HttpOnly Cookie + 每小时级联清理; 访客自备 Key
+  只在 SSE 请求头临时构建, 不落 Cookie/DB/快照/日志; 禁看海/后台连续性/web search/导入;
+  三层 env 门禁 fail-closed, 公网当前 rp_enabled=false。
+- **dsh 参考**: 父仓产品面, N58 不对齐维持(本仓本地 DSH 插件, D23/多用户/云同步
+  边界不变)。
+
+## 4. API 端点全量清单(519 个)
+
+挂载入口 `backend/app/main.py:748-774`。按域(M14 批 1 重审, router 装饰器口径):
+app 6 + infrastructure 4 + account 29 + imports 21 + interaction 53 + project 28 +
+world 207(/api/world 172 + map-atlas 35)+ evidence 34 + story 97 + writing 23 +
+assistant 17。
+注: 各域逐条清单仍为 8c1516daf 粒度快照, 新增端点按群登记; 逐条全量重审留待下次全量审计。
+
+### 4.1 app/infrastructure(10 = app 6 + infrastructure/tasks 4; 旧 system 3/debug 3 并入 app)
 - `GET /api/health`(DB 探活 degraded 503)、`GET /api/health/llm`(不读凭据)、`GET /`(模块清单)。
 - debug(仅非 public): frontend-errors POST/GET/DELETE。
 - `POST /api/tasks`、`GET /api/tasks/{id}`、`POST .../cancel`、`POST .../retry`。
 
-### 4.2 account(28)
+### 4.2 account(29)
 - `/api/auth`: config; email/request-code、email/verify; me; logout; reauth/email/*×2;
   wechat/start、wechat/callback、reauth/wechat/start。
 - `/api/account`: deletion GET/POST/DELETE。
@@ -421,25 +489,33 @@ evidence 30 + story 97 + writing 23。
   llm-defaults GET/PUT; author-preferences GET/PUT; refresh POST(调试);
   projects-using-defaults GET(project 挂入)。
 - `/legal/terms`、`/legal/privacy`(公开 HTML, 无 /api 前缀)。
+- **+1(M14 批 1 重审)**: `POST /api/auth/anonymous-rp`(匿名 demo RP 会话, 父仓
+  ADR-0024, 见 §3.19)。
 
-### 4.3 imports(9)
+### 4.3 imports(21)
 upload POST; 列表/详情 GET; deep POST(独占锁); stages/scenes、stages/world-objects、
 stages/plot-structure POST; deep/resume、deep/abandon POST。
+**+12 评审解决/定向补全群(M14 批 1 重审, 锚点 29a1a174b/424749166)**: completion-review、
+review-resolution、targeted-completion 等, 语义见 §3.4, handler 见 §5 新增子表。
 
-### 4.4 interaction(32)
+### 4.4 interaction(53)
 journeys CRUD + messages + path-index + tree + attempts(events SSE/stop/keep/continue/
 retry)+ nodes(continue-from-here/regenerate/edit/select/branches)+ modes PATCH +
 heartbeat/leave + preferences(+see-sea-notice) + title + overview(GET/PUT/retry) +
 archive/restore + export + 详情。
+**+21 demo_router/源修订/continuity 群(M14 批 1 重审)**: demo 会话端点群(见 §3.19)、
+source-revisions(父仓 ADR-0018)、agent story generate、continuity review 等, 见 §3.15。
 
-### 4.5 project(25)
+### 4.5 project(28)
 CRUD; recycle-bin GET + permanent-delete POST(原子); llm/provider-templates GET;
 llm-settings GET/PUT + effective-llm-settings + effective-author-preferences +
 field/{name} DELETE(D4 白名单); smart-dedup/scan|apply POST; workspace-summary GET;
 author-tasks GET/POST/PATCH; restore POST; permanent DELETE; author-preferences
 GET/PUT/DELETE(field)。
+**+3 demo 副本群(M14 批 1 重审)**: 公开只读 demo 读面 + 登录 owner 幂等建副本
+(`demo_project_copies`), 见 §3.19。
 
-### 4.6 world(158 = /api/world 136 + map-atlas 22)
+### 4.6 world(207 = /api/world 172 + map-atlas 35)
 - **canon(5)**: head GET; revisions/{id} GET; admissions/preview、admissions POST;
   revert POST。
 - **图谱(1)**: knowledge-graph GET。
@@ -468,12 +544,17 @@ GET/PUT/DELETE(field)。
 - **事件(5)**、**关系(8)**(review-groups/review-batch)、**人物(9)**(characters CRUD +
   knowledge GET/POST + {id} PUT/DELETE)、**批次/别名(8)**(entity-batches、aliases
   review-groups/review-batch)。
-- **map-atlas(22)**: runs POST + latest/{id} GET + stop/resume POST + results GET +
-  confirm-prompts POST; atlas GET; pages/history GET + {id}/prompt GET/PATCH + upload
-  POST + adopt/reject/archive/restore/retry/regenerate/edit POST + image GET;
-  nodes/{id} PATCH; annotations/{id} PATCH。
+- **map-atlas(22→35, M14 批 1 重审 +13)**: runs POST + latest/{id} GET + stop/resume POST +
+  results GET + confirm-prompts POST; atlas GET; pages/history GET + {id}/prompt GET/PATCH +
+  upload POST + adopt/reject/archive/restore/retry/regenerate/edit POST + image GET;
+  nodes/{id} PATCH; annotations/{id} PATCH。+13 为评审历史/排练/schematic 生成群
+  (锚点 fe3deb82f/40734638e/b4909a3fb, 见 §3.14)。
+- **+36 世界库/共创/评审群(M14 批 1 重审)**: library 主题目录(父仓 ADR-0020)、
+  cocreation 会话(父仓 ADR-0021)、validation review ownership/impact preview/
+  author adjudication(父仓 ADR-0022); 锚点 c7278293e/0f6d3232d/632b6953d/ab8f826c6,
+  语义见 §3.7。
 
-### 4.7 evidence(30)
+### 4.7 evidence(34)
 - indexing(8): chunks POST/GET; retrieve POST; metrics GET; prewarm/rebuild/retry-
   embeddings POST; chunks/split POST(预览不落库)。
 - compilation(22): scene-lens POST; compile/render POST; confirm POST; evidence-health
@@ -481,6 +562,8 @@ GET/PUT/DELETE(field)。
   activation-profiles GET/POST + {id} PATCH + publish POST + revisions GET + {v}/
   restore-draft POST; activation-preview GET(legacy)/POST(typed);
   snapshots GET + maintenance POST(dry-run 默认) + {id} GET。
+- **+4 focused search 群(M14 批 1 重审)**: 可恢复 focused one-hop 检索(handler
+  `evidence_focused_search`, manual_resume×5), 锚点 b4909a3fb, 见 §3.14。
 
 ### 4.8 story(97 = /api/story 31 + /api/outline 55 + memories 11)
 - /api/story: character-cards CRUD + revisions + restore + archive; script-files +
@@ -504,7 +587,11 @@ drafts/autosave POST; generate POST; semantic-reviews POST; targeted-revisions P
 drafts POST(发布) + {id} GET/adopt POST/PUT(checkpoint: copy-on-write)/checkpoint POST/
 discard POST/DELETE; chapters/{i} DELETE(软废弃) + draft GET + versions GET; chapters GET。
 
-## 5. 任务 handler 与 AI 工作流全表(37 handler)
+### 4.10 assistant(17, M14 批 1 重审新增; 默认 `ASSISTANT_ENABLED=false`)
+runs/watches/notices/action_batches/turns 端点群(有界 agent runtime, 父仓 ADR-0023,
+语义见 §3.18); 逐条清单留待下次全量审计。
+
+## 5. 任务 handler 与 AI 工作流全表(47 handler)
 
 注册组合根 `backend/app/task_runtime.py:10-27`。恢复策略: auto=auto_requeue(退避重试),
 manual=manual_resume, restart=restart_origin。
@@ -549,6 +636,23 @@ manual=manual_resume, restart=restart_origin。
 | writing_conflict_ai_review | writing | 冲突 AI 软复核 | auto×2 |
 | writing_conflict_item_ai_suggestion | writing | 冲突项建议 | auto×2 |
 
+**本窗口新增 10 个 handler(M14 批 1 重审, 上表 37 行维持不变)**:
+
+| 任务类型 | 模块 | 功能 | 策略 |
+|---|---|---|---|
+| assistant_turn | assistant | 有界 agent turn(默认关, 父仓 ADR-0023) | manual |
+| evidence_focused_search | evidence/compilation | 可恢复 focused one-hop 检索 | manual×5 |
+| targeted_completion | imports | 有界定向补全 | manual |
+| imports_completion_review | imports | 导入完成评审 | manual |
+| import_review_resolution | imports | 导入评审解决 | manual |
+| interaction_continuity_review | interaction | RP 连续性评审 | manual |
+| interaction_agent_story_generate | interaction | RP agent 故事生成 | restart |
+| story_reference_review | story | story 参考评审 | manual |
+| world_cocreation_turn | world | 共创会话 turn(父仓 ADR-0021) | auto×2 |
+| world_map_schematic_generate | world/map_atlas | 地图示意生成 | manual×4 |
+
+3 个退役 stub(plot_structure_generate/chapter_card_extraction/chapter_scene_generate)维持。
+
 非任务型 LLM 流(同步内联): 世界生成中心 chat/convergence/exploration/inspection、
 ask_world、rag reranker、地图册 plan、语义审查同步端点、冲突同步复核等。
 文件式 prompt 仅 10 个(`backend/prompts/`: story_outline、p20×6、scene_entity_extraction、
@@ -556,13 +660,16 @@ alias_relation_extraction、rag_reranker), 其余为内联 step(权威清单
 `docs/prompts/Prompt体系设计.md`; 开发期漂移检查 `backend/tools/prompt_contracts/` 19 份
 JSON, `make prompt-contracts`)。
 
-## 6. 数据模型全表(100 张)与不变量
+## 6. 数据模型全表(115 张)与不变量
 
 ### 6.1 按模块计数
-account 9 / project 4 / world 43(core 5+character 2+authority 4+profiles 8+
-worldbuilding 20+map_atlas 4) / story 20(outline_state 11+continuity 5+story 4) /
-evidence 10(compilation 7+indexing 3) / interaction 7 / imports 3 / writing 3 /
-infrastructure(async_tasks) 1。
+account 9 / project 5(+demo_project_copies, 位于 project/models.py) / world 52
+(core 5+character 2+authority 4+profiles 8+worldbuilding 20+map_atlas 5〔+map_atlas_revisions〕+
+library 5〔world_library_topics/topic_members/favorites/recents/workspace_profiles〕+
+cocreation 2〔world_cocreation_sessions/messages〕+review 1〔world_validation_review_items〕) /
+story 20 / evidence 10 / interaction 8(+interaction_source_revisions) / imports 3 /
+writing 3 / assistant 4(新模块: assistant_runs/watches/notices/action_batches) /
+infrastructure(async_tasks) 1。(M14 批 1 重审口径, 合计 115)
 
 ### 6.2 核心不变量机制(落表)
 - **不可变 revision + head 指针**(11 处): story_outline、world_canon、world_bible_synopsis、
@@ -586,11 +693,17 @@ infrastructure(async_tasks) 1。
   knowledge_visibility_policies / reader_reveal_policies / reveal_plans /
   projects.default_reveal_policy。
 
-### 6.3 迁移里程碑(46 个, 单线链 20260703→20260827)
+### 6.3 迁移里程碑(56 个, 单线链 20260703→20260914)
 squash 基线(frozen DDL SHA256 校验)→ novel_evidence → world_bible_v2 → story_outline →
 account_system(多租户转折)→ **20260812_ai_map_atlas(删 12 张 legacy map_*)** →
 world_object_images → story_scene_assets → relation_alias_kinds →
-**20260827_world_authority_phase0(Canon 4 表)** → project_author_tasks(head)。
+**20260827_world_authority_phase0(Canon 4 表)** → project_author_tasks →
+20260901_rp_source_context(父仓 ADR-0018)→ **20260908_unified_map** →
+20260909_world_library_topics → 20260909_world_cocreation_sessions →
+20260910_world_review_phase4 → **20260911_assistant_runtime** →
+20260912_web_search_consent → 20260913_schema_parity_repair →
+20260914_public_demo_copy → 20260914_anonymous_rp_accounts(head)。
+(M14 批 1 重审核对 down_revision 链; fede3bd72→HEAD 新增 9 个。)
 
 ## 7. LLM / Embedding 基础设施
 
@@ -610,7 +723,10 @@ world_object_images → story_scene_assets → relation_alias_kinds →
 - **诊断/脱敏**: redact_diagnostic 统一日志脱敏; health 分层诊断(DNS/代理/模型/聊天)绝不
   回传 Key; token_estimation。
 
-## 8. 治理裁定速查(25 篇 ADR 归类)
+## 8. 治理裁定速查(32 篇 ADR 归类)
+
+**撞号提醒**: 父仓 ADR-0018–0024 与本仓同号段 0018–0024 全部同号不同义, 引用必带
+「父仓/本仓」限定(M14 批 1 重审)。
 
 ### 8.1 确认(可直接继承的裁定)
 0001(world→memory 快照形状)、0002(受限 BaseCRUD)、0005(自定义实体类型+可逆迁移)、
@@ -621,6 +737,11 @@ world_object_images → story_scene_assets → relation_alias_kinds →
 单盘上限/无图片备份是接受的风险)、0016(世界书导入治理/校验回执门禁)、0017(Canon
 Phase 0/owner-only 授权)、character-merge-to-world、world-services-layout、
 背压/CSP 主 ADR + 两篇细化索引。
+父仓 0018(RP 源资料版本化, interaction_source_revisions)、父仓 0019(本地主题包:
+纯前端 .nctheme.zip, Worker 解压+manifest 校验+IndexedDB)、父仓 0020(世界库主题目录)、
+父仓 0021(共创会话持久化)、父仓 0022(world review ownership)、父仓 0023(有界
+agent runtime, 默认 `ASSISTANT_ENABLED=false`)、父仓 0024(匿名公开 demo RP, 三层
+env 门禁 fail-closed)。(M14 批 1 重审新增, 全部带「父仓」限定。)
 
 ### 8.2 删除裁定(不得在 dsh 复活)
 旧 Leaflet 动态地图(0003 Superseded+0012)、keep-alive 活 DOM(0009A)、4 个世界书旧 AI
@@ -653,8 +774,8 @@ public/tag/private+CharacterKnowledge 覆盖; 世界事实统一 TargetRef 寻�
    冻结、published copy-on-write、事件账本重放、confirmation 门禁、reveal 分层过滤、
    owner-only Canon 授权。这些在 dsh 的等价物见对照清单各切片"最小合同"节。
 3. **已裁定替代**(dsh 侧已有结论, 不从父仓库继承): 去账号(D11)、Word 外置(D8/D20)、
-   不做站内生图(ADR-0020)、对象图片 v1 不迁移(D19)、RP 延期(D23)、不做带批注 docx(D20)。
-4. **漂移警戒**: 父仓库仍活跃(本文基准 8c1516daf); 旧台账 §1–§5 的 14 路由/90 表/357
+   不做站内生图(本仓 ADR-0020)、对象图片 v1 不迁移(D19)、RP 延期(D23)、不做带批注 docx(D20)。
+4. **漂移警戒**: 父仓库仍活跃(本文基准 4db3df9b6); 旧台账 §1–§5 的 14 路由/90 表/357
    端点/34 工作流是历史盘点, 引用时以本文数字覆盖。
 5. **更新协议**: 父仓库显著漂移时(新模块/新表/新 ADR), 更新本文 §0 规模快照与受影响
    能力域, 并在 §0 改基准 commit; 对照切片仍归对照清单。
@@ -662,4 +783,5 @@ public/tag/private+CharacterKnowledge 覆盖; 世界事实统一 TargetRef 寻�
 ---
 
 *本文由 2026-08-31 五路并行审计(模块/API、任务/工作流/LLM、数据、前端/流程、治理文档)
-综合产出; 各节锚点格式 `相对 ai-writing-assist 根路径:行号`, 行号为基准 commit 时点。*
++ 2026-09-14 M14 批 1 基线重审(N58)综合产出; 各节锚点格式 `相对 ai-writing-assist
+根路径:行号`, 行号为基准 commit 时点。*
