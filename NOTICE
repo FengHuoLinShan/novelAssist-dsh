@@ -1,0 +1,10 @@
+novelAssist-dsh / novelcraft-dsh
+Copyright (c) 2026 FengHuoLinShan
+SPDX-License-Identifier: MIT (see LICENSE)
+
+本仓库派生自 deepseek-harness(https://github.com/deepseek-ai/deepseek-harness,
+MIT License, Copyright (c) 2026 DeepSeek)。依其 MIT 许可条款, 上述版权与许可
+声明随本文件及 LICENSE 保留。
+
+发布包 `novelcraft-dsh` 不再分发上游代码: 运行时的 `@deepseek-ai/*` 组件由 DSH
+宿主提供, 插件构建显式排除上游模块(plugin/tsdown.config.ts `neverBundle`)。

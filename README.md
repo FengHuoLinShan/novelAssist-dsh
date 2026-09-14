@@ -14,7 +14,7 @@
 |---|---|
 | `packages/novelcraft/` | 16 个纯 TS 包: vault/store/llm-step/writing/imports/world/outline/memory/context/rag/rag-bge(可选 BGE 嵌入后端, N22)/assistant(13 核心)+ dsh(唯一 DSH 接触面)+ client(双面包 UI)+ trace(trace contract 框架)+ preset |
 | `plugin/` | 公开 npm bundle `novelcraft-dsh`: 预构建宿主插件 + Web client + `cordis.patch.yml` |
-| `specs/` | R0 规格: assets(资产 schema)/ prompts(catalog 34 spec)/ rules(store-rules R1–R64 + policy-defaults)/ adjudications(十九批裁定, N1–N58) |
+| `specs/` | R0 规格: assets(资产 schema)/ prompts(catalog 34 spec)/ rules(store-rules R1–R64 + policy-defaults)/ adjudications(二十一批裁定, N1–N61) |
 | `docs/adr/` | ADR-0016～0025(M4 重写、仓库/共享层、结构关系、map atlas、事务/恢复、生命周期、capability 与源码分发) |
 | `docs/agent/dsh-rebuild/` | M4 交接/设计/验收文档(单一事实入口: 跨会话交接.md; 总进度: STATUS-M4.md) |
 | `starter/` | 一键安装 starter |
@@ -72,4 +72,6 @@ npm run audit:bge
 - 架构事实/安全边界/坑清单/复现命令: `docs/agent/dsh-rebuild/跨会话交接.md`
 - 总进度: `docs/agent/dsh-rebuild/STATUS-M4.md`
 - seam 契约: `packages/novelcraft/README.md` + `dsh/README.md` + `client/README.md`
+- 工具清单: `docs/TOOLS.md`
+- 数据与隐私: `docs/PRIVACY.md`
 - 设计: `docs/agent/dsh-rebuild/自主智能式作家助手设计.md`(D1–D25)
